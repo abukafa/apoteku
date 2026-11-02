@@ -26,9 +26,9 @@
   ];
 </script>
 
-<div class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex flex-col justify-between">
+<div class="min-h-0 bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex flex-col lg:absolute lg:inset-0">
   <!-- HEADER -->
-  <div class="flex items-center justify-between mb-3">
+  <div class="flex shrink-0 items-center justify-between mb-3">
     <div class="flex items-center gap-2">
       <div class="relative">
         <Bell class="w-4 h-4 text-[#0c2e7a]" />
@@ -36,13 +36,13 @@
       </div>
       <h3 class="text-sm font-bold text-slate-800">Notifikasi & Pengingat</h3>
     </div>
-    <a href="#notifikasi" class="text-xs font-semibold text-[#1d63d8] hover:underline flex items-center gap-1">
-      Lihat Semua <ArrowRight class="w-3 h-3" />
+    <a href="#notifikasi" class="text-[11px] font-semibold text-[#1d63d8] hover:underline flex items-center gap-1">
+      Lihat <ArrowRight class="w-3 h-3" />
     </a>
   </div>
 
   <!-- NOTIFICATIONS LIST -->
-  <div class="space-y-3">
+  <div class="flex-1 min-h-0 overflow-y-auto space-y-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
     {#each notifications as item}
       <div class="flex items-start gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors">
         <div class="w-8 h-8 rounded-lg {item.iconBg} flex items-center justify-center flex-shrink-0">

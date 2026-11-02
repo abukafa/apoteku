@@ -10,24 +10,23 @@
   ];
 </script>
 
-<div class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex flex-col justify-between">
+<div class="min-h-0 bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex flex-col justify-between xl:absolute xl:inset-0">
   <!-- HEADER -->
   <div class="flex items-center justify-between mb-3">
     <div class="flex items-center gap-2">
       <ArrowLeftRight class="w-4 h-4 text-[#0c2e7a]" />
       <h3 class="text-sm font-bold text-slate-800">Transaksi Terbaru</h3>
     </div>
-    <a href="/pos" class="text-xs font-semibold text-[#1d63d8] hover:underline flex items-center gap-1">
-      Lihat Semua <ArrowRight class="w-3 h-3" />
+    <a href="/pos" class="text-[11px] font-semibold text-[#1d63d8] hover:underline flex items-center gap-1">
+      Lihat <ArrowRight class="w-3 h-3" />
     </a>
   </div>
 
   <!-- TABLE -->
-  <div class="overflow-x-auto">
-    <table class="w-full text-left text-xs">
+  <div class="flex-1 min-h-0 overflow-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <table class="w-full text-left text-[11px]">
       <thead>
         <tr class="bg-blue-50/50 text-slate-600 border-b border-slate-100 font-bold">
-          <th class="py-2.5 px-3 rounded-l-lg">No. Transaksi</th>
           <th class="py-2.5 px-3">Tanggal</th>
           <th class="py-2.5 px-3">Pelanggan</th>
           <th class="py-2.5 px-3 text-right">Total</th>
@@ -37,9 +36,6 @@
       <tbody class="divide-y divide-slate-50">
         {#each transactions as trx}
           <tr class="hover:bg-slate-50/80 transition-colors">
-            <td class="py-2.5 px-3 font-mono font-bold text-[#1d63d8]">
-              {trx.no}
-            </td>
             <td class="py-2.5 px-3 text-slate-500 text-[11px]">
               {trx.time}
             </td>
@@ -47,7 +43,7 @@
               {trx.customer}
             </td>
             <td class="py-2.5 px-3 text-right font-bold text-slate-900">
-              Rp {trx.total.toLocaleString("id-ID")}
+              {trx.total.toLocaleString("id-ID")}
             </td>
             <td class="py-2.5 px-3 text-center">
               <span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold border {trx.badge}">

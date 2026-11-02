@@ -8,10 +8,6 @@
     <span>&copy; 2025 Hafidz Farma. All rights reserved.</span>
   </div>
 
-  <div class="font-script text-[#0c2e7a] text-xl font-bold tracking-wider italic">
-    Ikhtiar sehat keluarga
-  </div>
-
   <div class="flex items-center gap-2">
     <div class="w-7 h-7 rounded-full bg-blue-50 text-[#0c2e7a] flex items-center justify-center border border-blue-100 shadow-sm">
       <Activity class="w-3.5 h-3.5" />

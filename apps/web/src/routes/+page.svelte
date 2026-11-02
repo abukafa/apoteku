@@ -31,17 +31,17 @@
   <!-- 3. MIDDLE ROW: 3 CARDS (CHART, LOW STOCK, RECENT TRANSACTIONS) -->
   <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
     <!-- Chart: Grafik Penjualan 7 Hari Terakhir (Span 4) -->
-    <div class="lg:col-span-12 xl:col-span-4 flex flex-col">
+    <div class="lg:col-span-12 xl:col-span-4 flex min-h-0 flex-col">
       <SalesChart />
     </div>
 
     <!-- Table: Stok Menipis (Span 3) -->
-    <div class="lg:col-span-5 xl:col-span-3 flex flex-col">
+    <div class="lg:col-span-5 xl:col-span-3 relative flex min-h-0 flex-col">
       <LowStockTable />
     </div>
 
     <!-- Table: Transaksi Terbaru (Span 5) -->
-    <div class="lg:col-span-7 xl:col-span-5 flex flex-col">
+    <div class="lg:col-span-7 xl:col-span-5 relative flex min-h-0 flex-col">
       <RecentTransactionsTable />
     </div>
   </div>
@@ -49,12 +49,12 @@
   <!-- 4. BOTTOM ROW: 2 CARDS (MENU UTAMA & NOTIFIKASI) -->
   <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
     <!-- Menu Utama: 10 Icon Grid (Span 8) -->
-    <div class="lg:col-span-7 xl:col-span-8 flex flex-col">
+    <div class="lg:col-span-7 xl:col-span-8 flex min-h-0 flex-col">
       <QuickMenuGrid />
     </div>
 
     <!-- Notifikasi & Pengingat (Span 4) -->
-    <div class="lg:col-span-5 xl:col-span-4 flex flex-col">
+    <div class="lg:col-span-5 xl:col-span-4 relative flex min-h-0 flex-col">
       <NotificationsCard />
     </div>
   </div>

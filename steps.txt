@@ -1,0 +1,9 @@
+7 Langkah *Frontend-First* dengan memanfaatkan *mock data* (data statis tiruan) sebelum server backend siap.
+
+1. **Inisialisasi Monorepo & Frontend:** Setup ruang kerja Turbo/Bun dan buat proyek antarmuka SvelteKit di `apps/web`.
+2. **Persiapan Mock Data:** Buat file JSON statis sementara untuk menyimulasikan katalog produk, data cabang, dan respons server.
+3. **Pengembangan Komponen & UI:** Bangun tata letak halaman, navigasi, dan komponen visual antarmuka kasir.
+4. **Implementasi State & Offline:** Terapkan logika manajemen keranjang (*store reaktif*) dan penyimpanan lokal via IndexedDB.
+5. **Pengembangan Core Logic:** Tulis fungsi kalkulasi matematika di `packages/core` dan hubungkan langsung ke frontend.
+6. **Pengembangan Database & Backend:** Bangun skema Drizzle di `packages/db` dan endpoint Elysia di `apps/backend` setelah UI matang.
+7. **Integrasi Sistem:** Ganti pemanggilan *mock data* di frontend dengan *request* HTTP ke API backend yang sebenarnya.

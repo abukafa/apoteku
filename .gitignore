@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build and cache outputs
+.turbo/
+.svelte-kit/
+build/
+dist/
+out/
+.vercel
+.output
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Large legacy files and databases
+GAMPANGAPOTEKZ.FDB
+legacy_database/
+uploads/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun.lock*
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db

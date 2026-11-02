@@ -1,0 +1,47 @@
+[
+  {
+    "id": "cust-general",
+    "code": "UMUM",
+    "name": "Pelanggan Umum (Walk-in)",
+    "phone": "-",
+    "address": "-",
+    "priceTier": "general",
+    "loyaltyPoints": 0
+  },
+  {
+    "id": "cust-2",
+    "code": "AHF-000034",
+    "name": "Toko Tiara Siti",
+    "phone": "085222518804",
+    "address": "Bengkok 1, Tasikmalaya",
+    "priceTier": "wholesale",
+    "loyaltyPoints": 420
+  },
+  {
+    "id": "cust-3",
+    "code": "AHF-000002",
+    "name": "Ny. Lilis (Member)",
+    "phone": "081818135150",
+    "address": "Cibungkul, Tasikmalaya",
+    "priceTier": "member",
+    "loyaltyPoints": 185
+  },
+  {
+    "id": "cust-4",
+    "code": "AHF-000003",
+    "name": "Ny. Santi (Resep Rutin)",
+    "phone": "082119621191",
+    "address": "Mangin, Tasikmalaya",
+    "priceTier": "prescription",
+    "loyaltyPoints": 90
+  },
+  {
+    "id": "cust-5",
+    "code": "AHF-000018",
+    "name": "Klinik Pratama Sehat Mandiri",
+    "phone": "081323456789",
+    "address": "Jl. Mitra Batik No. 12, Tasikmalaya",
+    "priceTier": "wholesale",
+    "loyaltyPoints": 1250
+  }
+]

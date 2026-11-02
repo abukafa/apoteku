@@ -1,0 +1,12 @@
+[
+  {
+    "id": "shift-101",
+    "branchId": "1",
+    "shiftName": "Pagi (07:00 - 15:00)",
+    "cashierId": "usr-kasir-1",
+    "cashierName": "Nida Farida",
+    "startTime": "2026-11-02T07:00:00Z",
+    "startingCash": 200000,
+    "status": "OPEN"
+  }
+]

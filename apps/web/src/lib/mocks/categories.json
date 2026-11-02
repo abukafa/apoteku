@@ -1,0 +1,50 @@
+[
+  {
+    "id": "cat-all",
+    "code": "ALL",
+    "name": "Semua Obat",
+    "icon": "Layers"
+  },
+  {
+    "id": "cat-otc",
+    "code": "OTC",
+    "name": "Obat Bebas & OTC",
+    "icon": "Pill"
+  },
+  {
+    "id": "cat-limited-otc",
+    "code": "LIMITED_OTC",
+    "name": "Bebas Terbatas (W)",
+    "icon": "AlertCircle"
+  },
+  {
+    "id": "cat-ethical",
+    "code": "ETHICAL",
+    "name": "Obat Keras (K)",
+    "icon": "ShieldAlert"
+  },
+  {
+    "id": "cat-multivitamin",
+    "code": "VITAMIN",
+    "name": "Multivitamin & Suplemen",
+    "icon": "HeartPulse"
+  },
+  {
+    "id": "cat-herbal",
+    "code": "HERBAL",
+    "name": "Herbal & Jamu",
+    "icon": "Leaf"
+  },
+  {
+    "id": "cat-alkes",
+    "code": "ALKES",
+    "name": "Alat Kesehatan & P3K",
+    "icon": "Stethoscope"
+  },
+  {
+    "id": "cat-skincare",
+    "code": "SKINCARE",
+    "name": "Perawatan & Kosmetik",
+    "icon": "Sparkles"
+  }
+]

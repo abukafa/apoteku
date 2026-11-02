@@ -1,0 +1,47 @@
+[
+  {
+    "id": "sup-1",
+    "code": "PBF-CARMELLA",
+    "name": "PT. Carmella Gustavian Setiabudi",
+    "phone": "0231-209876",
+    "address": "Jl. Lawanggada No. 39, Cirebon",
+    "topDays": 30,
+    "pbfLicense": "FP.01.04/IV/0143-E/2019"
+  },
+  {
+    "id": "sup-2",
+    "code": "PBF-KF",
+    "name": "PT. Kimia Farma Trading & Distribution",
+    "phone": "022-5201122",
+    "address": "Jl. Soekarno Hatta No. 450, Bandung",
+    "topDays": 21,
+    "pbfLicense": "FP.01.04/IV/0821-E/2020"
+  },
+  {
+    "id": "sup-3",
+    "code": "PBF-AAM",
+    "name": "PT. Anugrah Argon Medica (AAM)",
+    "phone": "022-7561234",
+    "address": "Kawasan Industri Cimareme, Bandung",
+    "topDays": 30,
+    "pbfLicense": "FP.01.04/IV/0934-E/2019"
+  },
+  {
+    "id": "sup-4",
+    "code": "PBF-SAI",
+    "name": "PT. SAI Indonesia",
+    "phone": "021-4609812",
+    "address": "Jl. Rawa Bali II No. 5, Jakarta Timur",
+    "topDays": 14,
+    "pbfLicense": "FP.01.04/IV/0341-E/2021"
+  },
+  {
+    "id": "sup-5",
+    "code": "PBF-BELITUNG",
+    "name": "CV. Belitung Makmur Bandung",
+    "phone": "022-7301298",
+    "address": "Jl. Batununggal Indah 1 Ruko Pasar Modern Blok RB No. 8, Bandung",
+    "topDays": 14,
+    "pbfLicense": "FP.01.04/IV/1102-E/2022"
+  }
+]

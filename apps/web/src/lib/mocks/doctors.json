@@ -1,0 +1,34 @@
+[
+  {
+    "id": "doc-1",
+    "code": "DR-001",
+    "name": "dr. Hendra Pratama, Sp.PD",
+    "sip": "SIP.446/012/DINKES/2022",
+    "hospital": "RSUD dr. Soekardjo Tasikmalaya",
+    "phone": "08122334455"
+  },
+  {
+    "id": "doc-2",
+    "code": "DR-002",
+    "name": "dr. Siti Rahmayanti, Sp.A",
+    "sip": "SIP.446/058/DINKES/2021",
+    "hospital": "RS Syifa Medina Tasikmalaya",
+    "phone": "08133445566"
+  },
+  {
+    "id": "doc-3",
+    "code": "DR-003",
+    "name": "dr. Asep Kurniawan, Sp.JP",
+    "sip": "SIP.446/089/DINKES/2023",
+    "hospital": "Klinik Jantung Tasik Sehat",
+    "phone": "08112233445"
+  },
+  {
+    "id": "doc-4",
+    "code": "DR-004",
+    "name": "dr. Linda Permatasari (Dokter Umum)",
+    "sip": "SIP.446/104/DINKES/2024",
+    "hospital": "Puskesmas Indihiang",
+    "phone": "08522334455"
+  }
+]

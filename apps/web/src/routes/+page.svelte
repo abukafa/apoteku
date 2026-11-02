@@ -18,7 +18,7 @@
   let currentDate = $state("");
 
   const quickMenus = [
-    { name: "Penjualan (POS)", icon: "/img/icon-penjualan.png", href: "#", color: "from-blue-500/10 to-blue-600/5", badge: "KASIR" },
+    { name: "Penjualan (POS)", icon: "/img/icon-penjualan.png", href: "/pos", color: "from-blue-500/10 to-blue-600/5", badge: "KASIR" },
     { name: "Pemesanan PO", icon: "/img/icon-pemesanan.png", href: "#", color: "from-cyan-500/10 to-cyan-600/5" },
     { name: "Pembelian PBF", icon: "/img/icon-pembelian.png", href: "#", color: "from-indigo-500/10 to-indigo-600/5" },
     { name: "Stok Obat & ED", icon: "/img/icon-obat.png", href: "#", color: "from-emerald-500/10 to-emerald-600/5", badge: "FEFO" },
@@ -119,9 +119,9 @@
       class="absolute inset-0 w-full h-full object-cover mix-blend-overlay opacity-30"
     />
     <div class="relative z-10 p-6 sm:p-8 max-w-2xl">
-      <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-white/10 backdrop-blur-sm text-xs font-semibold text-cyan-200 border border-white/20 mb-3">
-        <ShieldCheck class="w-3.5 h-3.5" />
-        Tahap 1: Monorepo & UI Shell Active (Svelte 5 Runes)
+      <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-500/20 backdrop-blur-sm text-xs font-semibold text-emerald-300 border border-emerald-400/30 mb-3">
+        <ShieldCheck class="w-3.5 h-3.5 text-emerald-400" />
+        Tahap 2: Mock Data & POS Terminal Aktif (FEFO & 5 Multi-Harga)
       </div>
       <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight">
         Apotek Hafidz Farma
@@ -129,6 +129,15 @@
       <p class="text-slate-200 text-sm mt-1">
         Sistem Operasional Apotek Tersentralisasi Multi-Cabang & POS Farmasi. Ikhtiar Sehat Keluarga.
       </p>
+      <div class="mt-4">
+        <a
+          href="/pos"
+          class="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-card transition-all"
+        >
+          <img src="/img/icon-penjualan.png" alt="POS" class="w-4 h-4 object-contain brightness-0 invert" />
+          Buka Terminal Kasir POS Farmasi &rarr;
+        </a>
+      </div>
     </div>
   </div>
 

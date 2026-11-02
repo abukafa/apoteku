@@ -1,6 +1,7 @@
 [
   {
     "id": "1",
+    "tenantId": "tenant-hafidz-farma",
     "code": "PUSAT",
     "name": "Apotek Hafidz Farma Pusat (Gudang)",
     "isCenter": true,
@@ -8,10 +9,13 @@
     "address": "Jl. Arsani Ruko Pasar Baru Indihiang No. 50, Tasikmalaya",
     "sia": "SIA/1982/10.02/2021",
     "sipa": "SIPA/19880415/STRA/2022",
-    "pharmacistName": "apt. Hafidz Nurul, S.Farm."
+    "pharmacistName": "apt. Hafidz Nurul, S.Farm.",
+    "receiptHeader": "APOTEK HAFIDZ FARMA PUSAT\nJl. Arsani Ruko Pasar Baru Indihiang No. 50, Tasikmalaya\nTelp: 082316802828",
+    "receiptFooter": "Terima kasih atas kepercayaan Anda.\nSemoga Lekas Sembuh.\nIkhtiar Sehat Keluarga."
   },
   {
     "id": "2",
+    "tenantId": "tenant-hafidz-farma",
     "code": "CBG-02",
     "name": "Apotek Hafidz Farma 2",
     "isCenter": false,
@@ -19,10 +23,13 @@
     "address": "Simpang Tiga Warudoyong, Tasikmalaya",
     "sia": "SIA/1982/10.02/2022",
     "sipa": "SIPA/19900312/STRA/2023",
-    "pharmacistName": "apt. Rina Marlina, S.Farm."
+    "pharmacistName": "apt. Rina Marlina, S.Farm.",
+    "receiptHeader": "APOTEK HAFIDZ FARMA 2\nSimpang Tiga Warudoyong, Tasikmalaya\nTelp: 085283831245",
+    "receiptFooter": "Terima kasih atas kunjungan Anda.\nSemoga Lekas Sembuh.\nIkhtiar Sehat Keluarga."
   },
   {
     "id": "3",
+    "tenantId": "tenant-hafidz-farma",
     "code": "CBG-03",
     "name": "Apotek Hafidz Farma 3",
     "isCenter": false,
@@ -30,10 +37,13 @@
     "address": "Pasar Modern Tawang Banteng, Kec. Sukaratu, Kab. Tasikmalaya",
     "sia": "SIA/1982/10.02/2022",
     "sipa": "SIPA/19920820/STRA/2023",
-    "pharmacistName": "apt. Dedi Kurniawan, S.Farm."
+    "pharmacistName": "apt. Dedi Kurniawan, S.Farm.",
+    "receiptHeader": "APOTEK HAFIDZ FARMA 3\nPasar Modern Tawang Banteng, Kec. Sukaratu\nTelp: 085351339930",
+    "receiptFooter": "Terima kasih atas kunjungan Anda.\nSemoga Lekas Sembuh.\nIkhtiar Sehat Keluarga."
   },
   {
     "id": "4",
+    "tenantId": "tenant-hafidz-farma",
     "code": "CBG-04",
     "name": "Apotek Hafidz Farma 4",
     "isCenter": false,
@@ -41,10 +51,13 @@
     "address": "Jl. Raya Cisinga Kp. Nyalindung Desa Linggajati, Kec. Sukaratu, Kab. Tasikmalaya",
     "sia": "SIA/1982/10.02/2023",
     "sipa": "SIPA/19940114/STRA/2024",
-    "pharmacistName": "apt. Siti Nurhaliza, S.Farm."
+    "pharmacistName": "apt. Siti Nurhaliza, S.Farm.",
+    "receiptHeader": "APOTEK HAFIDZ FARMA 4\nJl. Raya Cisinga Kp. Nyalindung Desa Linggajati\nTelp: 081236221117",
+    "receiptFooter": "Terima kasih atas kunjungan Anda.\nSemoga Lekas Sembuh.\nIkhtiar Sehat Keluarga."
   },
   {
     "id": "5",
+    "tenantId": "tenant-hafidz-farma",
     "code": "CBG-01",
     "name": "Apotek Hafidz Farma 1",
     "isCenter": false,
@@ -52,6 +65,8 @@
     "address": "Jl. Arsani Ruko Pasar Baru Indihiang No. 50, Tasikmalaya",
     "sia": "SIA/1982/10.02/2021",
     "sipa": "SIPA/19880415/STRA/2022",
-    "pharmacistName": "apt. Hafidz Nurul, S.Farm."
+    "pharmacistName": "apt. Hafidz Nurul, S.Farm.",
+    "receiptHeader": "APOTEK HAFIDZ FARMA 1\nJl. Arsani Ruko Pasar Baru Indihiang No. 50\nTelp: 082316802828",
+    "receiptFooter": "Terima kasih atas kunjungan Anda.\nSemoga Lekas Sembuh.\nIkhtiar Sehat Keluarga."
   }
 ]

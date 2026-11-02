@@ -1,6 +1,7 @@
 [
   {
     "id": "sup-1",
+    "tenantId": "tenant-hafidz-farma",
     "code": "PBF-CARMELLA",
     "name": "PT. Carmella Gustavian Setiabudi",
     "phone": "0231-209876",
@@ -10,6 +11,7 @@
   },
   {
     "id": "sup-2",
+    "tenantId": "tenant-hafidz-farma",
     "code": "PBF-KF",
     "name": "PT. Kimia Farma Trading & Distribution",
     "phone": "022-5201122",
@@ -19,6 +21,7 @@
   },
   {
     "id": "sup-3",
+    "tenantId": "tenant-hafidz-farma",
     "code": "PBF-AAM",
     "name": "PT. Anugrah Argon Medica (AAM)",
     "phone": "022-7561234",
@@ -28,6 +31,7 @@
   },
   {
     "id": "sup-4",
+    "tenantId": "tenant-hafidz-farma",
     "code": "PBF-SAI",
     "name": "PT. SAI Indonesia",
     "phone": "021-4609812",
@@ -37,6 +41,7 @@
   },
   {
     "id": "sup-5",
+    "tenantId": "tenant-hafidz-farma",
     "code": "PBF-BELITUNG",
     "name": "CV. Belitung Makmur Bandung",
     "phone": "022-7301298",

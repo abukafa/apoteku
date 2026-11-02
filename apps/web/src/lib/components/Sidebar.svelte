@@ -12,6 +12,7 @@
     CircleDollarSign,
     BarChart3,
     Settings,
+    LogOut,
     Menu,
     X
   } from "lucide-svelte";
@@ -20,7 +21,7 @@
 
   const menuItems = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
-    { name: "Penjualan", href: "/pos", icon: ShoppingCart },
+    { name: "Penjualan (POS)", href: "/pos", icon: ShoppingCart },
     { name: "Pembelian", href: "#pembelian", icon: ShoppingBag },
     { name: "Stok Obat", href: "#stok", icon: Package },
     { name: "Pelayanan Kefarmasian", href: "#pelayanan", icon: FileText },
@@ -49,7 +50,7 @@
 
 <!-- SIDEBAR ASIDE -->
 <aside
-  class="fixed top-0 bottom-0 left-0 z-50 w-64 bg-gradient-to-b from-[#023075] via-[#0c245e] to-[#081a44] text-white flex flex-col justify-between shadow-2xl transition-transform duration-300 ease-in-out lg:translate-x-0 {isMobileOpen ? 'translate-x-0' : '-translate-x-full'}"
+  class="fixed top-0 bottom-0 left-0 z-50 w-64 bg-gradient-to-b from-[#023075] via-[#2b5394]  from-60% to-[#3f639b] text-white flex flex-col justify-between shadow-2xl transition-transform duration-300 ease-in-out lg:translate-x-0 {isMobileOpen ? 'translate-x-0' : '-translate-x-full'}"
 >
   <!-- TOP: BRAND LOGO CONTAINER -->
   <div class="flex flex-col items-center">

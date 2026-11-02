@@ -12,6 +12,7 @@
     type CheckoutResult
   } from "$lib/services/mock-api";
   import { calculateCartTotals, selectFefoBatches, EscPosBuilder } from "@apoteku/core";
+  import { authStore } from "$lib/stores/authStore.svelte";
   import {
     Search,
     Barcode,
@@ -94,6 +95,9 @@
   // Load initial data
   onMount(async () => {
     isLoading = true;
+    if (authStore.user?.branchId) {
+      selectedBranchId = authStore.user.branchId;
+    }
     try {
       const [branchList, catList, custList, shift] = await Promise.all([
         mockApi.getBranches(),
@@ -242,8 +246,8 @@
 
     const payload = {
       branchId: selectedBranchId,
-      cashierId: activeShift?.cashierId || "usr-1",
-      cashierName: activeShift?.cashierName || "Kasir Utama",
+      cashierId: authStore.user?.id || activeShift?.cashierId || "usr-01",
+      cashierName: authStore.user?.fullName || "Kasir Utama",
       customerId: selectedCustomer?.id,
       customerName: selectedCustomer?.name,
       paymentMethod: selectedPaymentMethod,
@@ -313,56 +317,57 @@
   <title>Kasir POS Farmasi — Apotek Hafidz Farma</title>
 </svelte:head>
 
-<div class="min-h-screen bg-slate-100 flex flex-col font-sans">
-  <!-- POS TOPBAR -->
-  <header class="bg-brand-blue text-white shadow-elevated px-4 py-2.5 flex items-center justify-between gap-4">
-    <div class="flex items-center gap-3">
-      <a href="/" class="p-1.5 hover:bg-white/10 rounded-lg transition-colors flex items-center gap-1.5 text-xs text-white/90">
-        <ArrowLeft class="w-4 h-4" />
-        <span class="font-medium hidden sm:inline">Kembali</span>
-      </a>
-      <div class="h-6 w-px bg-white/20"></div>
-      <div class="flex items-center gap-2">
-        <img src="/img/heart.png" alt="Apoteku" class="w-6 h-6 object-contain" />
-        <span class="font-bold text-sm tracking-wide">POS Farmasi Hafidz Farma</span>
+<div class="h-full flex flex-col overflow-hidden space-y-3">
+  <!-- POS HEADER SUB-BAR -->
+  <div class="hidden bg-white rounded-2xl px-4 py-2.5 border border-slate-100 shadow-sm flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
+    <div class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-xl bg-blue-50 text-[#0c2e7a] flex items-center justify-center font-bold">
+        <ShoppingCart class="w-4 h-4 text-[#1d63d8]" />
+      </div>
+      <div>
+        <h2 class="text-xs font-bold text-slate-800 leading-tight">Terminal Kasir POS Farmasi</h2>
+        <div class="text-[10px] text-slate-500 font-medium flex items-center gap-2">
+          <span>Pintasan: <kbd class="bg-slate-100 px-1 py-0.5 rounded text-[9px] font-mono font-bold">F2: Cari</kbd> <kbd class="bg-slate-100 px-1 py-0.5 rounded text-[9px] font-mono font-bold">F8: Bayar</kbd></span>
+        </div>
       </div>
     </div>
 
-    <!-- Branch & Shift Selector -->
-    <div class="flex items-center gap-3 text-xs">
+    <!-- Controls: Branch Selector, Shift info, Price Tier -->
+    <div class="flex items-center gap-2.5 text-xs">
       <!-- Branch selector -->
-      <div class="flex items-center gap-1.5 bg-white/10 px-2.5 py-1 rounded-lg border border-white/20">
-        <Store class="w-3.5 h-3.5 text-cyan-200" />
+      <div class="flex items-center gap-1.5 bg-[#f4f7fb] px-2.5 py-1.5 rounded-xl border border-slate-200">
+        <Store class="w-3.5 h-3.5 text-[#1d63d8]" />
         <select
           bind:value={selectedBranchId}
           onchange={() => { fetchProducts(); }}
-          class="bg-transparent text-white font-medium focus:outline-none cursor-pointer"
+          class="bg-transparent text-slate-700 font-bold text-xs focus:outline-none cursor-pointer"
         >
           {#each branches as b}
-            <option value={b.id} class="text-slate-800">{b.name} ({b.code})</option>
+            <option value={b.id}>{b.name} ({b.code})</option>
           {/each}
         </select>
       </div>
 
       <!-- Shift Info -->
-      <div class="hidden md:flex items-center gap-1.5 bg-white/10 px-2.5 py-1 rounded-lg border border-white/20">
-        <Clock class="w-3.5 h-3.5 text-cyan-200" />
-        <span>{activeShift?.cashierName || "Kasir"} ({activeShift?.shiftName || "Pagi"})</span>
+      <div class="hidden sm:flex items-center gap-1.5 bg-[#f4f7fb] px-2.5 py-1.5 rounded-xl border border-slate-200 text-slate-700">
+        <Clock class="w-3.5 h-3.5 text-slate-500" />
+        <span class="font-medium text-[11px]">{authStore.user?.fullName || activeShift?.cashierName || "Kasir"} ({activeShift?.shiftName || "Pagi"})</span>
       </div>
 
       <!-- Price Tier Badge -->
-      <div class="bg-emerald-500 text-white font-bold px-2 py-0.5 rounded text-[11px] uppercase tracking-wider">
+      <div class="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold px-2.5 py-1 rounded-xl text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
         Tier: {currentPriceTier}
       </div>
     </div>
-  </header>
+  </div>
 
   <!-- MAIN POS LAYOUT: 2 COLUMNS (Catalog & Cart) -->
-  <div class="flex-1 flex flex-col lg:flex-row overflow-hidden">
+  <div class="flex flex flex-col lg:flex-row gap-4 overflow-hidden min-h-0">
     <!-- LEFT: PRODUCT CATALOG (65%) -->
-    <div class="flex-1 flex flex-col p-4 overflow-y-auto space-y-4">
+    <div class="flex-1 flex flex-col bg-white rounded-2xl border border-slate-100 shadow-sm p-4 overflow-y-auto space-y-3.5">
       <!-- Search & Filters Bar -->
-      <div class="bg-white p-3 rounded-xl border border-surface-border shadow-card flex flex-col sm:flex-row gap-3">
+      <div class="bg-[#f8faff] p-3 rounded-xl border border-blue-100/70 flex flex-col sm:flex-row gap-3">
         <!-- Search input -->
         <div class="relative flex-1">
           <Search class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -371,16 +376,16 @@
             bind:value={searchQuery}
             oninput={handleSearchInput}
             placeholder="Cari obat (nama, kandungan aktif, barcode, SKU)... [Tekan F2]"
-            class="w-full pl-9 pr-4 py-2 text-sm rounded-lg border border-surface-border focus:outline-none focus:ring-2 focus:ring-brand-blue-500/20 focus:border-brand-blue-500 bg-surface-base"
+            class="w-full pl-9 pr-4 py-2 text-xs sm:text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-[#1d63d8] bg-white"
           />
         </div>
 
         <!-- Customer selection -->
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
           <User class="w-4 h-4 text-slate-400" />
           <select
             bind:value={selectedCustomerId}
-            class="text-xs bg-surface-base border border-surface-border rounded-lg px-2.5 py-2 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-blue-500/20"
+            class="text-xs bg-transparent font-medium text-slate-700 focus:outline-none cursor-pointer"
           >
             {#each customers as c}
               <option value={c.id}>
@@ -392,11 +397,11 @@
       </div>
 
       <!-- Categories Pills -->
-      <div class="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+      <div class="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
         {#each categories as cat}
           <button
             onclick={() => handleCategoryChange(cat.id)}
-            class="px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all border {selectedCategoryId === cat.id ? 'bg-brand-blue text-white border-brand-blue shadow-sm' : 'bg-white text-slate-600 border-surface-border hover:bg-slate-50'}"
+            class="px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all border {selectedCategoryId === cat.id ? 'bg-[#0c2e7a] text-white border-[#0c2e7a] shadow-sm' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}"
           >
             {cat.name}
           </button>
@@ -420,7 +425,7 @@
           </div>
         </div>
       {:else}
-        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
           {#each products as prod}
             {@const badge = getDrugClassBadge(prod.drugClass)}
             {@const stock = getAvailableStock(prod)}
@@ -432,7 +437,7 @@
                 <!-- Badge row -->
                 <div class="flex items-center justify-between gap-1 mb-1.5">
                   <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded border {badge.bg}">
-                    {badge.text}
+                    {badge.text.charAt(badge.text.length - 2)}
                   </span>
                   <span class="text-[10px] font-mono font-medium {stock > 10 ? 'text-emerald-700 bg-emerald-50' : 'text-amber-700 bg-amber-50'} px-1.5 py-0.5 rounded">
                     Stok: {stock} {prod.baseUnit}
@@ -473,7 +478,7 @@
                       class="flex-1 py-1 px-1.5 text-[11px] font-semibold rounded bg-brand-blue-50 text-brand-blue hover:bg-brand-blue hover:text-white border border-brand-blue-200 transition-colors text-center"
                       title="Beli per {u.unit} (Rp {uPrice.toLocaleString('id-ID')})"
                     >
-                      + {u.unit}
+                      {u.unit}
                     </button>
                   {/each}
                 </div>
@@ -485,7 +490,7 @@
     </div>
 
     <!-- RIGHT: POS CART & TOTALS (35%) -->
-    <div class="w-full lg:w-[420px] bg-white border-l border-surface-border flex flex-col shadow-card">
+    <div class="w-full lg:w-[400px] xl:w-[430px] bg-white rounded-2xl border border-slate-100 shadow-sm flex flex-col overflow-hidden">
       <!-- Cart Header -->
       <div class="p-4 border-b border-surface-border flex items-center justify-between bg-slate-50">
         <div class="flex items-center gap-2">
@@ -610,7 +615,7 @@
           class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-sm shadow-card flex items-center justify-center gap-2 transition-all mt-2"
         >
           <CreditCard class="w-4 h-4" />
-          Proses Pembayaran [F8]
+          Proses Pembayaran
         </button>
       </div>
     </div>
@@ -712,7 +717,7 @@
           class="flex-1 py-2 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-card flex items-center justify-center gap-1.5"
         >
           <CheckCircle2 class="w-4 h-4" />
-          Konfirmasi & Cetak Nota
+          Cetak Nota
         </button>
       </div>
     </div>

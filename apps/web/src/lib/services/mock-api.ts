@@ -5,6 +5,8 @@ import doctorsData from '../mocks/doctors.json';
 import productsData from '../mocks/products.json';
 import shiftsData from '../mocks/cashier-shifts.json';
 import suppliersData from '../mocks/suppliers.json';
+import usersData from '../mocks/users.json';
+import type { ActiveUser } from '../stores/authStore.svelte';
 
 export type PriceTier = 'general' | 'prescription' | 'wholesale' | 'delivery' | 'member';
 
@@ -173,6 +175,22 @@ class MockApiService {
   private doctors: Doctor[] = doctorsData;
   private suppliers: Supplier[] = suppliersData;
   private shifts: CashierShift[] = shiftsData as unknown as CashierShift[];
+  private users: ActiveUser[] = usersData as unknown as ActiveUser[];
+
+  async getUsers(): Promise<ActiveUser[]> {
+    await delay(60);
+    return [...this.users];
+  }
+
+  async getUserByEmail(email: string): Promise<ActiveUser | null> {
+    await delay(50);
+    return this.users.find((u) => u.email.toLowerCase() === email.toLowerCase().trim()) || null;
+  }
+
+  async getUserById(id: string): Promise<ActiveUser | null> {
+    await delay(40);
+    return this.users.find((u) => u.id === id) || null;
+  }
 
   async getBranches(): Promise<Branch[]> {
     await delay(80);

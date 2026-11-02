@@ -34,6 +34,7 @@ export default {
       fontFamily: {
         sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
         mono: ["JetBrains Mono", "monospace"],
+        script: ["Caveat", "Dancing Script", "cursive"],
       },
       boxShadow: {
         card: "0 2px 10px rgba(11, 64, 156, 0.05)",

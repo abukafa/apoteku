@@ -2,9 +2,84 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   HAFIDZ FARMA BRAND THEME TOKENS
+   Standardisasi variabel tema untuk seluruh modul aplikasi
+   ========================================================================== */
+@theme {
+  /* Brand Core Colors */
+  --color-brand-navy-950: #022050;
+  --color-brand-navy-900: #023075;
+  --color-brand-navy-800: #0c2e7a;
+  --color-brand-blue-700: #0b409c;
+  --color-brand-blue-600: #1d63d8;
+  --color-brand-blue-500: #2563eb;
+  --color-brand-blue-100: #e0ebff;
+  --color-brand-blue-50:  #f0f5ff;
+
+  /* Accent Red */
+  --color-brand-red-700:  #bd1e2c;
+  --color-brand-red-600:  #df1c2d;
+  --color-brand-red-500:  #ef4444;
+  --color-brand-red-100:  #fee2e2;
+  --color-brand-red-50:   #fff1f2;
+
+  /* Accent Cyan */
+  --color-brand-cyan-600: #0077b6;
+  --color-brand-cyan-500: #0ea5e9;
+  --color-brand-cyan-100: #e0f2fe;
+  --color-brand-cyan-50:  #e6f4fa;
+
+  /* Surface & Neutral */
+  --color-surface-base:   #f4f7fc;
+  --color-surface-card:   #ffffff;
+  --color-surface-muted:  #f8fafc;
+  --color-surface-border: #e2e8f0;
+
+  /* Pharmaceutical Status (BPOM) */
+  --color-pharma-otc:     #10b981;
+  --color-pharma-limited: #0284c7;
+  --color-pharma-ethical: #df1c2d;
+  --color-pharma-warning: #f59e0b;
+}
+
+:root {
+  --brand-navy: #023075;
+  --brand-blue: #0b409c;
+  --brand-red: #df1c2d;
+  --brand-cyan: #0077b6;
+  --surface-base: #f4f7fc;
+  --surface-card: #ffffff;
+  --surface-border: #e2e8f0;
+}
+
 @layer base {
   body {
     @apply bg-surface-base text-slate-800 font-sans antialiased min-h-screen selection:bg-brand-blue-100 selection:text-brand-blue-900;
+  }
+
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 0.875rem;
+    padding-right: 2.25rem !important;
+    transition: all 0.15s ease;
+  }
+
+  select:focus {
+    outline: none;
+    border-color: #1d63d8;
+    box-shadow: 0 0 0 3px rgba(29, 99, 216, 0.15);
+  }
+
+  select option {
+    background-color: #ffffff;
+    color: #1e293b;
+    padding: 0.5rem 0.75rem;
+    font-weight: 500;
   }
 }
 
@@ -39,5 +114,36 @@
   .no-scrollbar {
     -ms-overflow-style: none; /* IE and Edge */
     scrollbar-width: none; /* Firefox */
+  }
+
+  /* Full Body Modal Overlay: Garansi 100% menutupi seluruh layar dengan efek Glassmorphic Frosted Glass */
+  .modal-overlay,
+  [data-modal-overlay] {
+    position: fixed !important;
+    inset: 0 !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    margin: 0 !important;
+    margin-top: 0 !important;
+    padding: 1rem !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    z-index: 100 !important;
+    background-color: rgba(10, 25, 47, 0.45) !important;
+    backdrop-filter: blur(12px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
+  }
+
+  /* Glassmorphic Card Utility */
+  .modal-glass-card {
+    background-color: rgba(255, 255, 255, 0.96) !important;
+    backdrop-filter: blur(20px) saturate(190%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(190%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.8) !important;
+    box-shadow: 0 25px 60px -15px rgba(2, 48, 117, 0.25), 0 0 0 1px rgba(15, 23, 42, 0.06) !important;
   }
 }

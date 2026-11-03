@@ -1,0 +1,142 @@
+{
+  "purchaseInvoices": [
+    {
+      "id": "inv-2025-001",
+      "invoiceNumber": "FP-KF-2025-0891",
+      "supplierId": "sup-kf",
+      "supplierName": "PT. Kimia Farma Trading & Distribution",
+      "branchId": "1",
+      "branchName": "Apotek Hafidz Farma Pusat",
+      "invoiceDate": "2025-10-20",
+      "dueDate": "2025-11-20",
+      "totalAmount": 14500000,
+      "paidAmount": 14500000,
+      "status": "PAID",
+      "itemsCount": 12,
+      "taxPercent": 11,
+      "notes": "Pengadaan rutin antibiotik dan analgetik"
+    },
+    {
+      "id": "inv-2025-002",
+      "invoiceNumber": "FP-MBS-2025-1042",
+      "supplierId": "sup-mbs",
+      "supplierName": "PT. Mensa Binasukses (MBS)",
+      "branchId": "1",
+      "branchName": "Apotek Hafidz Farma Pusat",
+      "invoiceDate": "2025-10-25",
+      "dueDate": "2025-11-04",
+      "totalAmount": 8750000,
+      "paidAmount": 0,
+      "status": "UNPAID",
+      "itemsCount": 8,
+      "taxPercent": 11,
+      "notes": "Jatuh tempo 2 hari lagi"
+    },
+    {
+      "id": "inv-2025-003",
+      "invoiceNumber": "FP-AAM-2025-3312",
+      "supplierId": "sup-aam",
+      "supplierName": "PT. Anugrah Argon Medica (AAM)",
+      "branchId": "1",
+      "branchName": "Apotek Hafidz Farma Pusat",
+      "invoiceDate": "2025-09-15",
+      "dueDate": "2025-10-15",
+      "totalAmount": 5400000,
+      "paidAmount": 0,
+      "status": "OVERDUE",
+      "itemsCount": 5,
+      "taxPercent": 11,
+      "notes": "Faktur lewat jatuh tempo"
+    },
+    {
+      "id": "inv-2025-004",
+      "invoiceNumber": "FP-ENS-2025-0455",
+      "supplierId": "sup-ens",
+      "supplierName": "PT. Enseval Putera Megatrading",
+      "branchId": "2",
+      "branchName": "Apotek Hafidz Farma 2",
+      "invoiceDate": "2025-10-28",
+      "dueDate": "2025-11-28",
+      "totalAmount": 6200000,
+      "paidAmount": 3000000,
+      "status": "PARTIAL",
+      "itemsCount": 7,
+      "taxPercent": 11,
+      "notes": "Sudah dibayar sebagian via transfer BCA"
+    }
+  ],
+  "purchaseOrders": [
+    {
+      "id": "sp-2025-010",
+      "orderNumber": "SP-REG-HF-2025-0042",
+      "orderType": "REGULER",
+      "supplierId": "sup-kf",
+      "supplierName": "PT. Kimia Farma Trading & Distribution",
+      "branchId": "1",
+      "orderDate": "2025-10-26",
+      "status": "SENT",
+      "pharmacistName": "apt. Hafidz Nurul, S.Farm.",
+      "sipa": "SIPA-503/044/Dinkes/2024",
+      "totalItems": 6,
+      "estimatedAmount": 4200000
+    },
+    {
+      "id": "sp-2025-011",
+      "orderNumber": "SP-PRE-HF-2025-0012",
+      "orderType": "PREKURSOR",
+      "supplierId": "sup-mbs",
+      "supplierName": "PT. Mensa Binasukses (MBS)",
+      "branchId": "1",
+      "orderDate": "2025-10-27",
+      "status": "DRAFT",
+      "pharmacistName": "apt. Hafidz Nurul, S.Farm.",
+      "sipa": "SIPA-503/044/Dinkes/2024",
+      "totalItems": 3,
+      "estimatedAmount": 1850000
+    },
+    {
+      "id": "sp-2025-012",
+      "orderNumber": "SP-PSI-HF-2025-0004",
+      "orderType": "PSIKOTROPIKA",
+      "supplierId": "sup-kf",
+      "supplierName": "PT. Kimia Farma Trading & Distribution",
+      "branchId": "1",
+      "orderDate": "2025-10-24",
+      "status": "RECEIVED",
+      "pharmacistName": "apt. Hafidz Nurul, S.Farm.",
+      "sipa": "SIPA-503/044/Dinkes/2024",
+      "totalItems": 2,
+      "estimatedAmount": 950000
+    }
+  ],
+  "consignments": [
+    {
+      "id": "ksn-001",
+      "receiptNumber": "KSN-HF-2025-0018",
+      "supplierName": "PT. Herbal Alam Sehat (Titipan)",
+      "date": "2025-10-01",
+      "productName": "Madu Habbatussauda Extra Propolis 250ml",
+      "receivedQty": 50,
+      "soldQty": 38,
+      "remainingQty": 12,
+      "unitPrice": 45000,
+      "sellingPrice": 65000,
+      "unsettledAmount": 1710000,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "ksn-002",
+      "receiptNumber": "KSN-HF-2025-0019",
+      "supplierName": "CV. Salep Tradisional Tasik",
+      "date": "2025-10-10",
+      "productName": "Minyak Telon Plus Lavender 100ml",
+      "receivedQty": 100,
+      "soldQty": 85,
+      "remainingQty": 15,
+      "unitPrice": 22000,
+      "sellingPrice": 32000,
+      "unsettledAmount": 1870000,
+      "status": "ACTIVE"
+    }
+  ]
+}

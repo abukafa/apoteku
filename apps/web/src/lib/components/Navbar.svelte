@@ -9,7 +9,11 @@
     LogOut,
     User,
     Settings,
-    Store
+    Store,
+    AlertTriangle,
+    FileText,
+    CalendarClock,
+    CheckCheck
   } from "lucide-svelte";
   import { authStore } from "$lib/stores/authStore.svelte";
 
@@ -20,8 +24,55 @@
   let { onToggleMobileMenu }: Props = $props();
 
   let showProfileMenu = $state(false);
+  let showNotificationMenu = $state(false);
   let formattedDate = $state("27 Okt 2025");
   let formattedTime = $state("10:24");
+
+  let notifications = $state([
+    {
+      id: "notif-1",
+      title: "Stok Amoxicillin 500 mg menipis",
+      desc: "Sisa 5 item (min. 10)",
+      time: "10:12",
+      href: "/stok",
+      unread: true,
+      icon: AlertTriangle,
+      iconBg: "bg-red-50 text-[#df1c2d]"
+    },
+    {
+      id: "notif-2",
+      title: "Faktur Pembelian dari PBF Kimia Farma",
+      desc: "No. FPB-2025-0478 sudah diterima",
+      time: "09:45",
+      href: "/pembelian",
+      unread: true,
+      icon: FileText,
+      iconBg: "bg-blue-50 text-[#1d63d8]"
+    },
+    {
+      id: "notif-3",
+      title: "Jatuh tempo penagihan",
+      desc: "PT. Mitra Sehat (2 hari lagi)",
+      time: "08:30",
+      href: "/keuangan",
+      unread: true,
+      icon: CalendarClock,
+      iconBg: "bg-amber-50 text-amber-600"
+    }
+  ]);
+
+  let unreadCount = $derived(notifications.filter((n) => n.unread).length);
+
+  function markAllAsRead() {
+    notifications = notifications.map((n) => ({ ...n, unread: false }));
+  }
+
+  function handleNotificationClick(id: string) {
+    notifications = notifications.map((n) =>
+      n.id === id ? { ...n, unread: false } : n
+    );
+    showNotificationMenu = false;
+  }
 
   let initials = $derived(
     authStore.user?.fullName
@@ -99,22 +150,107 @@
 
   <!-- RIGHT: Notification, Profile, Date/Time -->
   <div class="flex items-center gap-3 sm:gap-4">
-    <!-- Notification Bell with Red Badge "3" -->
-    <button
-      class="relative p-2 text-slate-500 hover:text-brand-blue hover:bg-slate-50 rounded-xl transition-colors"
-      aria-label="Notifikasi"
-    >
-      <Bell class="w-5 h-5" />
-      <span class="absolute top-1 right-1 w-4 h-4 bg-[#df1c2d] text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-        3
-      </span>
-    </button>
+    <!-- Notification Bell Dropdown -->
+    <div class="relative">
+      <button
+        type="button"
+        onclick={() => {
+          showNotificationMenu = !showNotificationMenu;
+          if (showNotificationMenu) showProfileMenu = false;
+        }}
+        class="relative p-2 text-slate-500 hover:text-brand-blue hover:bg-slate-50 rounded-xl transition-colors focus:outline-none {showNotificationMenu ? 'bg-slate-50 text-brand-blue' : ''}"
+        aria-label="Notifikasi"
+        aria-expanded={showNotificationMenu}
+      >
+        <Bell class="w-5 h-5" />
+        {#if unreadCount > 0}
+          <span class="absolute top-1 right-1 w-4 h-4 bg-[#df1c2d] text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+            {unreadCount}
+          </span>
+        {/if}
+      </button>
+
+      {#if showNotificationMenu}
+        <div
+          class="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-xl border border-slate-100 py-2 z-50 animate-in fade-in duration-150"
+        >
+          <!-- Dropdown Header -->
+          <div class="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-bold text-slate-800">Notifikasi & Pengingat</span>
+              {#if unreadCount > 0}
+                <span class="px-1.5 py-0.5 text-[10px] font-bold bg-red-50 text-[#df1c2d] rounded-full">
+                  {unreadCount} Baru
+                </span>
+              {/if}
+            </div>
+            {#if unreadCount > 0}
+              <button
+                type="button"
+                onclick={markAllAsRead}
+                class="flex items-center gap-1 text-[11px] font-semibold text-[#1d63d8] hover:underline cursor-pointer"
+              >
+                <CheckCheck class="w-3.5 h-3.5" />
+                <span>Tandai dibaca</span>
+              </button>
+            {/if}
+          </div>
+
+          <!-- Notification Items -->
+          <div class="max-h-80 overflow-y-auto divide-y divide-slate-50">
+            {#if notifications.length === 0}
+              <div class="px-4 py-6 text-center text-xs text-slate-400">
+                Belum ada notifikasi terbaru
+              </div>
+            {:else}
+              {#each notifications as item (item.id)}
+                <a
+                  href={item.href}
+                  onclick={() => handleNotificationClick(item.id)}
+                  class="flex items-start gap-3 px-4 py-3 hover:bg-slate-50 transition-colors {item.unread ? 'bg-blue-50/30' : ''}"
+                >
+                  <div class="w-8 h-8 rounded-lg {item.iconBg} flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <item.icon class="w-4 h-4" />
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between gap-2">
+                      <h4 class="text-xs {item.unread ? 'font-bold text-slate-900' : 'font-semibold text-slate-700'} truncate">
+                        {item.title}
+                      </h4>
+                      <span class="text-[10px] font-mono text-slate-400 flex-shrink-0">{item.time}</span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 mt-0.5 truncate">{item.desc}</p>
+                  </div>
+                  {#if item.unread}
+                    <span class="w-2 h-2 rounded-full bg-[#1d63d8] flex-shrink-0 mt-2"></span>
+                  {/if}
+                </a>
+              {/each}
+            {/if}
+          </div>
+
+          <!-- Dropdown Footer -->
+          <div class="px-4 pt-2 pb-1 border-t border-slate-100 text-center">
+            <a
+              href="/"
+              onclick={() => (showNotificationMenu = false)}
+              class="block py-1 text-xs font-semibold text-[#1d63d8] hover:underline"
+            >
+              Lihat Semua Notifikasi
+            </a>
+          </div>
+        </div>
+      {/if}
+    </div>
 
     <!-- User Profile Dropdown (Reaktif dengan authStore) -->
     <div class="relative">
       <button
         type="button"
-        onclick={() => (showProfileMenu = !showProfileMenu)}
+        onclick={() => {
+          showProfileMenu = !showProfileMenu;
+          if (showProfileMenu) showNotificationMenu = false;
+        }}
         class="flex items-center gap-2.5 cursor-pointer hover:bg-slate-50 py-1 px-2 rounded-xl transition-colors focus:outline-none"
       >
         <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-cyan-500 text-white flex items-center justify-center font-bold text-xs ring-2 ring-blue-100 overflow-hidden">

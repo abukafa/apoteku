@@ -1,0 +1,554 @@
+<script lang="ts">
+  import {
+    ShoppingCart,
+    Store,
+    ArrowUpRight,
+    DollarSign,
+    FileText,
+    Calendar,
+    Filter,
+    Search,
+    Printer,
+    CheckCircle2,
+    Clock,
+    AlertCircle,
+    Eye,
+    X,
+    Truck,
+    Users,
+    Stethoscope,
+    ChevronRight,
+    CreditCard,
+    QrCode,
+    Banknote
+  } from "lucide-svelte";
+  import PageHeader from "$lib/components/ui/PageHeader.svelte";
+  import MetricCard from "$lib/components/ui/MetricCard.svelte";
+  import DataTable from "$lib/components/ui/DataTable.svelte";
+  import Badge from "$lib/components/ui/Badge.svelte";
+  import Select from "$lib/components/ui/Select.svelte";
+  import salesMock from "$lib/mocks/sales.json";
+  import { portal } from "$lib/actions/portal";
+
+  // Reactive state
+  let sales = $state(salesMock.sales);
+  let summary = $state(salesMock.summary);
+
+  let activeTab = $state<"SEMUA" | "UMUM" | "RESEP" | "GROSIR" | "TEMPO" | "DELIVERY">("SEMUA");
+  let searchQuery = $state("");
+  let selectedPaymentFilter = $state<string>("ALL");
+
+  // Modal Detail State
+  let selectedTransaction = $state<any | null>(null);
+  let isDetailModalOpen = $state(false);
+
+  // Formatter
+  function formatRupiah(num: number): string {
+    return new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0
+    }).format(num);
+  }
+
+  // Filtered sales derived
+  let filteredSales = $derived(
+    sales.filter((item) => {
+      // Tab filter
+      if (activeTab !== "SEMUA" && item.transactionType !== activeTab) {
+        return false;
+      }
+      // Payment filter
+      if (selectedPaymentFilter !== "ALL" && item.paymentMethod !== selectedPaymentFilter) {
+        return false;
+      }
+      // Search query
+      if (searchQuery.trim() !== "") {
+        const query = searchQuery.toLowerCase();
+        const matchesInvoice = item.invoiceNo.toLowerCase().includes(query);
+        const matchesCustomer = item.customerName.toLowerCase().includes(query);
+        const matchesPatient = item.patientName?.toLowerCase().includes(query) ?? false;
+        const matchesCashier = item.cashierName.toLowerCase().includes(query);
+        return matchesInvoice || matchesCustomer || matchesPatient || matchesCashier;
+      }
+      return true;
+    })
+  );
+
+  // Total filtered nominal
+  let totalFilteredNominal = $derived(
+    filteredSales.reduce((acc, curr) => acc + curr.grandTotal, 0)
+  );
+
+  function openDetail(trx: any) {
+    selectedTransaction = trx;
+    isDetailModalOpen = true;
+  }
+</script>
+
+<svelte:head>
+  <title>Buku & Riwayat Penjualan | Apotek Hafidz Farma</title>
+</svelte:head>
+
+<div class="space-y-6">
+  <!-- PAGE HEADER -->
+  <PageHeader
+    title="Riwayat Penjualan"
+    subtitle="Monitoring transaksi kasir POS dan penjualan."
+    icon={ShoppingCart}
+    breadcrumbs={[{ label: "Penjualan" }]}
+  >
+    {#snippet actions()}
+      <!-- CTA BUTTON MENUJU KASIR POS STANDALONE FULLSCREEN -->
+      <a
+        href="/pos"
+        class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-md hover:shadow-lg active:scale-95 group"
+      >
+        <Store class="w-4 h-4 transition-transform group-hover:scale-110" />
+        <span>Buka Kasir POS</span>
+        <ArrowUpRight class="w-4 h-4 opacity-80 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+      </a>
+    {/snippet}
+  </PageHeader>
+
+  <!-- METRIC CARDS -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <MetricCard
+      title="Penjualan Hari Ini"
+      value={formatRupiah(summary.totalSalesToday)}
+      subtext={`${summary.transactionsToday} Struk Transaksi Selesai`}
+      icon={DollarSign}
+      variant="brand"
+    />
+    <MetricCard
+      title="Resep Dokter"
+      value={`${summary.totalPrescriptions} Resep`}
+      subtext="Klinis (Tuslah & Embalase)"
+      icon={Stethoscope}
+      variant="brand"
+    />
+    <MetricCard
+      title="Piutang (Tempo)"
+      value={formatRupiah(summary.unpaidReceivables)}
+      subtext="Klinik, Bidan, & Pasien"
+      icon={Clock}
+      variant="warning"
+    />
+    <MetricCard
+      title="Omzet Bulan Ini"
+      value={formatRupiah(summary.totalSalesMonth)}
+      subtext={`Rata-rata: ${formatRupiah(summary.averageBasketSize)}`}
+      icon={ShoppingCart}
+      variant="success"
+    />
+  </div>
+
+  <!-- TAB NAVIGASI JENIS TRANSAKSI (DOKUMEN PLAN) -->
+  <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold overflow-x-auto pb-1 no-scrollbar">
+    <button
+      type="button"
+      onclick={() => (activeTab = "SEMUA")}
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'SEMUA' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+    >
+      <div class="flex items-center gap-2">
+        <ShoppingCart class="w-4 h-4" />
+        <span>Semua Transaksi</span>
+        <span class="px-2 py-0.5 rounded-full text-[10px] {activeTab === 'SEMUA' ? 'bg-brand-blue-50 text-brand-blue-700' : 'bg-slate-100 text-slate-500'}">
+          {sales.length}
+        </span>
+      </div>
+      {#if activeTab === "SEMUA"}
+        <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
+      {/if}
+    </button>
+
+    <button
+      type="button"
+      onclick={() => (activeTab = "UMUM")}
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'UMUM' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+    >
+      <div class="flex items-center gap-2">
+        <Banknote class="w-4 h-4" />
+        <span>Umum / OTC Bebas</span>
+        <span class="px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-500">
+          {sales.filter((s) => s.transactionType === "UMUM").length}
+        </span>
+      </div>
+      {#if activeTab === "UMUM"}
+        <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
+      {/if}
+    </button>
+
+    <button
+      type="button"
+      onclick={() => (activeTab = "RESEP")}
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'RESEP' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+    >
+      <div class="flex items-center gap-2">
+        <Stethoscope class="w-4 h-4" />
+        <span>Resep Dokter & Racikan</span>
+        <span class="px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-500">
+          {sales.filter((s) => s.transactionType === "RESEP").length}
+        </span>
+      </div>
+      {#if activeTab === "RESEP"}
+        <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
+      {/if}
+    </button>
+
+    <button
+      type="button"
+      onclick={() => (activeTab = "GROSIR")}
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'GROSIR' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+    >
+      <div class="flex items-center gap-2">
+        <Users class="w-4 h-4" />
+        <span>Grosir & Bidan</span>
+        <span class="px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-500">
+          {sales.filter((s) => s.transactionType === "GROSIR").length}
+        </span>
+      </div>
+      {#if activeTab === "GROSIR"}
+        <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
+      {/if}
+    </button>
+
+    <button
+      type="button"
+      onclick={() => (activeTab = "TEMPO")}
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'TEMPO' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+    >
+      <div class="flex items-center gap-2">
+        <Clock class="w-4 h-4" />
+        <span>Piutang / Kredit Tempo</span>
+        <span class="px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-500">
+          {sales.filter((s) => s.transactionType === "TEMPO").length}
+        </span>
+      </div>
+      {#if activeTab === "TEMPO"}
+        <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
+      {/if}
+    </button>
+
+    <button
+      type="button"
+      onclick={() => (activeTab = "DELIVERY")}
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'DELIVERY' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+    >
+      <div class="flex items-center gap-2">
+        <Truck class="w-4 h-4" />
+        <span>Layanan Antar / Delivery</span>
+        <span class="px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-500">
+          {sales.filter((s) => s.transactionType === "DELIVERY").length}
+        </span>
+      </div>
+      {#if activeTab === "DELIVERY"}
+        <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
+      {/if}
+    </button>
+  </div>
+
+  <!-- DATA TABLE PENJUALAN -->
+  <DataTable
+    title="Buku Catatan Penjualan"
+    searchPlaceholder="Cari nomor faktur nota, nama pelanggan/pasien, atau nama kasir..."
+    bind:searchValue={searchQuery}
+    totalCount={filteredSales.length}
+  >
+    {#snippet filters()}
+      <!-- Filter Pembayaran -->
+      <div class="flex items-center gap-1.5 text-xs">
+        <span class="text-slate-500 font-medium hidden sm:inline">Metode:</span>
+        <Select
+          bind:value={selectedPaymentFilter}
+          size="sm"
+          align="right"
+          options={[
+            { value: "ALL", label: "Semua Pembayaran" },
+            { value: "CASH", label: "Tunai (Cash)" },
+            { value: "QRIS", label: "QRIS Dinamis" },
+            { value: "TRANSFER", label: "Transfer Bank" },
+            { value: "DEBIT", label: "Kartu Debit" },
+            { value: "TEMPO", label: "Kredit Tempo" }
+          ]}
+        />
+      </div>
+    {/snippet}
+
+    {#snippet header()}
+      <th class="py-3 px-4">Faktur</th>
+      <th class="py-3 px-4">Waktu & Sif</th>
+      <th class="py-3 px-4">Pelanggan</th>
+      <th class="py-3 px-4 text-center">Jenis</th>
+      <th class="py-3 px-4 text-center">Pembayaran</th>
+      <th class="py-3 px-4 text-right">Total</th>
+      <th class="py-3 px-4 text-center">Status</th>
+      <th class="py-3 px-4 text-center">Aksi</th>
+    {/snippet}
+
+    {#snippet rows()}
+      {#each filteredSales as trx}
+        <tr class="hover:bg-blue-50/40 transition-colors">
+          <!-- No Faktur -->
+          <td class="py-3.5 px-4">
+            <div class="font-mono font-bold text-slate-900">{trx.invoiceNo}</div>
+            <div class="text-[11px] text-slate-400 font-mono">{trx.itemsCount} Item</div>
+          </td>
+
+          <!-- Waktu & Sif -->
+          <td class="py-3.5 px-4">
+            <div class="font-medium text-slate-800 text-xs">{trx.createdAt}</div>
+            <div class="text-[10px] text-slate-400">{trx.cashierName} ({trx.cashierShift})</div>
+          </td>
+
+          <!-- Pelanggan / Pasien -->
+          <td class="py-3.5 px-4">
+            <div class="font-bold text-slate-800">{trx.customerName}</div>
+            {#if trx.patientName}
+              <div class="text-[11px] text-brand-blue flex items-center gap-1 mt-0.5">
+                <Stethoscope class="w-3 h-3 flex-shrink-0" />
+                <span>{trx.patientName}</span>
+              </div>
+            {/if}
+            {#if trx.doctorName}
+              <div class="text-[10px] text-slate-400">R/ {trx.doctorName}</div>
+            {/if}
+          </td>
+
+          <!-- Jenis Transaksi -->
+          <td class="py-3.5 px-4 text-center">
+            {#if trx.transactionType === "RESEP"}
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">
+                RESEP
+              </span>
+            {:else if trx.transactionType === "GROSIR"}
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-100 text-purple-700">
+                GROSIR
+              </span>
+            {:else if trx.transactionType === "TEMPO"}
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-700">
+                PIUTANG
+              </span>
+            {:else if trx.transactionType === "DELIVERY"}
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-teal-100 text-teal-700">
+                DELIVERY
+              </span>
+            {:else}
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-100 text-slate-700">
+                UMUM
+              </span>
+            {/if}
+          </td>
+
+          <!-- Metode Bayar -->
+          <td class="py-3.5 px-4 text-center">
+            <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[11px] font-bold border border-slate-200 bg-white text-slate-700 shadow-2xs">
+              {#if trx.paymentMethod === "CASH"}
+                <Banknote class="w-3.5 h-3.5 text-emerald-600" />
+                <span>Tunai</span>
+              {:else if trx.paymentMethod === "QRIS"}
+                <QrCode class="w-3.5 h-3.5 text-blue-600" />
+                <span>QRIS</span>
+              {:else if trx.paymentMethod === "TRANSFER"}
+                <ArrowUpRight class="w-3.5 h-3.5 text-purple-600" />
+                <span>Transfer</span>
+              {:else if trx.paymentMethod === "DEBIT"}
+                <CreditCard class="w-3.5 h-3.5 text-indigo-600" />
+                <span>Debit</span>
+              {:else}
+                <Clock class="w-3.5 h-3.5 text-amber-600" />
+                <span>Tempo</span>
+              {/if}
+            </span>
+          </td>
+
+          <!-- Grand Total -->
+          <td class="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
+            {formatRupiah(trx.grandTotal)}
+          </td>
+
+          <!-- Status Bayar -->
+          <td class="py-3.5 px-4 text-center">
+            {#if trx.paymentStatus === "PAID"}
+              <Badge type="SUCCESS" label="LUNAS" />
+            {:else if trx.paymentStatus === "PARTIAL"}
+              <Badge type="WARNING" label="SEBAGIAN" />
+            {:else}
+              <Badge type="DANGER" label="BELUM LUNAS" />
+            {/if}
+          </td>
+
+          <!-- Aksi -->
+          <td class="py-3.5 px-4 text-center">
+            <div class="flex items-center justify-center gap-1.5">
+              <button
+                type="button"
+                onclick={() => openDetail(trx)}
+                class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-brand-blue transition-colors"
+                title="Lihat Rincian Faktur"
+              >
+                <Eye class="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onclick={() => alert(`Mencetak ulang struk thermal untuk ${trx.invoiceNo}`)}
+                class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-emerald-600 transition-colors"
+                title="Cetak Ulang Struk Thermal ESC/POS"
+              >
+                <Printer class="w-4 h-4" />
+              </button>
+            </div>
+          </td>
+        </tr>
+      {/each}
+    {/snippet}
+  </DataTable>
+</div>
+
+<!-- MODAL RINCIAN TRANSAKSI PENJUALAN (GLASSMORPHIC) -->
+{#if isDetailModalOpen && selectedTransaction}
+  <div
+    use:portal
+    data-modal-overlay
+    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) isDetailModalOpen = false;
+    }}
+    role="presentation"
+  >
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto">
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2 text-slate-900 font-bold">
+          <FileText class="w-5 h-5 text-brand-blue" />
+          <span>Rincian Nota Penjualan: <span class="font-mono text-brand-blue-700">{selectedTransaction.invoiceNo}</span></span>
+        </div>
+        <button
+          onclick={() => (isDetailModalOpen = false)}
+          class="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+          aria-label="Tutup"
+        >
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+
+      <!-- Detail Info Bar -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs">
+        <div>
+          <span class="text-slate-400 block text-[10px]">Waktu Transaksi</span>
+          <span class="font-semibold text-slate-800">{selectedTransaction.createdAt}</span>
+        </div>
+        <div>
+          <span class="text-slate-400 block text-[10px]">Kasir Pelayan</span>
+          <span class="font-semibold text-slate-800">{selectedTransaction.cashierName}</span>
+        </div>
+        <div>
+          <span class="text-slate-400 block text-[10px]">Pelanggan</span>
+          <span class="font-semibold text-slate-800">{selectedTransaction.customerName}</span>
+        </div>
+        <div>
+          <span class="text-slate-400 block text-[10px]">Metode / Status</span>
+          <span class="font-bold text-brand-blue">{selectedTransaction.paymentMethod} ({selectedTransaction.paymentStatus})</span>
+        </div>
+      </div>
+
+      <!-- Resep Detail jika ada -->
+      {#if selectedTransaction.patientName || selectedTransaction.doctorName}
+        <div class="bg-blue-50/60 p-3 rounded-xl border border-blue-100 text-xs flex items-center justify-between">
+          <div class="space-y-0.5">
+            <div class="font-bold text-brand-navy-900 flex items-center gap-1.5">
+              <Stethoscope class="w-4 h-4 text-brand-blue" />
+              <span>Resep: {selectedTransaction.prescriptionNo || "Resep Dokter Langsung"}</span>
+            </div>
+            <div class="text-slate-600">Pasien: <strong>{selectedTransaction.patientName}</strong> &bull; Dokter: {selectedTransaction.doctorName}</div>
+          </div>
+          <span class="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white text-brand-blue border border-blue-200">
+            Dispensing Terverifikasi
+          </span>
+        </div>
+      {/if}
+
+      <!-- Item Table -->
+      <div class="overflow-x-auto rounded-xl border border-slate-100">
+        <table class="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr class="bg-slate-50 text-slate-500 font-bold border-b border-slate-100">
+              <th class="py-2.5 px-3">Nama Produk / Obat</th>
+              <th class="py-2.5 px-3">Batch & ED</th>
+              <th class="py-2.5 px-3 text-center">Qty</th>
+              <th class="py-2.5 px-3 text-right">Harga</th>
+              <th class="py-2.5 px-3 text-right">Subtotal</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 font-medium text-slate-700">
+            {#each selectedTransaction.items as item}
+              <tr>
+                <td class="py-2.5 px-3 font-semibold text-slate-900">{item.productName}</td>
+                <td class="py-2.5 px-3 font-mono text-[11px] text-slate-500">
+                  {item.batchNo} ({item.expDate})
+                </td>
+                <td class="py-2.5 px-3 text-center font-bold">{item.qty} {item.unit}</td>
+                <td class="py-2.5 px-3 text-right font-mono">{formatRupiah(item.price)}</td>
+                <td class="py-2.5 px-3 text-right font-mono font-bold text-slate-900">{formatRupiah(item.subtotal)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Financial Calculation Summary -->
+      <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-100 space-y-1.5 text-xs">
+        <div class="flex justify-between text-slate-600">
+          <span>Subtotal Barang:</span>
+          <span class="font-mono font-bold">{formatRupiah(selectedTransaction.subtotal)}</span>
+        </div>
+        {#if selectedTransaction.discountAmount > 0}
+          <div class="flex justify-between text-emerald-600 font-semibold">
+            <span>Diskon Faktur:</span>
+            <span class="font-mono">- {formatRupiah(selectedTransaction.discountAmount)}</span>
+          </div>
+        {/if}
+        {#if selectedTransaction.tuslahAmount > 0}
+          <div class="flex justify-between text-slate-600">
+            <span>Jasa Farmasi / Tuslah Racikan:</span>
+            <span class="font-mono font-bold">+{formatRupiah(selectedTransaction.tuslahAmount)}</span>
+          </div>
+        {/if}
+        {#if selectedTransaction.embalaseAmount > 0}
+          <div class="flex justify-between text-slate-600">
+            <span>Wadah / Embalase / Ongkir:</span>
+            <span class="font-mono font-bold">+{formatRupiah(selectedTransaction.embalaseAmount)}</span>
+          </div>
+        {/if}
+        <div class="flex justify-between text-sm font-black text-slate-900 pt-2 border-t border-slate-200">
+          <span>GRAND TOTAL:</span>
+          <span class="text-brand-blue-700 font-mono text-base">{formatRupiah(selectedTransaction.grandTotal)}</span>
+        </div>
+        <div class="flex justify-between text-slate-500 text-[11px] pt-1">
+          <span>Uang Diterima: {formatRupiah(selectedTransaction.paidAmount)}</span>
+          <span>Kembalian: {formatRupiah(selectedTransaction.changeAmount)}</span>
+        </div>
+      </div>
+
+      <!-- Footer Buttons -->
+      <div class="border-t border-slate-100 pt-3 flex items-center justify-between">
+        <button
+          type="button"
+          onclick={() => alert(`Mencetak ulang faktur penjualan resmi ${selectedTransaction.invoiceNo}`)}
+          class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors"
+        >
+          <Printer class="w-4 h-4 text-emerald-600" />
+          <span>Cetak Ulang Struk Kasir</span>
+        </button>
+
+        <button
+          type="button"
+          onclick={() => (isDetailModalOpen = false)}
+          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
+        >
+          Tutup
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

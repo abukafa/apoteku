@@ -17,7 +17,7 @@
       <ArrowLeftRight class="w-4 h-4 text-[#0c2e7a]" />
       <h3 class="text-sm font-bold text-slate-800">Transaksi Terbaru</h3>
     </div>
-    <a href="/pos" class="text-[11px] font-semibold text-[#1d63d8] hover:underline flex items-center gap-1">
+    <a href="/penjualan" class="text-[11px] font-semibold text-[#1d63d8] hover:underline flex items-center gap-1">
       Lihat <ArrowRight class="w-3 h-3" />
     </a>
   </div>

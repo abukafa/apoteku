@@ -1,0 +1,84 @@
+[
+  {
+    "id": "trf-2025-001",
+    "transferNumber": "MUT-2025-1025-001",
+    "fromBranchId": "1",
+    "fromBranchName": "Apotek Hafidz Farma Pusat",
+    "toBranchId": "2",
+    "toBranchName": "Apotek Hafidz Farma 2",
+    "transferDate": "2025-10-25 14:30",
+    "operator": "Erwin Noval Mufid",
+    "status": "RECEIVED",
+    "notes": "Pengiriman rutin stok penyeimbang mingguan",
+    "items": [
+      {
+        "productId": "prod-amox-500",
+        "productName": "Amoxicillin 500mg",
+        "batchNumber": "AMX24H01",
+        "qty": 50,
+        "unit": "STRIP",
+        "status": "RECEIVED"
+      },
+      {
+        "productId": "prod-pct-500",
+        "productName": "Paracetamol 500mg",
+        "batchNumber": "PCT24K02",
+        "qty": 100,
+        "unit": "STRIP",
+        "status": "RECEIVED"
+      }
+    ]
+  },
+  {
+    "id": "trf-2025-002",
+    "transferNumber": "MUT-2025-1027-004",
+    "fromBranchId": "1",
+    "fromBranchName": "Apotek Hafidz Farma Pusat",
+    "toBranchId": "5",
+    "toBranchName": "Apotek Hafidz Farma 1",
+    "transferDate": "2025-10-27 09:15",
+    "operator": "Erwin Noval Mufid",
+    "status": "IN_TRANSIT",
+    "notes": "Permintaan darurat stok amlodipine dan cefixime",
+    "items": [
+      {
+        "productId": "prod-amlo-10",
+        "productName": "Amlodipine 10mg",
+        "batchNumber": "AML24L09",
+        "qty": 30,
+        "unit": "STRIP",
+        "status": "IN_TRANSIT"
+      },
+      {
+        "productId": "prod-cefix-100",
+        "productName": "Cefixime 100mg",
+        "batchNumber": "CFX24G03",
+        "qty": 20,
+        "unit": "STRIP",
+        "status": "IN_TRANSIT"
+      }
+    ]
+  },
+  {
+    "id": "trf-2025-003",
+    "transferNumber": "MUT-2025-1027-007",
+    "fromBranchId": "2",
+    "fromBranchName": "Apotek Hafidz Farma 2",
+    "toBranchId": "1",
+    "toBranchName": "Apotek Hafidz Farma Pusat",
+    "transferDate": "2025-10-27 16:45",
+    "operator": "Cantika Nur Gustiani",
+    "status": "REQUESTED",
+    "notes": "Pengembalian kelebihan stok Salbutamol Inhaler ke Pusat",
+    "items": [
+      {
+        "productId": "prod-salbutamol",
+        "productName": "Salbutamol Inhaler 100mcg",
+        "batchNumber": "SBT24F11",
+        "qty": 5,
+        "unit": "CAN",
+        "status": "REQUESTED"
+      }
+    ]
+  }
+]

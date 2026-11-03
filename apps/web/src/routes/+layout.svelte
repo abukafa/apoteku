@@ -7,13 +7,14 @@
   let { children } = $props();
   let isMobileOpen = $state(false);
 
-  // Unauthenticated routes (like /login) render standalone without the app shell
-  let isAuthRoute = $derived(page.url.pathname.startsWith("/login"));
-  let isPosRoute = $derived(page.url.pathname.startsWith("/pos"));
+  // Standalone routes without sidebar and top navbar: /login and /pos
+  let isStandaloneRoute = $derived(
+    page.url.pathname.startsWith("/login") || page.url.pathname.startsWith("/pos")
+  );
 </script>
 
-{#if isAuthRoute}
-  <!-- UNBOUND STANDALONE LAYOUT (LOGIN, REGISTER, ETC) -->
+{#if isStandaloneRoute}
+  <!-- UNBOUND STANDALONE FULLSCREEN LAYOUT (LOGIN, POS KASIR FULL SCREEN) -->
   {@render children()}
 {:else}
   <!-- AUTHENTICATED SHARED APPLICATION SHELL -->
@@ -26,18 +27,10 @@
       <!-- TOPBAR NAVBAR -->
       <Navbar onToggleMobileMenu={() => (isMobileOpen = !isMobileOpen)} />
 
-      <!-- CONTENT BODY -->
-      {#if isPosRoute}
-        <!-- POS VIEWPORT OPTIMIZED (FULL HEIGHT DOCKING) -->
-        <main class="flex-1 flex flex-col min-w-0 p-3 sm:p-4 overflow-hidden h-[calc(100vh-65px)]">
-          {@render children()}
-        </main>
-      {:else}
-        <!-- STANDARD DASHBOARD / ERP PADDING -->
-        <main class="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 max-w-[1600px] w-full mx-auto">
-          {@render children()}
-        </main>
-      {/if}
+      <!-- STANDARD DASHBOARD / ERP PADDING -->
+      <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
+        {@render children()}
+      </main>
     </div>
   </div>
 {/if}

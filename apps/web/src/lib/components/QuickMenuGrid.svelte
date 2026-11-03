@@ -2,16 +2,16 @@
   import { LayoutGrid } from "lucide-svelte";
 
   const menus = [
-    { name: "Penjualan", href: "/pos", icon: "/img/icon-penjualan.png" },
-    { name: "Pembelian", href: "#pembelian", icon: "/img/icon-pembelian.png" },
-    { name: "Stok Obat", href: "#stok", icon: "/img/icon-obat.png" },
-    { name: "Pelayanan Kefarmasian", href: "#pelayanan", icon: "/img/icon-pelayanan.png" },
-    { name: "Retur", href: "#retur", icon: "/img/icon-return.png" },
-    { name: "Pelanggan", href: "#pelanggan", icon: "/img/icon-pelanggan.png" },
-    { name: "Supplier / PBF", href: "#supplier", icon: "/img/icon-suplier.png" },
-    { name: "Keuangan", href: "#keuangan", icon: "/img/icon-keuangan.png" },
-    { name: "Laporan", href: "#laporan", icon: "/img/icon-laporan.png" },
-    { name: "Pengaturan", href: "#pengaturan", icon: "/img/icon-pengaturan.png" }
+    { name: "Penjualan", href: "/penjualan", icon: "/img/icon-penjualan.png" },
+    { name: "Pembelian", href: "/pembelian", icon: "/img/icon-pembelian.png" },
+    { name: "Stok Obat", href: "/stok", icon: "/img/icon-obat.png" },
+    { name: "Pelayanan Kefarmasian", href: "/pelayanan", icon: "/img/icon-pelayanan.png" },
+    { name: "Retur", href: "/retur", icon: "/img/icon-return.png" },
+    { name: "Pelanggan", href: "/pelanggan", icon: "/img/icon-pelanggan.png" },
+    { name: "Supplier / PBF", href: "/supplier", icon: "/img/icon-suplier.png" },
+    { name: "Keuangan", href: "/keuangan", icon: "/img/icon-keuangan.png" },
+    { name: "Laporan", href: "/laporan", icon: "/img/icon-laporan.png" },
+    { name: "Pengaturan", href: "/pengaturan", icon: "/img/icon-pengaturan.png" }
   ];
 </script>
 

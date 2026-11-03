@@ -16,6 +16,7 @@
     WifiOff
   } from "lucide-svelte";
   import { authStore, type ActiveUser } from "$lib/stores/authStore.svelte";
+  import Select from "$lib/components/ui/Select.svelte";
   import usersData from "$lib/mocks/users.json";
   import branchesData from "$lib/mocks/branches.json";
 
@@ -341,18 +342,17 @@
         
         <!-- Branch selection -->
         <div class="space-y-1">
-          <div class="relative">
-            <Store class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <select
-              id="pinBranchSelect"
-              bind:value={selectedBranchId}
-              class="w-full bg-[#f8faff] pl-9 pr-4 py-2 text-xs font-semibold rounded-xl border border-slate-200 focus:border-[#df1c2d] focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500/20 text-slate-700 cursor-pointer"
-            >
-              {#each branches as b}
-                <option value={b.id}>{b.name} ({b.code})</option>
-              {/each}
-            </select>
-          </div>
+          <Select
+            id="pinBranchSelect"
+            bind:value={selectedBranchId}
+            icon={Store}
+            variant="soft"
+            options={branches.map((b) => ({
+              value: b.id,
+              label: `${b.name} (${b.code})`,
+              sublabel: b.address
+            }))}
+          />
         </div>
 
         <!-- Submit PIN Button -->

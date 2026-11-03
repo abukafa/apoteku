@@ -9,6 +9,8 @@
     RotateCcw,
     Users,
     Truck,
+    ArrowLeftRight,
+    Building2,
     CircleDollarSign,
     BarChart3,
     Settings,
@@ -21,16 +23,17 @@
 
   const menuItems = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
-    { name: "Penjualan (POS)", href: "/pos", icon: ShoppingCart },
-    { name: "Pembelian", href: "#pembelian", icon: ShoppingBag },
-    { name: "Stok Obat", href: "#stok", icon: Package },
-    { name: "Pelayanan Kefarmasian", href: "#pelayanan", icon: FileText },
-    { name: "Retur", href: "#retur", icon: RotateCcw },
-    { name: "Pelanggan", href: "#pelanggan", icon: Users },
-    { name: "Supplier / PBF", href: "#supplier", icon: Truck },
-    { name: "Keuangan", href: "#keuangan", icon: CircleDollarSign },
-    { name: "Laporan", href: "#laporan", icon: BarChart3 },
-    { name: "Pengaturan", href: "#pengaturan", icon: Settings }
+    { name: "Penjualan", href: "/penjualan", icon: ShoppingCart },
+    { name: "Pembelian", href: "/pembelian", icon: ShoppingBag },
+    { name: "Stok Obat", href: "/stok", icon: Package },
+    { name: "Pengiriman", href: "/pengiriman", icon: ArrowLeftRight },
+    { name: "Pelayanan Kefarmasian", href: "/pelayanan", icon: FileText },
+    { name: "Retur", href: "/retur", icon: RotateCcw },
+    { name: "Pelanggan", href: "/pelanggan", icon: Users },
+    { name: "Supplier / PBF", href: "/supplier", icon: Building2 },
+    { name: "Keuangan", href: "/keuangan", icon: CircleDollarSign },
+    { name: "Laporan", href: "/laporan", icon: BarChart3 },
+    { name: "Pengaturan", href: "/pengaturan", icon: Settings }
   ];
 
   function isActive(href: string) {
@@ -78,7 +81,7 @@
   </div>
 
   <!-- MIDDLE: VERTICAL MENU ITEMS -->
-  <nav class="flex-1 px-3 py-2 overflow-y-auto space-y-1 scrollbar-thin">
+  <nav class="flex-1 px-3 py-2 overflow-y-auto space-y-1 no-scrollbar">
     {#each menuItems as item}
       {@const active = isActive(item.href)}
       <a

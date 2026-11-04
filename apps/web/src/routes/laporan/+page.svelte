@@ -104,7 +104,7 @@
 </script>
 
 <svelte:head>
-  <title>Laporan & Kepatuhan Farmasi | Apoteku.com</title>
+  <title>Laporan &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="space-y-6">

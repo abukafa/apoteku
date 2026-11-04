@@ -41,15 +41,15 @@
   function formatRole(role: string) {
     switch (role) {
       case "SUPERADMIN":
-        return { label: "Admin Sistem", badge: "bg-blue-100 text-blue-800 border-blue-200" };
+        return { label: "Admin", badge: "bg-blue-100 text-blue-800 border-blue-200" };
       case "OWNER":
-        return { label: "Pemilik / Direktur", badge: "bg-amber-100 text-amber-800 border-amber-200" };
+        return { label: "Owner", badge: "bg-amber-100 text-amber-800 border-amber-200" };
       case "PHARMACIST":
-        return { label: "Apoteker PJ", badge: "bg-purple-100 text-purple-800 border-purple-200" };
+        return { label: "Apoteker", badge: "bg-purple-100 text-purple-800 border-purple-200" };
       case "CASHIER":
-        return { label: "Kasir Farmasi", badge: "bg-emerald-100 text-emerald-800 border-emerald-200" };
+        return { label: "Kasir", badge: "bg-emerald-100 text-emerald-800 border-emerald-200" };
       case "INVENTORY_STAFF":
-        return { label: "Staf Gudang", badge: "bg-slate-100 text-slate-800 border-slate-200" };
+        return { label: "Staf", badge: "bg-slate-100 text-slate-800 border-slate-200" };
       default:
         return { label: role, badge: "bg-slate-100 text-slate-700 border-slate-200" };
     }
@@ -119,7 +119,7 @@
 </script>
 
 <svelte:head>
-  <title>Login</title>
+  <title>Login &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="min-h-screen bg-gradient-to-br from-[#091b42] via-[#0d2a6b] to-[#071638] flex flex-col items-center justify-center p-4 sm:p-6 relative overflow-hidden font-sans text-slate-800">
@@ -266,7 +266,7 @@
                     </div>
                   </div>
                 </div>
-                <span class="text-[10px] font-bold px-2 py-0.5 rounded border {r.badge}">
+                <span class="text-[10px] text-end font-bold px-2 py-0.5 rounded border {r.badge}">
                   {r.label}
                 </span>
               </button>

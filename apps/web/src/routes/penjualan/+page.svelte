@@ -88,7 +88,7 @@
 </script>
 
 <svelte:head>
-  <title>Buku & Riwayat Penjualan | Apotek Hafidz Farma</title>
+  <title>Penjualan &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="space-y-6">

@@ -46,7 +46,7 @@
 </script>
 
 <svelte:head>
-  <title>Pengaturan Sistem | Apoteku.com</title>
+  <title>Pengaturan &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="space-y-6">

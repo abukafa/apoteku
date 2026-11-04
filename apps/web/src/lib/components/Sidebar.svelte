@@ -203,7 +203,7 @@
             onclick={() => (isMobileOpen = false)}
             class="flex items-center justify-between px-3.5 py-2.2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-150 {active
               ? 'bg-gradient-to-r from-[#df1c2d] from-60% to-[#073e92] text-white px-4 py-2 rounded-lg shadow-md'
-              : 'text-slate-200/90 hover:bg-white/10 hover:text-white'}"
+              : 'text-slate-200/90 hover:bg-white/10 hover:text-white px-4 py-1'}"
           >
             <div class="flex items-center gap-3 min-w-0">
               <item.icon class="w-4 h-4 flex-shrink-0 {active ? 'text-white' : 'text-slate-300'}" />

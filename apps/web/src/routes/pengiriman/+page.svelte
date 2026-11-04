@@ -393,7 +393,7 @@
 </script>
 
 <svelte:head>
-  <title>Pengiriman & Mutasi Antar Cabang | Apoteku.com</title>
+  <title>Pengiriman &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -405,30 +405,32 @@
     breadcrumbs={[{ label: "Pengiriman" }]}
   >
     {#snippet actions()}
-      <Select
-        bind:value={selectedBranchFilter}
-        icon={Store}
-        variant="soft"
-        size="sm"
-        align="right"
-        options={[
-          { value: "ALL", label: "Semua Cabang (Konsolidasi)" },
-          ...branches.map((b) => ({
-            value: b.id,
-            label: `${b.name} (${b.code})`,
-            sublabel: b.address
-          }))
-        ]}
-      />
+      <div class="grid grid-rows-2 justify-items-end gap-2">
+        <button
+          type="button"
+          onclick={openAddTransferModal}
+          class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+        >
+          <Plus class="w-4 h-4" />
+          <span>Kirim Barang Baru</span>
+        </button>
 
-      <button
-        type="button"
-        onclick={openAddTransferModal}
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
-      >
-        <Plus class="w-4 h-4" />
-        <span>Kirim Barang Baru</span>
-      </button>
+        <Select
+          bind:value={selectedBranchFilter}
+          icon={Store}
+          variant="soft"
+          size="sm"
+          align="right"
+          options={[
+            { value: "ALL", label: "Semua Cabang (Konsolidasi)" },
+            ...branches.map((b) => ({
+              value: b.id,
+              label: `${b.name} (${b.code})`,
+              sublabel: b.address
+            }))
+          ]}
+        />
+      </div>
     {/snippet}
   </PageHeader>
 

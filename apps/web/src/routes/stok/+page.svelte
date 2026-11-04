@@ -926,7 +926,7 @@
 </script>
 
 <svelte:head>
-  <title>Stok Obat & Inventori | Apoteku.com</title>
+  <title>Stok Obat &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -938,38 +938,42 @@
     breadcrumbs={[{ label: "Stok Obat" }]}
   >
     {#snippet actions()}
-      <!-- Branch Selector -->
-      <Select
-        bind:value={selectedBranchId}
-        icon={Store}
-        variant="soft"
-        size="sm"
-        align="right"
-        onchange={() => fetchProducts()}
-        options={branches.map((b) => ({
-          value: b.id,
-          label: `${b.name} (${b.code})`,
-          sublabel: b.address
-        }))}
-      />
+      <div class="grid grid-rows-2 justify-items-end gap-2">
+        <div class="flex justify-end gap-2">
+          <button
+            type="button"
+            onclick={() => openOpnameForProduct()}
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100/80 text-emerald-800 text-xs font-bold transition-all shadow-xs"
+          >
+            <ClipboardCheck class="w-4 h-4 text-emerald-600" />
+            <span>Stok Opname</span>
+          </button>
 
-      <button
-        type="button"
-        onclick={() => openOpnameForProduct()}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100/80 text-emerald-800 text-xs font-bold transition-all shadow-xs"
-      >
-        <ClipboardCheck class="w-4 h-4 text-emerald-600" />
-        <span>Stok Opname</span>
-      </button>
-
-      <button
-        type="button"
-        onclick={openAddProductModal}
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
-      >
-        <Plus class="w-4 h-4" />
-        <span>Tambah Obat Baru</span>
-      </button>
+          <button
+            type="button"
+            onclick={openAddProductModal}
+            class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+          >
+            <Plus class="w-4 h-4" />
+            <span>Tambah Obat Baru</span>
+          </button>
+        </div>
+        
+        <!-- Branch Selector -->
+        <Select
+          bind:value={selectedBranchId}
+          icon={Store}
+          variant="soft"
+          size="sm"
+          align="right"
+          onchange={() => fetchProducts()}
+          options={branches.map((b) => ({
+            value: b.id,
+            label: `${b.name} (${b.code})`,
+            sublabel: b.address
+          }))}
+        />
+      </div>
     {/snippet}
   </PageHeader>
 

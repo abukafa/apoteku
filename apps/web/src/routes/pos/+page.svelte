@@ -495,7 +495,7 @@
 </script>
 
 <svelte:head>
-  <title>Kasir POS — Apotek Hafidz Farma</title>
+  <title>Kasir POS &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="h-screen w-screen p-3 sm:p-4 bg-[#f0f4f9] flex flex-col overflow-hidden space-y-3">

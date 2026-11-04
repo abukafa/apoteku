@@ -10,7 +10,7 @@
 </script>
 
 <svelte:head>
-  <title>Dashboard — Hafidz Farma Apotek</title>
+  <title>Dashboard &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="space-y-6">

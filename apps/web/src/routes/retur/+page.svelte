@@ -88,7 +88,7 @@
 </script>
 
 <svelte:head>
-  <title>Retur Transaksi | Apoteku.com</title>
+  <title>Retur &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="space-y-6">

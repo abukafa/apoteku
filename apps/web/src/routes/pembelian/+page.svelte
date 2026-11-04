@@ -207,7 +207,7 @@
 </script>
 
 <svelte:head>
-  <title>Riwayat Pembelian | Apoteku.com</title>
+  <title>Pembelian &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -640,14 +640,17 @@
                 {#each newInvoiceItems as item, idx}
                   <tr class="hover:bg-slate-50/50">
                     <td class="p-2">
-                      <select
+                      <SearchableSelect
+                        id={`inv-product-${idx}`}
                         bind:value={item.productName}
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-bold text-slate-800 text-xs"
-                      >
-                        {#each products as p}
-                          <option value={p.name}>{p.name}</option>
-                        {/each}
-                      </select>
+                        variant="default"
+                        size="sm"
+                        searchPlaceholder="Cari nama obat..."
+                        options={products.map((p) => ({
+                          value: p.name,
+                          label: p.name
+                        }))}
+                      />
                     </td>
                     <td class="p-2">
                       <input
@@ -853,7 +856,7 @@
   <div
     use:portal
     data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen scrollbar-minimalist"
     onclick={(e) => {
       if (e.target === e.currentTarget) isAddSpModalOpen = false;
     }}

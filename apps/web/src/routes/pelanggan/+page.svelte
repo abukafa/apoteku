@@ -95,7 +95,7 @@
 </script>
 
 <svelte:head>
-  <title>Pelanggan & Pasien | Apoteku.com</title>
+  <title>Pelanggan &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="space-y-6">

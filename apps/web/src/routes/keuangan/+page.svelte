@@ -123,7 +123,7 @@
 </script>
 
 <svelte:head>
-  <title>Keuangan & Buku Kas | Apoteku.com</title>
+  <title>Keuangan &bull; Hafidz Farma</title>
 </svelte:head>
 
 <div class="space-y-6">

@@ -20,7 +20,8 @@
     ChevronRight,
     CreditCard,
     QrCode,
-    Banknote
+    Banknote,
+    Download
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
@@ -99,6 +100,15 @@
     breadcrumbs={[{ label: "Penjualan" }]}
   >
     {#snippet actions()}
+      <button
+        type="button"
+        onclick={() => alert("Mengunduh rekapan data penjualan format CSV / Excel...")}
+        class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs"
+      >
+        <Download class="w-4 h-4 text-slate-500" />
+        <span class="hidden sm:inline">Ekspor CSV</span>
+      </button>
+
       <!-- CTA BUTTON MENUJU KASIR POS STANDALONE FULLSCREEN -->
       <a
         href="/pos"

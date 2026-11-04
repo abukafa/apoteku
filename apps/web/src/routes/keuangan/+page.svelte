@@ -24,6 +24,39 @@
   let searchQuery = $state("");
   let isAddExpenseModalOpen = $state(false);
 
+  // QRIS Payment Gateway Settlement State
+  let qrisBalance = $state(3420000);
+  let isPayoutModalOpen = $state(false);
+  let payoutSuccess = $state("");
+  let payoutAmount = $state(3420000);
+
+  function handlePayoutSubmit() {
+    if (payoutAmount <= 0) return;
+    const amount = payoutAmount;
+    qrisBalance = Math.max(0, qrisBalance - amount);
+
+    cashEntries = [
+      {
+        id: `csh-${Date.now()}`,
+        time: "Hari ini, Baru saja",
+        type: "IN",
+        category: "Settlement QRIS",
+        refNumber: `SET-${Date.now().toString().slice(-6)}`,
+        amount: amount,
+        balance: currentBalance + amount,
+        operator: "Sistem Otomatis (Xendit)",
+        description: "Penarikan Dana QRIS ke Rekening BCA Apotek"
+      },
+      ...cashEntries
+    ];
+
+    payoutSuccess = `Penarikan ${formatRupiah(amount)} berhasil diproses!`;
+    setTimeout(() => {
+      payoutSuccess = "";
+      isPayoutModalOpen = false;
+    }, 2000);
+  }
+
   function formatRupiah(num: number): string {
     return new Intl.NumberFormat("id-ID", {
       style: "currency",
@@ -143,6 +176,35 @@
       icon={TrendingUp}
       variant="default"
     />
+  </div>
+
+  <!-- QRIS & PAYMENT GATEWAY SETTLEMENT WIDGET -->
+  <div class="bg-gradient-to-r from-[#0c2e7a] to-[#1d63d8] text-white rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+    <div class="space-y-1">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span class="text-[11px] font-bold uppercase tracking-wider text-blue-100">Settlement Saldo QRIS (Xendit)</span>
+      </div>
+      <div class="text-xl sm:text-2xl font-black font-mono">
+        {formatRupiah(qrisBalance)}
+      </div>
+      <div class="text-xs text-blue-100/80">
+        Rekening Tujuan: <strong>BCA 0541238910</strong> (Apotek Hafidz Farma) • Auto-sweep setiap 23:00 WIB
+      </div>
+    </div>
+
+    <button
+      type="button"
+      onclick={() => {
+        payoutAmount = qrisBalance;
+        isPayoutModalOpen = true;
+      }}
+      disabled={qrisBalance <= 0}
+      class="px-4 py-2 rounded-xl bg-white hover:bg-blue-50 text-[#0c2e7a] font-bold text-xs shadow-md transition-all disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
+    >
+      <ArrowDownLeft class="w-4 h-4 text-emerald-600" />
+      <span>Tarik Dana Sekarang</span>
+    </button>
   </div>
 
   <!-- DATA TABLE BUKU KAS -->
@@ -269,6 +331,79 @@
           Simpan Pengeluaran
         </button>
       </div>
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL TARIK DANA / PAYOUT QRIS -->
+{#if isPayoutModalOpen}
+  <div
+    use:portal
+    data-modal-overlay
+    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) isPayoutModalOpen = false;
+    }}
+    role="presentation"
+  >
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-md w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2 text-slate-900 font-bold">
+          <CreditCard class="w-5 h-5 text-brand-blue" />
+          <span>Penarikan Dana QRIS (Payout)</span>
+        </div>
+        <button
+          onclick={() => (isPayoutModalOpen = false)}
+          class="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+          aria-label="Tutup"
+        >
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+
+      {#if payoutSuccess}
+        <div class="p-3 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-bold border border-emerald-200 flex items-center gap-2">
+          <span>{payoutSuccess}</span>
+        </div>
+      {:else}
+        <div class="space-y-3 text-xs">
+          <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1.5">
+            <div class="text-slate-500 text-[11px]">Rekening Bank Tujuan:</div>
+            <div class="font-bold text-slate-800 text-sm">Bank Central Asia (BCA)</div>
+            <div class="font-mono text-slate-700">No. Rek: <strong>0541238910</strong></div>
+            <div class="text-[11px] text-slate-500">A/N: Apotek Hafidz Farma</div>
+          </div>
+
+          <div>
+            <label for="payout-amount" class="font-bold text-slate-700 block mb-1">Nominal Penarikan (Rp)</label>
+            <input
+              id="payout-amount"
+              type="number"
+              bind:value={payoutAmount}
+              max={qrisBalance}
+              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 text-sm"
+            />
+            <div class="text-[10px] text-slate-400 mt-1">Maksimal penarikan: {formatRupiah(qrisBalance)} (Bebas biaya admin)</div>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-100 pt-3 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onclick={() => (isPayoutModalOpen = false)}
+            class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
+          >
+            Batal
+          </button>
+          <button
+            type="button"
+            onclick={handlePayoutSubmit}
+            class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm"
+          >
+            Proses Penarikan Dana
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}

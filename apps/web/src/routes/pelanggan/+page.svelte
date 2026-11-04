@@ -27,6 +27,26 @@
 
   // Modals
   let isAddCustomerModalOpen = $state(false);
+  let isReceiveDebtPaymentOpen = $state(false);
+  let selectedDebtCustomer = $state<any>(null);
+  let debtPaymentAmount = $state(0);
+  let debtPaymentMethod = $state("KAS_TUNAI");
+
+  function openDebtPayment(debt: any) {
+    selectedDebtCustomer = debt;
+    debtPaymentAmount = debt.totalDebt;
+    isReceiveDebtPaymentOpen = true;
+  }
+
+  function handleSaveDebtPayment() {
+    if (!selectedDebtCustomer || debtPaymentAmount <= 0) return;
+    selectedDebtCustomer.totalDebt = Math.max(0, selectedDebtCustomer.totalDebt - debtPaymentAmount);
+    if (selectedDebtCustomer.totalDebt === 0) {
+      selectedDebtCustomer.status = "PAID";
+    }
+    isReceiveDebtPaymentOpen = false;
+    selectedDebtCustomer = null;
+  }
 
   function formatRupiah(num: number): string {
     return new Intl.NumberFormat("id-ID", {
@@ -246,13 +266,19 @@
               {/if}
             </td>
             <td class="py-3.5 px-4 text-center">
-              <button
-                type="button"
-                onclick={() => alert(`Proses penerimaan pembayaran piutang ${formatRupiah(d.totalDebt)} dari ${d.customerName}`)}
-                class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors"
-              >
-                Terima Bayar
-              </button>
+              {#if d.totalDebt > 0}
+                <button
+                  type="button"
+                  onclick={() => openDebtPayment(d)}
+                  class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors"
+                >
+                  Terima Bayar
+                </button>
+              {:else}
+                <span class="text-emerald-600 font-bold text-[11px] flex items-center justify-center gap-1">
+                  <CheckCircle2 class="w-3.5 h-3.5" /> Lunas
+                </span>
+              {/if}
             </td>
           </tr>
         {/each}
@@ -346,6 +372,88 @@
           class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
         >
           Simpan Pelanggan
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL TERIMA PEMBAYARAN PIUTANG PASIEN -->
+{#if isReceiveDebtPaymentOpen && selectedDebtCustomer}
+  <div
+    use:portal
+    data-modal-overlay
+    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) isReceiveDebtPaymentOpen = false;
+    }}
+    role="presentation"
+  >
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-md w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2 text-slate-900 font-bold">
+          <CreditCard class="w-5 h-5 text-brand-blue" />
+          <span>Penerimaan Pembayaran Piutang Pasien</span>
+        </div>
+        <button
+          onclick={() => (isReceiveDebtPaymentOpen = false)}
+          class="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+          aria-label="Tutup"
+        >
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
+          <div class="text-slate-500 text-[11px]">Nama Pasien / Debitur:</div>
+          <div class="font-bold text-slate-900 text-sm">{selectedDebtCustomer.customerName}</div>
+          <div class="font-mono text-slate-600 text-xs">No. Bon: {selectedDebtCustomer.invoiceRef}</div>
+          <div class="flex justify-between pt-2 border-t border-slate-200 font-bold">
+            <span class="text-slate-500">Saldo Piutang:</span>
+            <span class="text-brand-red-600 font-mono">{formatRupiah(selectedDebtCustomer.totalDebt)}</span>
+          </div>
+        </div>
+
+        <div>
+          <label for="pay-meth" class="font-bold text-slate-700 block mb-1">Metode Penerimaan</label>
+          <Select
+            id="pay-meth"
+            bind:value={debtPaymentMethod}
+            options={[
+              "KAS_TUNAI (Tunai Kasir)",
+              "TRANSFER_BCA (Rekening BCA Apotek)",
+              "QRIS_DINAMIS (Scan QRIS Kasir)"
+            ]}
+          />
+        </div>
+
+        <div>
+          <label for="debt-pay-amount" class="font-bold text-slate-700 block mb-1">Nominal Diterima (Rp)</label>
+          <input
+            id="debt-pay-amount"
+            type="number"
+            bind:value={debtPaymentAmount}
+            max={selectedDebtCustomer.totalDebt}
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 text-sm"
+          />
+        </div>
+      </div>
+
+      <div class="border-t border-slate-100 pt-3 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onclick={() => (isReceiveDebtPaymentOpen = false)}
+          class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
+        >
+          Batal
+        </button>
+        <button
+          type="button"
+          onclick={handleSaveDebtPayment}
+          class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm"
+        >
+          Simpan & Cetak Kwitansi
         </button>
       </div>
     </div>

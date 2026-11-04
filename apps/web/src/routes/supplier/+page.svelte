@@ -26,6 +26,26 @@
 
   // Modals
   let isAddSupplierModalOpen = $state(false);
+  let isPayPbfDebtModalOpen = $state(false);
+  let selectedPbfDebt = $state<any>(null);
+  let pbfPaymentAmount = $state(0);
+  let pbfPaymentMethod = $state("TRANSFER_BCA");
+
+  function openPayPbfDebt(d: any) {
+    selectedPbfDebt = d;
+    pbfPaymentAmount = d.totalDebt;
+    isPayPbfDebtModalOpen = true;
+  }
+
+  function handleSavePbfPayment() {
+    if (!selectedPbfDebt || pbfPaymentAmount <= 0) return;
+    selectedPbfDebt.totalDebt = Math.max(0, selectedPbfDebt.totalDebt - pbfPaymentAmount);
+    if (selectedPbfDebt.totalDebt === 0) {
+      selectedPbfDebt.status = "PAID";
+    }
+    isPayPbfDebtModalOpen = false;
+    selectedPbfDebt = null;
+  }
 
   function formatRupiah(num: number): string {
     return new Intl.NumberFormat("id-ID", {
@@ -242,13 +262,19 @@
               {/if}
             </td>
             <td class="py-3.5 px-4 text-center">
-              <button
-                type="button"
-                onclick={() => alert(`Proses transfer pelunasan ${formatRupiah(d.totalDebt)} ke rekening ${d.supplierName}`)}
-                class="px-2.5 py-1 rounded-lg bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-[11px] transition-colors"
-              >
-                Bayar Hutang
-              </button>
+              {#if d.totalDebt > 0}
+                <button
+                  type="button"
+                  onclick={() => openPayPbfDebt(d)}
+                  class="px-2.5 py-1 rounded-lg bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-[11px] transition-colors"
+                >
+                  Bayar Hutang
+                </button>
+              {:else}
+                <span class="text-emerald-600 font-bold text-[11px] flex items-center justify-center gap-1">
+                  <CheckCircle2 class="w-3.5 h-3.5" /> Lunas
+                </span>
+              {/if}
             </td>
           </tr>
         {/each}
@@ -342,6 +368,89 @@
           class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
         >
           Simpan PBF
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL PELUNASAN HUTANG PBF -->
+{#if isPayPbfDebtModalOpen && selectedPbfDebt}
+  <div
+    use:portal
+    data-modal-overlay
+    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) isPayPbfDebtModalOpen = false;
+    }}
+    role="presentation"
+  >
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-md w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2 text-slate-900 font-bold">
+          <Truck class="w-5 h-5 text-brand-blue" />
+          <span>Pembayaran Hutang PBF</span>
+        </div>
+        <button
+          onclick={() => (isPayPbfDebtModalOpen = false)}
+          class="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+          aria-label="Tutup"
+        >
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
+          <div class="text-slate-500 text-[11px]">Distributor Dituju:</div>
+          <div class="font-bold text-slate-900 text-sm">{selectedPbfDebt.supplierName}</div>
+          <div class="font-mono text-slate-600 text-xs">Faktur Ref: {selectedPbfDebt.invoiceRef}</div>
+          <div class="flex justify-between pt-2 border-t border-slate-200 font-bold">
+            <span class="text-slate-500">Sisa Tagihan:</span>
+            <span class="text-brand-red-600 font-mono">{formatRupiah(selectedPbfDebt.totalDebt)}</span>
+          </div>
+        </div>
+
+        <div>
+          <label for="pbf-pay-meth" class="font-bold text-slate-700 block mb-1">Metode Pembayaran</label>
+          <Select
+            id="pbf-pay-meth"
+            bind:value={pbfPaymentMethod}
+            options={[
+              "TRANSFER_BCA (Rekening BCA Apotek)",
+              "TRANSFER_MANDIRI (Rekening Mandiri)",
+              "BILYET_GIRO (Giro Bank)",
+              "KAS_KASIR (Kas Operasional)"
+            ]}
+          />
+        </div>
+
+        <div>
+          <label for="pbf-pay-amount" class="font-bold text-slate-700 block mb-1">Nominal Pembayaran (Rp)</label>
+          <input
+            id="pbf-pay-amount"
+            type="number"
+            bind:value={pbfPaymentAmount}
+            max={selectedPbfDebt.totalDebt}
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 text-sm"
+          />
+        </div>
+      </div>
+
+      <div class="border-t border-slate-100 pt-3 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onclick={() => (isPayPbfDebtModalOpen = false)}
+          class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
+        >
+          Batal
+        </button>
+        <button
+          type="button"
+          onclick={handleSavePbfPayment}
+          class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm"
+        >
+          Konfirmasi Bayar
         </button>
       </div>
     </div>

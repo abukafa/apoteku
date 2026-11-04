@@ -35,7 +35,12 @@
     DollarSign,
     QrCode,
     Sparkles,
-    ShieldAlert
+    ShieldAlert,
+    Wifi,
+    WifiOff,
+    RefreshCw,
+    Lock,
+    KeyRound
   } from "lucide-svelte";
 
   // Reactive state using Svelte 5 Runes
@@ -99,6 +104,86 @@
   let showReceiptModal = $state(false);
   let lastCheckoutResult = $state<CheckoutResult | null>(null);
   let receiptTextPreview = $state("");
+
+  // Offline Sync State
+  let isOfflineSimulated = $state(false);
+  let pendingSalesCount = $state(0);
+  let isSyncing = $state(false);
+  let syncFeedback = $state("");
+
+  async function handleManualSync() {
+    if (pendingSalesCount === 0) {
+      syncFeedback = "Semua transaksi telah tersinkron!";
+      setTimeout(() => (syncFeedback = ""), 3000);
+      return;
+    }
+    isSyncing = true;
+    syncFeedback = "Mengunggah data transaksi ke server cloud...";
+    await new Promise((r) => setTimeout(r, 1200));
+    isSyncing = false;
+    const synced = pendingSalesCount;
+    pendingSalesCount = 0;
+    syncFeedback = `${synced} transaksi offline berhasil disinkronkan!`;
+    setTimeout(() => (syncFeedback = ""), 4000);
+  }
+
+  // Shift Register State
+  let isShiftModalOpen = $state(false);
+  let shiftInitialCash = $state(200000);
+  let shiftCashSales = $state(1450000);
+  let shiftQrisSales = $state(820000);
+  let shiftActualCash = $state(1650000);
+  let shiftExpectedCash = $derived(shiftInitialCash + shiftCashSales);
+  let shiftDiscrepancy = $derived(shiftActualCash - shiftExpectedCash);
+  let shiftNotes = $state("");
+  let shiftClosureSuccess = $state("");
+
+  function handleCloseShift() {
+    shiftClosureSuccess = "Shift kasir ditutup & Berita Acara dicetak!";
+    setTimeout(() => {
+      shiftClosureSuccess = "";
+      isShiftModalOpen = false;
+    }, 2000);
+  }
+
+  // Quick PIN Lock State
+  let isTerminalLocked = $state(false);
+  let pinInput = $state("");
+  let pinError = $state(false);
+
+  function enterPinDigit(digit: string) {
+    if (pinInput.length < 6) {
+      pinInput += digit;
+      pinError = false;
+      if (pinInput.length === 6) {
+        verifyPin();
+      }
+    }
+  }
+
+  function clearPin() {
+    pinInput = "";
+    pinError = false;
+  }
+
+  function deletePinLast() {
+    if (pinInput.length > 0) {
+      pinInput = pinInput.slice(0, -1);
+      pinError = false;
+    }
+  }
+
+  function verifyPin() {
+    // Default PIN is 123456 or any 6 digits for testing
+    if (pinInput === "123456" || pinInput.length === 6) {
+      isTerminalLocked = false;
+      pinInput = "";
+      pinError = false;
+    } else {
+      pinError = true;
+      pinInput = "";
+    }
+  }
 
   // Derived state using Svelte 5 Runes
   let selectedBranch = $derived(
@@ -357,6 +442,10 @@
     lastCheckoutResult = result;
     showCheckoutModal = false;
 
+    if (isOfflineSimulated) {
+      pendingSalesCount += 1;
+    }
+
     // Generate receipt preview string
     buildReceiptPreview(result);
     showReceiptModal = true;
@@ -441,8 +530,8 @@
       </div>
     </div>
 
-    <!-- Controls: Branch Selector, Shift info, Price Tier -->
-    <div class="flex items-center gap-2.5 text-xs">
+    <!-- Controls: Branch Selector, Shift info, Offline/Online Sync, Lock Terminal -->
+    <div class="flex items-center gap-2 text-xs">
       <!-- Branch selector -->
       <Select
         bind:value={selectedBranchId}
@@ -458,17 +547,56 @@
         }))}
       />
 
-      <!-- Shift Info -->
-      <div class="hidden md:flex items-center gap-1.5 bg-[#f4f7fb] px-2.5 py-1.5 rounded-xl border border-slate-200 text-slate-700">
+      <!-- Shift Info (Clickable for Shift Close / Reconciliation) -->
+      <button
+        type="button"
+        onclick={() => (isShiftModalOpen = true)}
+        class="hidden md:flex items-center gap-1.5 bg-[#f4f7fb] hover:bg-slate-100 px-2.5 py-1.5 rounded-xl border border-slate-200 text-slate-700 transition-colors"
+        title="Klik untuk rekonsiliasi & tutup shift kasir"
+      >
         <Clock class="w-3.5 h-3.5 text-slate-500" />
         <span class="font-medium text-[11px]">{authStore.user?.fullName || activeShift?.cashierName || "Kasir"} ({activeShift?.shiftName || "Pagi"})</span>
-      </div>
+      </button>
 
-      <!-- Price Tier Badge -->
-      <div class="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold px-2.5 py-1 rounded-xl text-[11px] uppercase tracking-wider flex items-center gap-1.5">
-        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-        Tier: {currentPriceTier}
-      </div>
+      <!-- Network / Offline Simulator Toggle -->
+      <button
+        type="button"
+        onclick={() => (isOfflineSimulated = !isOfflineSimulated)}
+        class="flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all {isOfflineSimulated ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-emerald-50 text-emerald-700 border-emerald-300'}"
+        title="Simulasi Mode Offline (Dexie.js) / Cloud Online"
+      >
+        {#if isOfflineSimulated}
+          <WifiOff class="w-3.5 h-3.5 text-amber-600" />
+          <span>Offline (Lokal)</span>
+        {:else}
+          <Wifi class="w-3.5 h-3.5 text-emerald-600" />
+          <span>Online</span>
+        {/if}
+      </button>
+
+      <!-- Sync Queue Monitor -->
+      {#if pendingSalesCount > 0 || isSyncing}
+        <button
+          type="button"
+          onclick={handleManualSync}
+          disabled={isSyncing}
+          class="flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-brand-blue-50 text-brand-blue-700 border border-brand-blue-200 hover:bg-brand-blue-100 transition-colors animate-pulse"
+          title="Klik untuk sinkronisasi transaksi offline ke server"
+        >
+          <RefreshCw class="w-3.5 h-3.5 {isSyncing ? 'animate-spin' : ''}" />
+          <span>Sinkron ({pendingSalesCount})</span>
+        </button>
+      {/if}
+
+      <!-- Terminal Lock Screen Button -->
+      <button
+        type="button"
+        onclick={() => (isTerminalLocked = true)}
+        class="p-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-colors"
+        title="Kunci Layar Terminal Kasir (PIN Quick Lock)"
+      >
+        <Lock class="w-3.5 h-3.5" />
+      </button>
     </div>
   </header>
 
@@ -1084,6 +1212,196 @@
         >
           Tutup
         </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL: REKONSILIASI & TUTUP SHIFT KASIR -->
+{#if isShiftModalOpen}
+  <div
+    use:portal
+    data-modal-overlay
+    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) isShiftModalOpen = false;
+    }}
+    role="presentation"
+  >
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-md w-full p-6 shadow-2xl border border-white/80 space-y-4 my-auto">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+        <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+          <Clock class="w-4 h-4 text-brand-blue" />
+          <span>Rekonsiliasi & Tutup Shift Kasir</span>
+        </h3>
+        <button onclick={() => (isShiftModalOpen = false)} class="text-slate-400 hover:text-slate-600">
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+
+      {#if shiftClosureSuccess}
+        <div class="p-3 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-bold border border-emerald-200 flex items-center gap-2">
+          <CheckCircle2 class="w-4 h-4 text-emerald-600" />
+          <span>{shiftClosureSuccess}</span>
+        </div>
+      {:else}
+        <div class="space-y-3 text-xs">
+          <!-- Shift Overview -->
+          <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1.5">
+            <div class="flex justify-between text-slate-600">
+              <span>Kasir Bertugas:</span>
+              <strong class="text-slate-800">{authStore.user?.fullName || "Kasir Utama"}</strong>
+            </div>
+            <div class="flex justify-between text-slate-600">
+              <span>Waktu Buka Shift:</span>
+              <span class="font-mono">Hari ini, 07:00 WIB</span>
+            </div>
+          </div>
+
+          <!-- Cash & Digital Summary -->
+          <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-2">
+            <div class="flex justify-between text-slate-600">
+              <span>Modal Awal Kas:</span>
+              <span class="font-mono font-bold">Rp {shiftInitialCash.toLocaleString("id-ID")}</span>
+            </div>
+            <div class="flex justify-between text-slate-600">
+              <span>Penjualan Tunai:</span>
+              <span class="font-mono font-bold text-emerald-600">+ Rp {shiftCashSales.toLocaleString("id-ID")}</span>
+            </div>
+            <div class="flex justify-between text-slate-600">
+              <span>Penjualan Non-Tunai / QRIS:</span>
+              <span class="font-mono text-slate-500">Rp {shiftQrisSales.toLocaleString("id-ID")}</span>
+            </div>
+            <div class="flex justify-between text-slate-800 pt-2 border-t border-slate-200 font-bold">
+              <span>Target Kas di Laci:</span>
+              <span class="font-mono text-brand-blue">Rp {shiftExpectedCash.toLocaleString("id-ID")}</span>
+            </div>
+          </div>
+
+          <!-- Physical Cash Count Input -->
+          <div>
+            <label for="shift-actual" class="font-bold text-slate-700 block mb-1">
+              Fisik Kas Aktual di Laci (Rp)
+            </label>
+            <input
+              id="shift-actual"
+              type="number"
+              bind:value={shiftActualCash}
+              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 text-sm"
+            />
+          </div>
+
+          <!-- Discrepancy indicator -->
+          <div class="p-2.5 rounded-xl border text-xs font-bold flex justify-between items-center {shiftDiscrepancy === 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : shiftDiscrepancy > 0 ? 'bg-blue-50 text-brand-blue border-blue-200' : 'bg-red-50 text-brand-red-600 border-red-200'}">
+            <span>Selisih Kas Fisik:</span>
+            <span class="font-mono">
+              {shiftDiscrepancy === 0 ? 'Seimbang (Rp 0)' : (shiftDiscrepancy > 0 ? `Lebih Rp ${shiftDiscrepancy.toLocaleString('id-ID')}` : `Kurang Rp ${Math.abs(shiftDiscrepancy).toLocaleString('id-ID')}`)}
+            </span>
+          </div>
+
+          <!-- Shift Handover Notes -->
+          <div>
+            <label for="shift-notes" class="font-bold text-slate-700 block mb-1">Catatan Serah Terima (Opsional)</label>
+            <input
+              id="shift-notes"
+              type="text"
+              bind:value={shiftNotes}
+              placeholder="Contoh: Uang koin 500 habis..."
+              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs"
+            />
+          </div>
+        </div>
+
+        <div class="border-t border-slate-100 pt-3 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onclick={() => (isShiftModalOpen = false)}
+            class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
+          >
+            Batal
+          </button>
+          <button
+            type="button"
+            onclick={handleCloseShift}
+            class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
+          >
+            Tutup Shift & Cetak Berita Acara
+          </button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL: PIN QUICK LOCK SCREEN (TERMINAL KASIR) -->
+{#if isTerminalLocked}
+  <div
+    use:portal
+    data-modal-overlay
+    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-slate-900/95 backdrop-blur-xl z-[120] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    role="dialog"
+    aria-label="Kunci Terminal Kasir"
+  >
+    <div class="bg-white/10 border border-white/20 rounded-3xl p-6 sm:p-8 max-w-sm w-full text-center text-white space-y-5 shadow-2xl backdrop-blur-2xl">
+      <!-- Lock Avatar -->
+      <div class="w-16 h-16 rounded-full bg-gradient-to-tr from-brand-red-600 to-brand-blue-600 mx-auto flex items-center justify-center shadow-lg border border-white/30">
+        <Lock class="w-7 h-7 text-white" />
+      </div>
+
+      <div>
+        <h3 class="text-base font-bold tracking-tight">Terminal Kasir Terkunci</h3>
+        <p class="text-xs text-slate-300 mt-1">Masukkan 6-digit PIN kasir untuk melanjutkan</p>
+      </div>
+
+      <!-- PIN Indicator Dots -->
+      <div class="flex items-center justify-center gap-3 py-2">
+        {#each [0, 1, 2, 3, 4, 5] as i}
+          <div class="w-3.5 h-3.5 rounded-full transition-all duration-150 {i < pinInput.length ? 'bg-white scale-110 shadow-[0_0_8px_rgba(255,255,255,0.8)]' : 'bg-white/20 border border-white/30'}"></div>
+        {/each}
+      </div>
+
+      {#if pinError}
+        <div class="text-xs font-bold text-rose-300 bg-rose-500/20 py-1.5 px-3 rounded-xl border border-rose-400/30">
+          PIN tidak sesuai! Silakan coba lagi.
+        </div>
+      {/if}
+
+      <!-- Keypad -->
+      <div class="grid grid-cols-3 gap-2.5 max-w-[240px] mx-auto text-base font-bold">
+        {#each ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as d}
+          <button
+            type="button"
+            onclick={() => enterPinDigit(d)}
+            class="h-12 rounded-2xl bg-white/10 hover:bg-white/20 active:bg-white/30 border border-white/15 transition-all text-white flex items-center justify-center shadow-xs"
+          >
+            {d}
+          </button>
+        {/each}
+        <button
+          type="button"
+          onclick={clearPin}
+          class="h-12 rounded-2xl bg-white/5 hover:bg-white/15 text-slate-300 text-xs font-bold transition-all"
+        >
+          Reset
+        </button>
+        <button
+          type="button"
+          onclick={() => enterPinDigit("0")}
+          class="h-12 rounded-2xl bg-white/10 hover:bg-white/20 active:bg-white/30 border border-white/15 transition-all text-white flex items-center justify-center shadow-xs"
+        >
+          0
+        </button>
+        <button
+          type="button"
+          onclick={deletePinLast}
+          class="h-12 rounded-2xl bg-white/5 hover:bg-white/15 text-slate-300 text-xs font-bold transition-all"
+        >
+          Hapus
+        </button>
+      </div>
+
+      <div class="text-[11px] text-slate-400 pt-2 border-t border-white/10">
+        Default PIN demo: <code class="font-mono text-white bg-white/10 px-1.5 py-0.5 rounded">123456</code>
       </div>
     </div>
   </div>

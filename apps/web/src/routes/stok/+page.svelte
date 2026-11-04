@@ -40,7 +40,7 @@
     productName: string;
     date: string;
     refNumber: string;
-    type: "PEMBELIAN" | "PENJUALAN" | "TRANSFER_OUT" | "TRANSFER_IN" | "OPNAME";
+    type: "PEMBELIAN" | "PENJUALAN" | "TRANSFER_OUT" | "TRANSFER_IN" | "OPNAME" | "DEFICIT_OVERSELL";
     batch: string;
     qtyIn: number;
     qtyOut: number;
@@ -198,6 +198,21 @@
       unit: productsData[0]?.baseUnit || "TABLET",
       notes: "Opname Rutin: Selisih hitung fisik rak Obat Keras",
       operator: "apt. Hafidz Nurul"
+    },
+    {
+      id: "led-ovs-01",
+      productId: productsData[0]?.id || "prod-amox-500",
+      productName: productsData[0]?.name || "Amoxicillin 500mg (Errata)",
+      date: "2025-10-27 12:40",
+      refNumber: "PJ-CB01-20261027-009",
+      type: "DEFICIT_OVERSELL",
+      batch: productsData[0]?.batches[0]?.batchNumber || "AMX24H01",
+      qtyIn: 0,
+      qtyOut: 5,
+      balance: -5,
+      unit: productsData[0]?.baseUnit || "TABLET",
+      notes: "Sinkronisasi Offline: Kasir offline menjual melebihi sisa batch. Tercatat unbatched.",
+      operator: "Kasir 01 (Terminal Offline)"
     },
     {
       id: "led-02",
@@ -1270,7 +1285,8 @@
                 { value: "PEMBELIAN", label: "Pembelian PBF (+)" },
                 { value: "PENJUALAN", label: "Penjualan POS (-)" },
                 { value: "TRANSFER_OUT", label: "Transfer Cabang" },
-                { value: "OPNAME", label: "Stok Opname / Koreksi (+/-)" }
+                { value: "OPNAME", label: "Stok Opname / Koreksi (+/-)" },
+                { value: "DEFICIT_OVERSELL", label: "Defisit Oversell (Audit APA)" }
               ]}
             />
 
@@ -1305,6 +1321,23 @@
           </div>
         </div>
       </div>
+
+      <!-- APA Deficit Oversell Alert Banner -->
+      {#if productLedgerEntries.some((e) => e.type === "DEFICIT_OVERSELL")}
+        <div class="p-3 bg-red-50 border border-red-200 rounded-xl text-xs flex flex-wrap items-center justify-between gap-2 text-red-900">
+          <div class="flex items-center gap-2">
+            <AlertTriangle class="w-4 h-4 text-brand-red-600 flex-shrink-0" />
+            <span><strong>Audit APA:</strong> Terdapat transaksi kasir offline yang melebihi saldo batch. Silakan lakukan opname fisik untuk menyeimbangkan.</span>
+          </div>
+          <button
+            type="button"
+            onclick={() => openOpnameForProduct(selectedProductForCard?.id)}
+            class="px-2.5 py-1 rounded-lg bg-brand-red-600 hover:bg-brand-red-700 text-white font-bold text-[11px] transition-colors"
+          >
+            Sesuaikan Fisik
+          </button>
+        </div>
+      {/if}
 
       <!-- Batch Breakdown Banner -->
       {#if selectedProductForCard}
@@ -1356,9 +1389,11 @@
                         ? 'bg-blue-50 text-blue-700 border border-blue-200'
                         : entry.type === 'OPNAME'
                           ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                          : 'bg-amber-50 text-amber-700 border border-amber-200'}"
+                          : entry.type === 'DEFICIT_OVERSELL'
+                            ? 'bg-red-100 text-brand-red-700 border border-red-300'
+                            : 'bg-amber-50 text-amber-700 border border-amber-200'}"
                   >
-                    {entry.type === "OPNAME" ? "OPNAME" : entry.type}
+                    {entry.type === 'DEFICIT_OVERSELL' ? 'DEFISIT OFFLINE' : entry.type}
                   </span>
                 </td>
                 <td class="py-3 px-4 font-mono">{entry.batch}</td>

@@ -9,7 +9,10 @@
     CheckCircle2,
     Save,
     KeyRound,
-    Lock
+    Lock,
+    HardDrive,
+    RefreshCw,
+    Wifi
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
@@ -19,18 +22,26 @@
   import usersData from "$lib/mocks/users.json";
   import { authStore } from "$lib/stores/authStore.svelte";
 
-  let activeTab = $state<"cabang" | "pengguna" | "printer">("cabang");
+  let activeTab = $state<"cabang" | "pengguna" | "printer" | "diagnostik">("cabang");
   let branches = $state(branchesData);
   let users = $state(usersData);
   let selectedBranch = $state(branches[0]);
 
   let saveSuccessMessage = $state("");
+  let resyncMessage = $state("");
 
   function handleSaveSettings() {
     saveSuccessMessage = "Pengaturan berhasil disimpan!";
     setTimeout(() => {
       saveSuccessMessage = "";
     }, 3000);
+  }
+
+  function handleResyncMaster() {
+    resyncMessage = "Katalog master berhasil disinkronkan ulang ke IndexedDB!";
+    setTimeout(() => {
+      resyncMessage = "";
+    }, 3500);
   }
 </script>
 
@@ -105,6 +116,20 @@
         <span>Printer Thermal & Laci Kasir</span>
       </div>
       {#if activeTab === "printer"}
+        <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
+      {/if}
+    </button>
+
+    <button
+      type="button"
+      onclick={() => (activeTab = "diagnostik")}
+      class="pb-3 px-3 transition-colors relative {activeTab === 'diagnostik' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+    >
+      <div class="flex items-center gap-2">
+        <HardDrive class="w-4 h-4 text-emerald-600" />
+        <span>Storage Offline & Sync</span>
+      </div>
+      {#if activeTab === "diagnostik"}
         <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
       {/if}
     </button>
@@ -318,6 +343,80 @@
         >
           <Printer class="w-4 h-4" />
           <span>Uji Cetak Struk & Tes Buka Laci</span>
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- TAB 4: DIAGNOSTIK & STORAGE OFFLINE -->
+  {#if activeTab === "diagnostik"}
+    <div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 space-y-6">
+      <div class="border-b border-slate-100 pb-4">
+        <h3 class="text-sm font-bold text-slate-800">Status Penyimpanan Offline (IndexedDB / Dexie.js v4)</h3>
+        <p class="text-xs text-slate-500 mt-0.5">Database lokal di browser untuk menjamin kasir tetap dapat bertransaksi saat internet mati</p>
+      </div>
+
+      {#if resyncMessage}
+        <div class="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-2">
+          <CheckCircle2 class="w-4 h-4 text-emerald-600" />
+          <span>{resyncMessage}</span>
+        </div>
+      {/if}
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+        <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+          <span class="text-slate-400 font-bold uppercase text-[10px]">Ukuran Storage Lokal</span>
+          <div class="text-base font-black text-slate-800">48.2 MB</div>
+          <div class="text-[11px] text-slate-500">Kuota aman (Browser Quota: 8GB)</div>
+        </div>
+        <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+          <span class="text-slate-400 font-bold uppercase text-[10px]">Status Database Dexie</span>
+          <div class="text-base font-black text-emerald-600 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <span>Tersambung (v4.0.10)</span>
+          </div>
+          <div class="text-[11px] text-slate-500">Schema version 4 ready</div>
+        </div>
+        <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+          <span class="text-slate-400 font-bold uppercase text-[10px]">Koneksi Server Cloud</span>
+          <div class="text-base font-black text-brand-blue flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+            <span>Online Sinkron</span>
+          </div>
+          <div class="text-[11px] text-slate-500">WebSocket / Polling aktif</div>
+        </div>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <h4 class="font-bold text-slate-700">Tabel Cache Lokal Terpasang:</h4>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div class="p-2.5 rounded-lg border border-slate-200 bg-white flex justify-between items-center">
+            <span class="text-slate-600 font-medium">products</span>
+            <span class="font-mono font-bold text-slate-800">82 record</span>
+          </div>
+          <div class="p-2.5 rounded-lg border border-slate-200 bg-white flex justify-between items-center">
+            <span class="text-slate-600 font-medium">branchBatches</span>
+            <span class="font-mono font-bold text-slate-800">145 batch</span>
+          </div>
+          <div class="p-2.5 rounded-lg border border-slate-200 bg-white flex justify-between items-center">
+            <span class="text-slate-600 font-medium">customers</span>
+            <span class="font-mono font-bold text-slate-800">4 debitur</span>
+          </div>
+          <div class="p-2.5 rounded-lg border border-slate-200 bg-white flex justify-between items-center">
+            <span class="text-slate-600 font-medium">pendingSales</span>
+            <span class="font-mono font-bold text-emerald-600">0 antrean</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t border-slate-100 pt-4 flex items-center justify-start gap-3">
+        <button
+          type="button"
+          onclick={handleResyncMaster}
+          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm flex items-center gap-2 cursor-pointer"
+        >
+          <RefreshCw class="w-4 h-4" />
+          <span>Sinkronkan Ulang Katalog dari Cloud</span>
         </button>
       </div>
     </div>

@@ -32,6 +32,7 @@
   import branchesData from "$lib/mocks/branches.json";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { portal } from "$lib/actions/portal";
+  import { mockApi } from "$lib/services/mock-api";
 
   // Types for Ledger & Adjustment History
   interface LedgerEntry {
@@ -124,11 +125,24 @@
     }
   }
 
-  onMount(() => {
+  onMount(async () => {
     if (authStore.user?.branchId) {
       selectedBranchId = authStore.user.branchId;
     }
     fetchProducts();
+    try {
+      const [liveProds, liveBranches] = await Promise.all([
+        mockApi.searchProducts({ branchId: selectedBranchId }),
+        mockApi.getBranches()
+      ]);
+      if (liveProds && liveProds.length > 0) {
+        products = liveProds as any;
+        if (products[0]) selectedProductIdForCard = products[0].id;
+      }
+      if (liveBranches && liveBranches.length > 0) {
+        branches = liveBranches as any;
+      }
+    } catch (_) {}
   });
 
   // Selection for Stock Card (Tab 2)

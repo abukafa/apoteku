@@ -19,10 +19,21 @@
   import Select from "$lib/components/ui/Select.svelte";
   import suppliersData from "$lib/mocks/suppliers.json";
   import { portal } from "$lib/actions/portal";
+  import { onMount } from "svelte";
+  import { mockApi } from "$lib/services/mock-api";
 
   let suppliers = $state(suppliersData);
   let activeTab = $state<"semua" | "hutang">("semua");
   let searchQuery = $state("");
+
+  onMount(async () => {
+    try {
+      const live = await mockApi.getSuppliers();
+      if (live && live.length > 0) {
+        suppliers = live as any;
+      }
+    } catch (_) {}
+  });
 
   // Modals
   let isAddSupplierModalOpen = $state(false);

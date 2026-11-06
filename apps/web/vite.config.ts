@@ -5,6 +5,20 @@ export default defineConfig({
   plugins: [sveltekit()],
   server: {
     port: 5173,
-    strictPort: false
+    strictPort: false,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true
+      },
+      '/health': {
+        target: 'http://localhost:3001',
+        changeOrigin: true
+      },
+      '/uploads': {
+        target: 'http://localhost:3001',
+        changeOrigin: true
+      }
+    }
   }
 });

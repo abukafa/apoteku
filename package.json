@@ -7,8 +7,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "turbo run dev",
-    "build": "turbo run build && node -e \"const fs=require('fs'),{execSync}=require('child_process');if(fs.existsSync('apps/web/.vercel/output')){fs.mkdirSync('.vercel',{recursive:true});fs.rmSync('.vercel/output',{recursive:true,force:true});if(process.platform!=='win32'){execSync('cp -a apps/web/.vercel/output .vercel/output');}else{fs.renameSync('apps/web/.vercel/output','.vercel/output');}}\"",
+    "dev": "turbo run dev --ui=stream",
+    "start": "turbo run dev --ui=stream",
+    "dev:bun": "bun --filter @apoteku/backend --filter @apoteku/web --parallel run dev",
+    "build": "turbo run build && node -e \"const fs=require('fs');if(fs.existsSync('apps/web/.vercel/output')){fs.rmSync('.vercel/output',{recursive:true,force:true});fs.mkdirSync('.vercel',{recursive:true});fs.cpSync('apps/web/.vercel/output','.vercel/output',{recursive:true,verbatimSymlinks:true});}\"",
     "check": "turbo run check",
     "lint": "turbo run lint"
   },

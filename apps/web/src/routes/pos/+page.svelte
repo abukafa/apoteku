@@ -13,6 +13,8 @@
   } from "$lib/services/mock-api";
   import { calculateCartTotals, selectFefoBatches, EscPosBuilder } from "@apoteku/core";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { localDb } from "@apoteku/db/client-indexeddb";
+  import { networkStore } from "$lib/stores/networkStore.svelte";
   import { portal } from "$lib/actions/portal";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
@@ -105,26 +107,13 @@
   let lastCheckoutResult = $state<CheckoutResult | null>(null);
   let receiptTextPreview = $state("");
 
-  // Offline Sync State
-  let isOfflineSimulated = $state(false);
-  let pendingSalesCount = $state(0);
-  let isSyncing = $state(false);
-  let syncFeedback = $state("");
+  // Offline Sync State powered by networkStore & Dexie.js
+  let pendingSalesCount = $derived(networkStore.pendingCount);
+  let isSyncing = $derived(networkStore.isSyncing);
+  let syncFeedback = $derived(networkStore.syncMessage);
 
   async function handleManualSync() {
-    if (pendingSalesCount === 0) {
-      syncFeedback = "Semua transaksi telah tersinkron!";
-      setTimeout(() => (syncFeedback = ""), 3000);
-      return;
-    }
-    isSyncing = true;
-    syncFeedback = "Mengunggah data transaksi ke server cloud...";
-    await new Promise((r) => setTimeout(r, 1200));
-    isSyncing = false;
-    const synced = pendingSalesCount;
-    pendingSalesCount = 0;
-    syncFeedback = `${synced} transaksi offline berhasil disinkronkan!`;
-    setTimeout(() => (syncFeedback = ""), 4000);
+    await networkStore.syncPendingSales();
   }
 
   // Shift Register State
@@ -138,7 +127,29 @@
   let shiftNotes = $state("");
   let shiftClosureSuccess = $state("");
 
-  function handleCloseShift() {
+  async function handleOpenShift() {
+    try {
+      const created = await mockApi.openShift(selectedBranchId, shiftInitialCash, 1, shiftNotes);
+      activeShift = created;
+      shiftClosureSuccess = `Shift #${created.shiftName} berhasil dibuka!`;
+      setTimeout(() => {
+        shiftClosureSuccess = "";
+        isShiftModalOpen = false;
+      }, 1500);
+    } catch (e) {
+      console.warn("Failed to open shift:", e);
+    }
+  }
+
+  async function handleCloseShift() {
+    if (activeShift?.id) {
+      try {
+        await mockApi.closeShift(activeShift.id, shiftActualCash, shiftNotes);
+        activeShift = null;
+      } catch (e) {
+        console.warn("Failed to close shift:", e);
+      }
+    }
     shiftClosureSuccess = "Shift kasir ditutup & Berita Acara dicetak!";
     setTimeout(() => {
       shiftClosureSuccess = "";
@@ -237,6 +248,43 @@
       for (const p of allProds) {
         productMap.set(p.id, p);
       }
+
+      // Seed local Dexie indexedDB if empty
+      if (typeof window !== "undefined") {
+        try {
+          const prodCount = await localDb.products.count();
+          if (prodCount === 0 && allProds.length > 0) {
+            const dexieProds = allProds.map((p) => ({
+              id: p.id,
+              sku: p.sku,
+              barcode: p.barcode || null,
+              name: p.name,
+              activeSubstance: p.description || null,
+              dosageForm: "Tablet",
+              defaultDosage: "3x1 Sehari",
+              rackLocation: "RAK-A1",
+              drugClass: p.drugClass,
+              baseUnit: p.baseUnit,
+              isActive: true,
+              units: p.units.map((u) => ({
+                unitName: u.unit,
+                conversionFactor: u.multiplier,
+                salePriceGeneral: u.prices.general || 0,
+                salePriceResep: u.prices.prescription || 0,
+                salePriceGrosir: u.prices.wholesale || 0,
+                salePriceDelivery: u.prices.delivery || 0,
+                salePriceMember: u.prices.member || 0,
+                isBaseUnit: u.multiplier === 1
+              })),
+              updatedAt: new Date().toISOString()
+            }));
+            await localDb.products.bulkPut(dexieProds);
+          }
+        } catch (dexErr) {
+          console.warn("[POS] Dexie seed skipped:", dexErr);
+        }
+      }
+
       await fetchProducts();
     } finally {
       isLoading = false;
@@ -246,6 +294,70 @@
   async function fetchProducts() {
     isLoading = true;
     try {
+      if (!networkStore.effectiveOnline && typeof window !== "undefined") {
+        try {
+          const localItems = await localDb.products.toArray();
+          const q = searchQuery.toLowerCase().trim();
+          const filtered = localItems.filter((p) => {
+            if (!q) return true;
+            return (
+              p.name.toLowerCase().includes(q) ||
+              p.sku.toLowerCase().includes(q) ||
+              (p.barcode && p.barcode.includes(q)) ||
+              (p.activeSubstance && p.activeSubstance.toLowerCase().includes(q))
+            );
+          });
+          products = filtered.map((lp) => {
+            const cached = productMap.get(lp.id);
+            if (cached) return cached;
+            const item: Product = {
+              id: lp.id,
+              sku: lp.sku,
+              barcode: lp.barcode || "",
+              name: lp.name,
+              categoryId: "cat-1",
+              categoryName: "Obat Bebas & Terbatas",
+              drugClass: (lp.drugClass as any) || "OTC",
+              requiresPrescription: lp.drugClass === "ETHICAL" || lp.drugClass === "KERAS",
+              isConsignment: false,
+              manufacturer: "Generik",
+              baseUnit: lp.baseUnit,
+              description: lp.activeSubstance || "",
+              indication: "Sesuai anjuran medis",
+              dosage: lp.defaultDosage || "3x1 Sehari",
+              units: lp.units.map((u) => ({
+                unit: u.unitName,
+                multiplier: u.conversionFactor,
+                prices: {
+                  general: u.salePriceGeneral,
+                  prescription: u.salePriceResep,
+                  wholesale: u.salePriceGrosir,
+                  delivery: u.salePriceDelivery,
+                  member: u.salePriceMember
+                }
+              })),
+              batches: [
+                {
+                  id: "batch-local-01",
+                  batchNumber: "BTC-LOKAL",
+                  branchId: selectedBranchId,
+                  expiryDate: "2027-12-31",
+                  stock: 100,
+                  buyPrice: 500
+                }
+              ]
+            };
+            return item;
+          });
+          for (const p of products) {
+            productMap.set(p.id, p);
+          }
+          return;
+        } catch (err) {
+          console.warn("Offline fetch fallback failed:", err);
+        }
+      }
+
       products = await mockApi.searchProducts({
         query: searchQuery,
         categoryId: selectedCategoryId,
@@ -442,9 +554,13 @@
     lastCheckoutResult = result;
     showCheckoutModal = false;
 
-    if (isOfflineSimulated) {
-      pendingSalesCount += 1;
-    }
+    // Queue sale in local Dexie database & auto sync when online
+    const saleId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "01931818-" + Date.now().toString(16).padStart(12, "0");
+    await networkStore.queueSale({
+      id: saleId,
+      invoiceNo: result.invoiceNumber,
+      payload
+    });
 
     // Generate receipt preview string
     buildReceiptPreview(result);
@@ -561,11 +677,11 @@
       <!-- Network / Offline Simulator Toggle -->
       <button
         type="button"
-        onclick={() => (isOfflineSimulated = !isOfflineSimulated)}
-        class="flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all {isOfflineSimulated ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-emerald-50 text-emerald-700 border-emerald-300'}"
+        onclick={() => networkStore.toggleOfflineSimulation()}
+        class="flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all {!networkStore.effectiveOnline ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-emerald-50 text-emerald-700 border-emerald-300'}"
         title="Simulasi Mode Offline (Dexie.js) / Cloud Online"
       >
-        {#if isOfflineSimulated}
+        {#if !networkStore.effectiveOnline}
           <WifiOff class="w-3.5 h-3.5 text-amber-600" />
           <span>Offline (Lokal)</span>
         {:else}
@@ -575,16 +691,16 @@
       </button>
 
       <!-- Sync Queue Monitor -->
-      {#if pendingSalesCount > 0 || isSyncing}
+      {#if networkStore.pendingCount > 0 || networkStore.isSyncing}
         <button
           type="button"
           onclick={handleManualSync}
-          disabled={isSyncing}
+          disabled={networkStore.isSyncing}
           class="flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-brand-blue-50 text-brand-blue-700 border border-brand-blue-200 hover:bg-brand-blue-100 transition-colors animate-pulse"
           title="Klik untuk sinkronisasi transaksi offline ke server"
         >
-          <RefreshCw class="w-3.5 h-3.5 {isSyncing ? 'animate-spin' : ''}" />
-          <span>Sinkron ({pendingSalesCount})</span>
+          <RefreshCw class="w-3.5 h-3.5 {networkStore.isSyncing ? 'animate-spin' : ''}" />
+          <span>Sinkron ({networkStore.pendingCount})</span>
         </button>
       {/if}
 
@@ -599,6 +715,13 @@
       </button>
     </div>
   </header>
+
+  {#if syncFeedback}
+    <div class="fixed top-16 right-6 z-50 bg-slate-900/90 backdrop-blur-md text-white px-3.5 py-2 rounded-xl text-xs shadow-xl flex items-center gap-2 border border-slate-800">
+      <RefreshCw class="w-3.5 h-3.5 text-blue-400 {isSyncing ? 'animate-spin' : ''}" />
+      <span>{syncFeedback}</span>
+    </div>
+  {/if}
 
   <!-- MAIN POS LAYOUT: 2 COLUMNS (Catalog & Cart) -->
   <div class="flex-1 flex flex-col lg:flex-row gap-4 overflow-hidden min-h-0">
@@ -1245,89 +1368,146 @@
           <span>{shiftClosureSuccess}</span>
         </div>
       {:else}
-        <div class="space-y-3 text-xs">
-          <!-- Shift Overview -->
-          <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1.5">
-            <div class="flex justify-between text-slate-600">
-              <span>Kasir Bertugas:</span>
-              <strong class="text-slate-800">{authStore.user?.fullName || "Kasir Utama"}</strong>
+        {#if !activeShift}
+          <!-- Form Buka Shift Baru -->
+          <div class="space-y-3 text-xs">
+            <div class="bg-amber-50 p-3 rounded-xl border border-amber-200 text-amber-900 space-y-1">
+              <span class="font-bold flex items-center gap-1.5">
+                <AlertCircle class="w-4 h-4 text-amber-600" />
+                Shift Kasir Belum Dibuka
+              </span>
+              <p class="text-[11px] text-amber-700">
+                Silakan masukkan modal awal kas di laci untuk memulai sesi transaksi kasir Anda.
+              </p>
             </div>
-            <div class="flex justify-between text-slate-600">
-              <span>Waktu Buka Shift:</span>
-              <span class="font-mono">Hari ini, 07:00 WIB</span>
+
+            <div>
+              <label for="shift-init" class="font-bold text-slate-700 block mb-1">
+                Modal Awal Kas di Laci (Rp)
+              </label>
+              <input
+                id="shift-init"
+                type="number"
+                bind:value={shiftInitialCash}
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 text-sm"
+              />
+            </div>
+
+            <div>
+              <label for="shift-notes-open" class="font-bold text-slate-700 block mb-1">
+                Catatan Buka Shift (Opsional)
+              </label>
+              <input
+                id="shift-notes-open"
+                type="text"
+                bind:value={shiftNotes}
+                placeholder="Contoh: Modal pecahan kecil 50rb, 20rb, 10rb..."
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
+              />
             </div>
           </div>
 
-          <!-- Cash & Digital Summary -->
-          <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-2">
-            <div class="flex justify-between text-slate-600">
-              <span>Modal Awal Kas:</span>
-              <span class="font-mono font-bold">Rp {shiftInitialCash.toLocaleString("id-ID")}</span>
+          <div class="border-t border-slate-100 pt-3 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onclick={() => (isShiftModalOpen = false)}
+              class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              onclick={handleOpenShift}
+              class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
+            >
+              Buka Shift Kasir Sekarang
+            </button>
+          </div>
+        {:else}
+          <div class="space-y-3 text-xs">
+            <!-- Shift Overview -->
+            <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1.5">
+              <div class="flex justify-between text-slate-600">
+                <span>Kasir Bertugas:</span>
+                <strong class="text-slate-800">{authStore.user?.fullName || "Kasir Utama"}</strong>
+              </div>
+              <div class="flex justify-between text-slate-600">
+                <span>Waktu Buka Shift:</span>
+                <span class="font-mono">{activeShift.startTime ? new Date(activeShift.startTime).toLocaleTimeString("id-ID", { hour: '2-digit', minute: '2-digit' }) : "07:00"} WIB</span>
+              </div>
             </div>
-            <div class="flex justify-between text-slate-600">
-              <span>Penjualan Tunai:</span>
-              <span class="font-mono font-bold text-emerald-600">+ Rp {shiftCashSales.toLocaleString("id-ID")}</span>
+
+            <!-- Cash & Digital Summary -->
+            <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-2">
+              <div class="flex justify-between text-slate-600">
+                <span>Modal Awal Kas:</span>
+                <span class="font-mono font-bold">Rp {shiftInitialCash.toLocaleString("id-ID")}</span>
+              </div>
+              <div class="flex justify-between text-slate-600">
+                <span>Penjualan Tunai:</span>
+                <span class="font-mono font-bold text-emerald-600">+ Rp {shiftCashSales.toLocaleString("id-ID")}</span>
+              </div>
+              <div class="flex justify-between text-slate-600">
+                <span>Penjualan Non-Tunai / QRIS:</span>
+                <span class="font-mono text-slate-500">Rp {shiftQrisSales.toLocaleString("id-ID")}</span>
+              </div>
+              <div class="flex justify-between text-slate-800 pt-2 border-t border-slate-200 font-bold">
+                <span>Target Kas di Laci:</span>
+                <span class="font-mono text-brand-blue">Rp {shiftExpectedCash.toLocaleString("id-ID")}</span>
+              </div>
             </div>
-            <div class="flex justify-between text-slate-600">
-              <span>Penjualan Non-Tunai / QRIS:</span>
-              <span class="font-mono text-slate-500">Rp {shiftQrisSales.toLocaleString("id-ID")}</span>
+
+            <!-- Physical Cash Count Input -->
+            <div>
+              <label for="shift-actual" class="font-bold text-slate-700 block mb-1">
+                Fisik Kas Aktual di Laci (Rp)
+              </label>
+              <input
+                id="shift-actual"
+                type="number"
+                bind:value={shiftActualCash}
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 text-sm"
+              />
             </div>
-            <div class="flex justify-between text-slate-800 pt-2 border-t border-slate-200 font-bold">
-              <span>Target Kas di Laci:</span>
-              <span class="font-mono text-brand-blue">Rp {shiftExpectedCash.toLocaleString("id-ID")}</span>
+
+            <!-- Discrepancy indicator -->
+            <div class="p-2.5 rounded-xl border text-xs font-bold flex justify-between items-center {shiftDiscrepancy === 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : shiftDiscrepancy > 0 ? 'bg-blue-50 text-brand-blue border-blue-200' : 'bg-red-50 text-brand-red-600 border-red-200'}">
+              <span>Selisih Kas Fisik:</span>
+              <span class="font-mono">
+                {shiftDiscrepancy === 0 ? 'Seimbang (Rp 0)' : (shiftDiscrepancy > 0 ? `Lebih Rp ${shiftDiscrepancy.toLocaleString('id-ID')}` : `Kurang Rp ${Math.abs(shiftDiscrepancy).toLocaleString('id-ID')}`)}
+              </span>
+            </div>
+
+            <!-- Shift Handover Notes -->
+            <div>
+              <label for="shift-notes" class="font-bold text-slate-700 block mb-1">Catatan Serah Terima (Opsional)</label>
+              <input
+                id="shift-notes"
+                type="text"
+                bind:value={shiftNotes}
+                placeholder="Contoh: Uang koin 500 habis..."
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs"
+              />
             </div>
           </div>
 
-          <!-- Physical Cash Count Input -->
-          <div>
-            <label for="shift-actual" class="font-bold text-slate-700 block mb-1">
-              Fisik Kas Aktual di Laci (Rp)
-            </label>
-            <input
-              id="shift-actual"
-              type="number"
-              bind:value={shiftActualCash}
-              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 text-sm"
-            />
+          <div class="border-t border-slate-100 pt-3 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onclick={() => (isShiftModalOpen = false)}
+              class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              onclick={handleCloseShift}
+              class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
+            >
+              Tutup Shift & Cetak Berita Acara
+            </button>
           </div>
-
-          <!-- Discrepancy indicator -->
-          <div class="p-2.5 rounded-xl border text-xs font-bold flex justify-between items-center {shiftDiscrepancy === 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : shiftDiscrepancy > 0 ? 'bg-blue-50 text-brand-blue border-blue-200' : 'bg-red-50 text-brand-red-600 border-red-200'}">
-            <span>Selisih Kas Fisik:</span>
-            <span class="font-mono">
-              {shiftDiscrepancy === 0 ? 'Seimbang (Rp 0)' : (shiftDiscrepancy > 0 ? `Lebih Rp ${shiftDiscrepancy.toLocaleString('id-ID')}` : `Kurang Rp ${Math.abs(shiftDiscrepancy).toLocaleString('id-ID')}`)}
-            </span>
-          </div>
-
-          <!-- Shift Handover Notes -->
-          <div>
-            <label for="shift-notes" class="font-bold text-slate-700 block mb-1">Catatan Serah Terima (Opsional)</label>
-            <input
-              id="shift-notes"
-              type="text"
-              bind:value={shiftNotes}
-              placeholder="Contoh: Uang koin 500 habis..."
-              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs"
-            />
-          </div>
-        </div>
-
-        <div class="border-t border-slate-100 pt-3 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onclick={() => (isShiftModalOpen = false)}
-            class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
-          >
-            Batal
-          </button>
-          <button
-            type="button"
-            onclick={handleCloseShift}
-            class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
-          >
-            Tutup Shift & Cetak Berita Acara
-          </button>
-        </div>
+        {/if}
       {/if}
     </div>
   </div>

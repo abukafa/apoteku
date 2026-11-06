@@ -26,6 +26,8 @@
   import productsData from "$lib/mocks/products.json";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { portal } from "$lib/actions/portal";
+  import { api } from "$lib/services/api";
+  import { mockApi } from "$lib/services/mock-api";
 
   interface TransferItem {
     productId: string;
@@ -70,8 +72,8 @@
       }))
     }))
   );
-  let branches = $state(branchesData);
-  let products = $state(productsData);
+  let branches = $state<any[]>(branchesData);
+  let products = $state<any[]>(productsData);
 
   let selectedBranchFilter = $state<string>("ALL");
   let activeTab = $state<"semua" | "in_transit" | "requested" | "received">("semua");
@@ -83,10 +85,30 @@
     subtext?: string;
   } | null>(null);
 
-  onMount(() => {
+  onMount(async () => {
     if (authStore.user?.branchId) {
       selectedBranchFilter = "ALL";
     }
+    try {
+      await mockApi.ensureDataLoaded();
+      const [branchList, prodList, transferList] = await Promise.all([
+        mockApi.getBranches(),
+        mockApi.getProducts(),
+        api.transfer.list()
+      ]);
+      if (branchList.length > 0) {
+        branches = branchList;
+        if (branchList[0]?.id) formFromBranchId = branchList[0].id;
+        if (branchList[1]?.id) formToBranchId = branchList[1].id;
+      }
+      if (prodList.length > 0) {
+        products = prodList;
+        draftProductId = prodList[0]?.id || "";
+      }
+      if (transferList?.success && Array.isArray(transferList.data) && transferList.data.length > 0) {
+        transfers = transferList.data;
+      }
+    } catch (_) {}
   });
 
   function formatNowTimestamp(): string {
@@ -257,42 +279,73 @@
     formItems = formItems.filter((_, i) => i !== index);
   }
 
-  function submitNewTransfer() {
+  async function submitNewTransfer() {
     if (formItems.length === 0) return;
 
     const fromBranch = branches.find((b) => b.id === formFromBranchId);
     const toBranch = branches.find((b) => b.id === formToBranchId);
-    const seq = String(Math.floor(100 + Math.random() * 900));
-    const docNo = `RKB-2025-1027-${seq}`;
 
-    const newTransfer: TransferDoc = {
-      id: `trf-${Date.now()}`,
-      transferNumber: docNo,
-      fromBranchId: formFromBranchId,
-      fromBranchName: fromBranch?.name || "Apotek Pusat",
-      toBranchId: formToBranchId,
-      toBranchName: toBranch?.name || "Cabang Tujuan",
-      transferDate: formatNowTimestamp(),
-      courierName: formCourierName.trim() || "Kurir Internal",
-      operator: authStore.user?.fullName || "apt. Hafidz Nurul",
-      status: "IN_TRANSIT",
-      notes: formTransferNotes.trim() || "Pengiriman stok antar cabang",
-      items: formItems.map((it) => ({
-        ...it,
-        status: "IN_TRANSIT"
-      }))
-    };
+    try {
+      const res = await api.transfer.create({
+        fromBranchId: formFromBranchId,
+        toBranchId: formToBranchId,
+        courierName: formCourierName.trim() || "Kurir Internal",
+        operator: authStore.user?.fullName || "apt. Hafidz Nurul",
+        status: "IN_TRANSIT",
+        notes: formTransferNotes.trim() || "Pengiriman stok antar cabang",
+        items: formItems.map((it) => ({
+          productId: it.productId,
+          productName: it.productName,
+          batchNumber: it.batchNumber,
+          qty: it.qty,
+          unit: it.unit
+        }))
+      });
 
-    transfers = [newTransfer, ...transfers];
+      if (res?.success && res.data) {
+        transfers = [res.data, ...transfers];
+        notificationBanner = {
+          message: `Surat Jalan ${res.data.transferNumber} berhasil diterbitkan (Status: DI JALAN)!`,
+          subtext: `Stok cabang asal (${fromBranch?.name || "Asal"}) telah dipotong (TRANSFER_OUT) dan siap diverifikasi oleh ${toBranch?.name || "Tujuan"}.`
+        };
+      } else {
+        throw new Error(res?.error || "Gagal membuat surat jalan");
+      }
+    } catch (err) {
+      console.warn("API transfer create error, falling back locally:", err);
+      const seq = String(Math.floor(100 + Math.random() * 900));
+      const docNo = `RKB-2025-1027-${seq}`;
+      const newTransfer: TransferDoc = {
+        id: `trf-${Date.now()}`,
+        transferNumber: docNo,
+        fromBranchId: formFromBranchId,
+        fromBranchName: fromBranch?.name || "Apotek Pusat",
+        toBranchId: formToBranchId,
+        toBranchName: toBranch?.name || "Cabang Tujuan",
+        transferDate: formatNowTimestamp(),
+        courierName: formCourierName.trim() || "Kurir Internal",
+        operator: authStore.user?.fullName || "apt. Hafidz Nurul",
+        status: "IN_TRANSIT",
+        notes: formTransferNotes.trim() || "Pengiriman stok antar cabang",
+        items: formItems.map((it) => ({
+          ...it,
+          status: "IN_TRANSIT"
+        }))
+      };
+      transfers = [newTransfer, ...transfers];
+      notificationBanner = {
+        message: `Surat Jalan ${docNo} berhasil diterbitkan (Status: DI JALAN)!`,
+        subtext: `Stok cabang asal (${newTransfer.fromBranchName}) telah dipotong (TRANSFER_OUT) dan siap diverifikasi oleh ${newTransfer.toBranchName}.`
+      };
+    }
     isAddTransferModalOpen = false;
-    notificationBanner = {
-      message: `Surat Jalan ${docNo} berhasil diterbitkan (Status: DI JALAN)!`,
-      subtext: `Stok cabang asal (${newTransfer.fromBranchName}) telah dipotong (TRANSFER_OUT) dan siap diverifikasi oleh ${newTransfer.toBranchName}.`
-    };
   }
 
   // Dispatch a REQUESTED transfer
-  function dispatchRequestedTransfer(trf: TransferDoc) {
+  async function dispatchRequestedTransfer(trf: TransferDoc) {
+    try {
+      await api.transfer.dispatch(trf.id, "Kurir Internal Hafidz Farma");
+    } catch (_) {}
     trf.status = "IN_TRANSIT";
     trf.transferDate = formatNowTimestamp();
     trf.courierName = "Kurir Internal Hafidz Farma";
@@ -334,15 +387,39 @@
     isReceiveModalOpen = true;
   }
 
-  function submitReceiveVerification() {
+  async function submitReceiveVerification() {
     if (!receivingTransfer) return;
 
     let anyDiff = false;
+    const itemPayload = receivingTransfer.items.map((item, idx) => {
+      const recQty = Math.max(0, Number(receiveCounts[idx] ?? item.qty));
+      const diff = recQty - item.qty;
+      if (diff !== 0) anyDiff = true;
+      return {
+        lineNo: idx + 1,
+        qtyReceived: recQty,
+        discrepancyReason: diff !== 0 ? receiveReasons[idx]?.trim() || "Selisih hitung saat penerimaan" : undefined
+      };
+    });
+
+    try {
+      await api.transfer.receive(receivingTransfer.id, {
+        receivedBy: authStore.user?.fullName || "apt. Rina Marlina",
+        receiptNotes: receiveGeneralNotes.trim() || (anyDiff ? "Diterima dengan catatan selisih fisik" : "Diterima lengkap dan cocok"),
+        items: itemPayload
+      });
+      const res = await api.transfer.list();
+      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+        transfers = res.data;
+      }
+    } catch (e) {
+      console.warn("API transfer receive error, fallback local:", e);
+    }
+
     const updatedItems: TransferItem[] = receivingTransfer.items.map(
       (item, idx) => {
         const recQty = Math.max(0, Number(receiveCounts[idx] ?? item.qty));
         const diff = recQty - item.qty;
-        if (diff !== 0) anyDiff = true;
         return {
           ...item,
           receivedQty: recQty,
@@ -745,12 +822,12 @@
               searchPlaceholder="Cari nama obat atau SKU..."
               onchange={(val) => handleDraftProductChange(val)}
               options={products.map((p) => {
-                const tot = p.batches.reduce((a, b) => a + b.stock, 0);
+                const tot = (p.batches || []).reduce((a: number, b: any) => a + Number(b?.stock || 0), 0);
                 return {
                   value: p.id,
                   label: p.name,
-                  sublabel: `Batch FEFO: ${p.batches[0]?.batchNumber || "-"} • ED: ${p.batches[0]?.expiryDate || "-"}`,
-                  badge: `${tot} ${p.baseUnit}`
+                  sublabel: `Batch FEFO: ${p.batches?.[0]?.batchNumber || "-"} • ED: ${p.batches?.[0]?.expiryDate || "-"}`,
+                  badge: `${tot} ${p.baseUnit || "PCS"}`
                 };
               })}
             />

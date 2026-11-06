@@ -30,6 +30,8 @@
   import Select from "$lib/components/ui/Select.svelte";
   import salesMock from "$lib/mocks/sales.json";
   import { portal } from "$lib/actions/portal";
+  import { onMount } from "svelte";
+  import { api } from "$lib/services/api";
 
   // Reactive state
   let sales = $state(salesMock.sales);
@@ -38,6 +40,27 @@
   let activeTab = $state<"SEMUA" | "UMUM" | "RESEP" | "GROSIR" | "TEMPO" | "DELIVERY">("SEMUA");
   let searchQuery = $state("");
   let selectedPaymentFilter = $state<string>("ALL");
+
+  onMount(async () => {
+    try {
+      const res = await api.erp.getSales(100);
+      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+        sales = res.data.map((s: any) => ({
+          id: s.id,
+          invoiceNumber: s.invoiceNumber,
+          transactionTime: s.transactionTime,
+          cashierName: "Kasir Apotek",
+          customerName: s.customerType === "MEMBER" ? "Member Pasien" : "Pelanggan Umum",
+          transactionType: s.customerType || "UMUM",
+          paymentMethod: s.paymentMethod,
+          totalAmount: s.grandTotal,
+          status: "SUCCESS",
+          itemsCount: 1,
+          items: []
+        }));
+      }
+    } catch (_) {}
+  });
 
   // Modal Detail State
   let selectedTransaction = $state<any | null>(null);

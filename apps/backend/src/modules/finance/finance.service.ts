@@ -1,0 +1,205 @@
+import { db, schema } from "@apoteku/db";
+import { eq, and, desc, sql } from "drizzle-orm";
+
+export interface RecordDebtPaymentPayload {
+  tenantId?: string;
+  purchaseInvoiceId: string;
+  branchId?: string;
+  amountPaid: number;
+  paymentMethod: string;
+  paymentDate?: string;
+  paymentNumber?: string;
+  receiptScanUrl?: string;
+  paidBy?: string;
+}
+
+class FinanceService {
+  private async getTenantId(candidate?: string): Promise<string> {
+    if (candidate) return candidate;
+    const [t] = await db.select({ id: schema.tenants.id }).from(schema.tenants).limit(1);
+    if (!t) throw new Error("No active tenant found in database");
+    return t.id;
+  }
+
+  async recordDebtPayment(payload: RecordDebtPaymentPayload) {
+    const tenantId = await this.getTenantId(payload.tenantId);
+
+    const [invoice] = await db
+      .select({
+        id: schema.purchaseInvoices.id,
+        invoiceNumber: schema.purchaseInvoices.invoiceNumber,
+        branchId: schema.purchaseInvoices.branchId,
+        supplierId: schema.purchaseInvoices.supplierId,
+        grandTotal: schema.purchaseInvoices.grandTotal,
+        paidAmount: schema.purchaseInvoices.paidAmount,
+        isPaidOff: schema.purchaseInvoices.isPaidOff,
+        supplierName: schema.suppliers.name
+      })
+      .from(schema.purchaseInvoices)
+      .leftJoin(schema.suppliers, eq(schema.purchaseInvoices.supplierId, schema.suppliers.id))
+      .where(eq(schema.purchaseInvoices.id, payload.purchaseInvoiceId))
+      .limit(1);
+
+    if (!invoice) {
+      throw new Error(`Faktur Pembelian dengan ID ${payload.purchaseInvoiceId} tidak ditemukan`);
+    }
+
+    const currentPaid = Number(invoice.paidAmount || 0);
+    const grandTotal = Number(invoice.grandTotal || 0);
+    const paymentAmount = Number(payload.amountPaid || 0);
+
+    if (paymentAmount <= 0) {
+      throw new Error("Nominal pembayaran harus lebih besar dari 0");
+    }
+
+    const newPaidAmount = currentPaid + paymentAmount;
+    const isPaidOff = newPaidAmount >= grandTotal;
+
+    const isUuid = (val?: string) =>
+      Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
+
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
+    const randomSeq = Math.floor(100 + Math.random() * 900);
+    const paymentNumber = payload.paymentNumber || `RLH-${dateStr}-${randomSeq}`;
+    const paymentId = crypto.randomUUID();
+    const paymentDateStr = payload.paymentDate || now.toISOString().slice(0, 10);
+    const paidBy = isUuid(payload.paidBy) ? (payload.paidBy as string) : crypto.randomUUID();
+    const branchId = (isUuid(payload.branchId) ? payload.branchId : invoice.branchId) || crypto.randomUUID();
+
+    // 1. Insert into debt_payments
+    const [createdPayment] = await db
+      .insert(schema.debtPayments)
+      .values({
+        id: paymentId,
+        tenantId,
+        branchId,
+        purchaseInvoiceId: invoice.id,
+        paymentNumber,
+        paymentDate: paymentDateStr,
+        paymentMethod: payload.paymentMethod || "TRANSFER",
+        amountPaid: String(paymentAmount),
+        receiptScanUrl: payload.receiptScanUrl || null,
+        paidBy
+      })
+      .returning();
+
+    // 2. Update purchase_invoices
+    await db
+      .update(schema.purchaseInvoices)
+      .set({
+        paidAmount: String(newPaidAmount),
+        isPaidOff
+      })
+      .where(eq(schema.purchaseInvoices.id, invoice.id));
+
+    return {
+      success: true,
+      message: `Pelunasan hutang ${paymentNumber} berhasil dicatat. Status Faktur: ${isPaidOff ? "LUNAS (PAID)" : "SEBAGIAN (PARTIAL)"}`,
+      data: {
+        payment: {
+          id: createdPayment.id,
+          paymentNumber: createdPayment.paymentNumber,
+          paymentDate: createdPayment.paymentDate,
+          paymentMethod: createdPayment.paymentMethod,
+          amountPaid: Number(createdPayment.amountPaid),
+          receiptScanUrl: createdPayment.receiptScanUrl
+        },
+        invoice: {
+          id: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          supplierName: invoice.supplierName,
+          grandTotal,
+          previousPaid: currentPaid,
+          newPaidAmount,
+          remainingDebt: Math.max(0, grandTotal - newPaidAmount),
+          isPaidOff
+        }
+      }
+    };
+  }
+
+  async getDebtPayments(params: { branchId?: string; invoiceId?: string; limit?: number } = {}) {
+    const limit = Math.min(params.limit || 50, 100);
+    let conditions = [];
+
+    if (params.branchId && params.branchId !== "ALL") {
+      conditions.push(eq(schema.debtPayments.branchId, params.branchId));
+    }
+    if (params.invoiceId) {
+      conditions.push(eq(schema.debtPayments.purchaseInvoiceId, params.invoiceId));
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const payments = await db
+      .select({
+        id: schema.debtPayments.id,
+        paymentNumber: schema.debtPayments.paymentNumber,
+        paymentDate: schema.debtPayments.paymentDate,
+        paymentMethod: schema.debtPayments.paymentMethod,
+        amountPaid: schema.debtPayments.amountPaid,
+        receiptScanUrl: schema.debtPayments.receiptScanUrl,
+        createdAt: schema.debtPayments.createdAt,
+        invoiceNumber: schema.purchaseInvoices.invoiceNumber,
+        supplierName: schema.suppliers.name,
+        branchName: schema.branches.name
+      })
+      .from(schema.debtPayments)
+      .leftJoin(
+        schema.purchaseInvoices,
+        eq(schema.debtPayments.purchaseInvoiceId, schema.purchaseInvoices.id)
+      )
+      .leftJoin(schema.suppliers, eq(schema.purchaseInvoices.supplierId, schema.suppliers.id))
+      .leftJoin(schema.branches, eq(schema.debtPayments.branchId, schema.branches.id))
+      .where(whereClause)
+      .orderBy(desc(schema.debtPayments.createdAt))
+      .limit(limit);
+
+    return payments.map((p) => ({
+      id: p.id,
+      paymentNumber: p.paymentNumber,
+      paymentDate: p.paymentDate,
+      paymentMethod: p.paymentMethod,
+      amountPaid: Number(p.amountPaid),
+      receiptScanUrl: p.receiptScanUrl,
+      invoiceNumber: p.invoiceNumber || "-",
+      supplierName: p.supplierName || "Distributor PBF",
+      branchName: p.branchName || "Cabang"
+    }));
+  }
+
+  async getDebtSummary(branchId?: string) {
+    let conditions = [];
+    if (branchId && branchId !== "ALL") {
+      conditions.push(eq(schema.purchaseInvoices.branchId, branchId));
+    }
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [agg] = await db
+      .select({
+        totalInvoices: sql<number>`COUNT(*)::int`,
+        totalGrandTotal: sql<number>`COALESCE(SUM(${schema.purchaseInvoices.grandTotal}), 0)::numeric`,
+        totalPaid: sql<number>`COALESCE(SUM(${schema.purchaseInvoices.paidAmount}), 0)::numeric`,
+        unpaidCount: sql<number>`COUNT(*) FILTER (WHERE ${schema.purchaseInvoices.isPaidOff} = false)::int`,
+        paidOffCount: sql<number>`COUNT(*) FILTER (WHERE ${schema.purchaseInvoices.isPaidOff} = true)::int`
+      })
+      .from(schema.purchaseInvoices)
+      .where(whereClause);
+
+    const grand = Number(agg?.totalGrandTotal || 0);
+    const paid = Number(agg?.totalPaid || 0);
+    const unpaid = Math.max(0, grand - paid);
+
+    return {
+      totalInvoices: agg?.totalInvoices || 0,
+      totalPurchases: grand,
+      totalPaid: paid,
+      totalRemainingDebt: unpaid,
+      unpaidInvoicesCount: agg?.unpaidCount || 0,
+      paidOffInvoicesCount: agg?.paidOffCount || 0
+    };
+  }
+}
+
+export const financeService = new FinanceService();

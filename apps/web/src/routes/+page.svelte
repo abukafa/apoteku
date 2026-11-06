@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import HeroBanner from "$lib/components/HeroBanner.svelte";
   import KpiCards from "$lib/components/KpiCards.svelte";
   import SalesChart from "$lib/components/SalesChart.svelte";
@@ -7,6 +8,24 @@
   import QuickMenuGrid from "$lib/components/QuickMenuGrid.svelte";
   import NotificationsCard from "$lib/components/NotificationsCard.svelte";
   import Footer from "$lib/components/Footer.svelte";
+  import { api } from "$lib/services/api";
+
+  let totalTransactions = $state("125.402");
+  let customerCount = $state("366");
+
+  onMount(async () => {
+    try {
+      const res = await api.erp.getStats();
+      if (res?.success && res.data) {
+        if (res.data.totalSalesTransactions) {
+          totalTransactions = Number(res.data.totalSalesTransactions).toLocaleString("id-ID");
+        }
+        if (res.data.totalCustomers) {
+          customerCount = Number(res.data.totalCustomers).toLocaleString("id-ID");
+        }
+      }
+    } catch (_) {}
+  });
 </script>
 
 <svelte:head>
@@ -21,11 +40,11 @@
   <KpiCards
     salesToday="Rp 4.850.000"
     salesTrend="12% dari kemarin"
-    totalTransactions="28"
-    transactionTrend="8% dari kemarin"
+    {totalTransactions}
+    transactionTrend="Historis & POS Aktif"
     lowStockCount="5 item"
-    newCustomers="3"
-    customerTrend="50% dari kemarin"
+    newCustomers={customerCount}
+    customerTrend="Pelanggan terdaftar"
   />
 
   <!-- 3. MIDDLE ROW: 3 CARDS (CHART, LOW STOCK, RECENT TRANSACTIONS) -->

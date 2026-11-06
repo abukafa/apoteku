@@ -7,15 +7,26 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./client-indexeddb": "./src/client-indexeddb.ts"
+    "./client-indexeddb": "./src/client-indexeddb.ts",
+    "./schema": "./src/schema/index.ts",
+    "./client": "./src/client.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "migrate:master": "bun src/scripts/migrate-master-data.ts",
+    "migrate:purchases": "bun src/scripts/migrate-purchases.ts",
+    "migrate:sales": "bun src/scripts/migrate-sales.ts"
   },
   "dependencies": {
-    "dexie": "^4.0.10"
+    "dexie": "^4.0.10",
+    "drizzle-orm": "^0.45.4",
+    "papaparse": "^5.7.0",
+    "postgres": "^4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/papaparse": "^5.5.2",
+    "drizzle-kit": "^0.31.11",
     "typescript": "^5.7.0"
   }
 }

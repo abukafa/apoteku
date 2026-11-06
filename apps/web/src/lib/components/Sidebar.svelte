@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { page } from "$app/state";
+  import { page } from "$app/stores";
   import {
     LayoutDashboard,
     ShoppingCart,
@@ -133,8 +133,8 @@
   ];
 
   function isActive(href: string) {
-    if (href === "/") return page.url.pathname === "/";
-    return page.url.pathname.startsWith(href) && href !== "/";
+    if (href === "/") return $page.url.pathname === "/";
+    return $page.url.pathname.startsWith(href) && href !== "/";
   }
 </script>
 

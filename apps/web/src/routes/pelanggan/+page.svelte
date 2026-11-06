@@ -20,10 +20,21 @@
   import Select from "$lib/components/ui/Select.svelte";
   import customersData from "$lib/mocks/customers.json";
   import { portal } from "$lib/actions/portal";
+  import { onMount } from "svelte";
+  import { mockApi } from "$lib/services/mock-api";
 
   let customers = $state(customersData);
   let activeTab = $state<"semua" | "piutang">("semua");
   let searchQuery = $state("");
+
+  onMount(async () => {
+    try {
+      const live = await mockApi.getCustomers();
+      if (live && live.length > 0) {
+        customers = live as any;
+      }
+    } catch (_) {}
+  });
 
   // Modals
   let isAddCustomerModalOpen = $state(false);

@@ -1,6 +1,6 @@
 <script lang="ts">
   import "../app.css";
-  import { page } from "$app/state";
+  import { page } from "$app/stores";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import Navbar from "$lib/components/Navbar.svelte";
 
@@ -9,7 +9,7 @@
 
   // Standalone routes without sidebar and top navbar: /login and /pos
   let isStandaloneRoute = $derived(
-    page.url.pathname.startsWith("/login") || page.url.pathname.startsWith("/pos")
+    $page.url.pathname.startsWith("/login") || $page.url.pathname.startsWith("/pos")
   );
 </script>
 

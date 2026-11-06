@@ -7,6 +7,8 @@ import shiftsData from '../mocks/cashier-shifts.json';
 import suppliersData from '../mocks/suppliers.json';
 import usersData from '../mocks/users.json';
 import type { ActiveUser } from '../stores/authStore.svelte';
+import { browser } from '$app/environment';
+import { api } from './api.js';
 
 export type PriceTier = 'general' | 'prescription' | 'wholesale' | 'delivery' | 'member';
 
@@ -177,6 +179,77 @@ class MockApiService {
   private shifts: CashierShift[] = shiftsData as unknown as CashierShift[];
   private users: ActiveUser[] = usersData as unknown as ActiveUser[];
 
+  private isLoadedFromApi = false;
+  private isSuppliersLoaded = false;
+  private loadPromise: Promise<void> | null = null;
+
+  async ensureDataLoaded(branchId?: string): Promise<void> {
+    if (this.isLoadedFromApi) return;
+    if (this.loadPromise) return this.loadPromise;
+
+    this.loadPromise = (async () => {
+      try {
+        const res = await api.pos.getBootstrap(branchId);
+        if (res?.success && res?.data) {
+          const d = res.data;
+          if (Array.isArray(d.products) && d.products.length > 0) {
+            this.products = d.products.map((p: any) => ({
+              id: p.id,
+              sku: p.sku || "",
+              barcode: p.barcode || "",
+              name: p.name,
+              genericName: p.activeSubstance || undefined,
+              categoryId: "cat-1",
+              categoryName: "Obat Bebas & Alkes",
+              drugClass: (p.drugClass === "KERAS" ? "ETHICAL" : p.drugClass === "NARKOTIKA" ? "NARCOTICS" : p.drugClass === "PSIKOTROPIKA" ? "PSYCHOTROPIC" : p.drugClass === "BEBAS_TERBATAS" ? "LIMITED_OTC" : "OTC") as any,
+              requiresPrescription: p.drugClass === "KERAS" || p.drugClass === "NARKOTIKA" || p.drugClass === "PSIKOTROPIKA",
+              isConsignment: false,
+              manufacturer: "PBF Terdaftar",
+              description: p.activeSubstance || p.name,
+              indication: p.indication || "Sesuai anjuran medis",
+              dosage: p.defaultDosage || "3x1 Sehari",
+              baseUnit: p.baseUnit || "PCS",
+              units: (p.units || []).map((u: any) => ({
+                unit: u.unitName,
+                multiplier: Number(u.conversionFactor) || 1,
+                prices: {
+                  general: Number(u.salePriceGeneral || 0),
+                  prescription: Number(u.salePriceResep || u.salePriceGeneral || 0),
+                  wholesale: Number(u.salePriceGrosir || u.salePriceGeneral || 0),
+                  delivery: Number(u.salePriceDelivery || u.salePriceGeneral || 0),
+                  member: Number(u.salePriceMember || u.salePriceGeneral || 0)
+                }
+              })),
+              batches: (d.branchBatches || [])
+                .filter((b: any) => b.productId === p.id)
+                .map((b: any) => ({
+                  id: b.batchId || b.id || "batch-default",
+                  batchNumber: b.batchNo || "BATCH-REG",
+                  branchId: branchId || d.branch?.id || "1",
+                  expiryDate: b.expiredDate || "2027-12-31",
+                  stock: Number(b.qtyBase || 100),
+                  buyPrice: Number(b.buyPrice || 0)
+                }))
+            }));
+          }
+          if (Array.isArray(d.branches) && d.branches.length > 0) {
+            this.branches = d.branches;
+          }
+          if (Array.isArray(d.customers) && d.customers.length > 0) {
+            this.customers = d.customers;
+          }
+          this.isLoadedFromApi = true;
+        }
+      } catch (err) {
+        console.warn("[MockApi] Backend unavailable, continuing with offline/local fallback:", err);
+      } finally {
+        this.loadPromise = null;
+      }
+    })();
+
+    return this.loadPromise;
+  }
+
   async getUsers(): Promise<ActiveUser[]> {
     await delay(60);
     return [...this.users];
@@ -193,7 +266,7 @@ class MockApiService {
   }
 
   async getBranches(): Promise<Branch[]> {
-    await delay(80);
+    await this.ensureDataLoaded();
     return [...this.branches];
   }
 
@@ -203,7 +276,7 @@ class MockApiService {
   }
 
   async getCustomers(searchQuery?: string): Promise<Customer[]> {
-    await delay(100);
+    await this.ensureDataLoaded();
     if (!searchQuery) return [...this.customers];
     const q = searchQuery.toLowerCase().trim();
     return this.customers.filter(
@@ -227,7 +300,15 @@ class MockApiService {
   }
 
   async getSuppliers(searchQuery?: string): Promise<Supplier[]> {
-    await delay(100);
+    if (!this.isSuppliersLoaded) {
+      try {
+        const res = await api.erp.getSuppliers();
+        if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+          this.suppliers = res.data;
+          this.isSuppliersLoaded = true;
+        }
+      } catch (_) {}
+    }
     if (!searchQuery) return [...this.suppliers];
     const q = searchQuery.toLowerCase().trim();
     return this.suppliers.filter(
@@ -238,10 +319,86 @@ class MockApiService {
   }
 
   async getCurrentShift(branchId = '1'): Promise<CashierShift | null> {
+    try {
+      const res = await api.shift.getCurrent(branchId);
+      if (res?.success && res.data) {
+        const s = res.data;
+        return {
+          id: s.id,
+          branchId: s.branchId,
+          shiftName: `Shift ${s.shiftNumber}`,
+          cashierId: s.userId || "usr-1",
+          cashierName: s.cashierName || "Kasir Petugas",
+          startTime: s.startTime,
+          startingCash: Number(s.initialCash || 0),
+          status: s.isOpen ? 'OPEN' : 'CLOSED'
+        };
+      }
+    } catch (_) {}
+
     await delay(50);
     return (
       this.shifts.find((s) => s.branchId === branchId && s.status === 'OPEN') || null
     );
+  }
+
+  async openShift(branchId: string, startingCash: number, shiftNumber?: number, notes?: string): Promise<CashierShift> {
+    try {
+      const res = await api.shift.open({
+        branchId,
+        initialCash: startingCash,
+        shiftNumber,
+        notes
+      });
+      if (res?.success && res.data) {
+        const s = res.data;
+        const newShift: CashierShift = {
+          id: s.id,
+          branchId: s.branchId,
+          shiftName: `Shift ${s.shiftNumber}`,
+          cashierId: s.userId || "usr-1",
+          cashierName: "Kasir Petugas",
+          startTime: s.startTime,
+          startingCash: Number(s.initialCash || 0),
+          status: 'OPEN'
+        };
+        this.shifts.unshift(newShift);
+        return newShift;
+      }
+    } catch (_) {}
+
+    const newShift: CashierShift = {
+      id: `shf-${Date.now()}`,
+      branchId,
+      shiftName: `Shift ${shiftNumber || 1}`,
+      cashierId: "usr-1",
+      cashierName: "Kasir Petugas",
+      startTime: new Date().toISOString(),
+      startingCash,
+      status: 'OPEN'
+    };
+    this.shifts.unshift(newShift);
+    return newShift;
+  }
+
+  async closeShift(shiftId: string, actualCash: number, notes?: string): Promise<void> {
+    try {
+      await api.shift.close({
+        shiftId,
+        actualCash,
+        notes
+      });
+    } catch (_) {}
+
+    const s = this.shifts.find((item) => item.id === shiftId);
+    if (s) {
+      s.status = 'CLOSED';
+    }
+  }
+
+  async getProducts(): Promise<Product[]> {
+    await this.ensureDataLoaded();
+    return [...this.products];
   }
 
   async searchProducts(options?: {
@@ -249,7 +406,8 @@ class MockApiService {
     categoryId?: string;
     branchId?: string;
   }): Promise<Product[]> {
-    await delay(150);
+    await this.ensureDataLoaded(options?.branchId);
+    await delay(50);
     const branchId = options?.branchId || '1';
     let result = this.products;
 
@@ -279,7 +437,8 @@ class MockApiService {
   }
 
   async getProductByBarcode(barcode: string, branchId = '1'): Promise<Product | null> {
-    await delay(80);
+    await this.ensureDataLoaded(branchId);
+    await delay(30);
     const trimmed = barcode.trim();
     const product = this.products.find(
       (p) => p.barcode === trimmed || p.sku === trimmed
@@ -293,7 +452,8 @@ class MockApiService {
   }
 
   async getProductById(id: string, branchId = '1'): Promise<Product | null> {
-    await delay(60);
+    await this.ensureDataLoaded(branchId);
+    await delay(30);
     const product = this.products.find((p) => p.id === id);
     if (!product) return null;
 
@@ -304,7 +464,7 @@ class MockApiService {
   }
 
   async checkoutSale(payload: CheckoutPayload): Promise<CheckoutResult> {
-    await delay(300);
+    await delay(100);
 
     // Generate Invoice Number format: INV/YYYYMMDD/{BRANCH}/{SEQ}
     const today = new Date();
@@ -322,6 +482,23 @@ class MockApiService {
             batch.stock = Math.max(0, batch.stock - alloc.quantity);
           }
         }
+      }
+    }
+
+    // Queue to networkStore for automatic synchronization to PostgreSQL database!
+    if (browser) {
+      try {
+        const { networkStore } = await import("../stores/networkStore.svelte.js");
+        await networkStore.queueSale({
+          id: crypto.randomUUID(),
+          invoiceNo: invoiceNumber,
+          payload: {
+            ...payload,
+            branchId: payload.branchId
+          }
+        });
+      } catch (e) {
+        console.warn("Failed to queue sale to networkStore:", e);
       }
     }
 

@@ -11,9 +11,7 @@
     Users,
     Trash2,
     Wifi,
-    WifiOff,
-    X,
-    Lock
+    WifiOff
   } from "lucide-svelte";
   import { authStore, type ActiveUser } from "$lib/stores/authStore.svelte";
   import { api } from "$lib/services/api";
@@ -50,18 +48,79 @@
 
   // PIN Form State
   let selectedBranchId = $state("1");
+  let selectedUserId = $state<string>("");
   let inputPin = $state("");
   let pinError = $state("");
   let isSubmitting = $state(false);
   let successMessage = $state("");
-
-  // Offline PIN Prompt Modal State
   let isOffline = $state(false);
-  let showOfflinePinModal = $state(false);
-  let selectedAccountForOfflinePin = $state<SavedAccount | null>(null);
-  let offlinePinInput = $state("");
-  let offlinePinError = $state("");
-  let isVerifyingOfflinePin = $state(false);
+
+  // Daftar akun yang tersedia untuk opsi pilihan akun di tab PIN
+  let availableAccounts = $derived.by(() => {
+    const list: {
+      id: string;
+      fullName: string;
+      username: string;
+      email?: string;
+      role: string;
+      branchId: string;
+      branchName: string;
+      avatarUrl?: string;
+      pin?: string;
+      isSaved?: boolean;
+    }[] = [];
+    const seen = new Set<string>();
+
+    // 1. Akun yang tersimpan di perangkat ini (prioritas teratas)
+    for (const acc of savedAccounts) {
+      if (acc && acc.id && !seen.has(acc.id)) {
+        seen.add(acc.id);
+        list.push({
+          id: acc.id,
+          fullName: acc.fullName,
+          username: acc.username,
+          email: acc.email,
+          role: acc.role,
+          branchId: acc.branchId,
+          branchName: acc.branchName,
+          avatarUrl: acc.avatarUrl,
+          pin: acc.pin,
+          isSaved: true
+        });
+      }
+    }
+
+    // 2. Akun terdaftar dari database
+    for (const u of users) {
+      if (u && u.id && !seen.has(u.id)) {
+        seen.add(u.id);
+        list.push({
+          id: u.id,
+          fullName: u.fullName,
+          username: u.username,
+          email: u.email,
+          role: u.role,
+          branchId: u.branchId,
+          branchName: u.branchName,
+          avatarUrl: u.avatarUrl,
+          pin: u.pin,
+          isSaved: false
+        });
+      }
+    }
+
+    return list;
+  });
+
+  let selectedAccount = $derived(
+    availableAccounts.find((a) => a.id === selectedUserId) || (availableAccounts.length > 0 ? availableAccounts[0] : null)
+  );
+
+  $effect(() => {
+    if (!selectedUserId && availableAccounts.length > 0) {
+      selectedUserId = availableAccounts[0].id;
+    }
+  });
 
   function loadSavedAccounts(): SavedAccount[] {
     if (typeof window === "undefined") return [];
@@ -167,99 +226,33 @@
 
   function handleAccountCardClick(acc: SavedAccount) {
     if (isOffline) {
-      selectedAccountForOfflinePin = acc;
-      offlinePinInput = "";
-      offlinePinError = "";
-      showOfflinePinModal = true;
+      // Saat offline, langsung alihkan ke tab PIN dengan akun terpilih!
+      selectedUserId = acc.id;
+      inputPin = "";
+      pinError = "";
+      activeTab = "PIN";
       return;
     }
 
     handleSelectSavedAccount(acc);
-  }
-
-  function handleVerifyOfflinePin(e?: Event) {
-    if (e) e.preventDefault();
-    offlinePinError = "";
-
-    if (!selectedAccountForOfflinePin) return;
-
-    if (offlinePinInput.length < 4) {
-      offlinePinError = "PIN harus terdiri dari minimal 4 digit angka.";
-      return;
-    }
-
-    isVerifyingOfflinePin = true;
-
-    const acc = selectedAccountForOfflinePin;
-
-    const dbUser = users.find(
-      (u) =>
-        u.id === acc.id ||
-        (acc.email && u.email && u.email.toLowerCase() === acc.email.toLowerCase()) ||
-        (acc.username && u.username && u.username.toLowerCase() === acc.username.toLowerCase())
-    );
-
-    const rolePinMap: Record<string, string> = {
-      SUPERADMIN: "123456",
-      OWNER: "888888",
-      PHARMACIST: "112233",
-      CASHIER: "654321",
-      INVENTORY: "777777",
-      FINANCE: "999999",
-      GUEST: "123456"
-    };
-
-    const targetRole = (dbUser?.role || acc.role || "CASHIER").toUpperCase();
-    const expectedPin = dbUser?.pin || acc.pin || rolePinMap[targetRole] || "123456";
-
-    if (offlinePinInput.trim() !== expectedPin.trim()) {
-      isVerifyingOfflinePin = false;
-      offlinePinError = "PIN salah. Silakan masukkan PIN 6-digit yang sesuai.";
-      return;
-    }
-
-    // PIN Valid!
-    acc.pin = offlinePinInput.trim();
-    showOfflinePinModal = false;
-    isVerifyingOfflinePin = false;
-    handleSelectSavedAccount(acc);
-  }
-
-  function handleOfflinePinKeypad(digit: string) {
-    if (offlinePinInput.length < 6) {
-      offlinePinInput += digit;
-      offlinePinError = "";
-      if (offlinePinInput.length === 6) {
-        setTimeout(() => {
-          handleVerifyOfflinePin();
-        }, 120);
-      }
-    }
-  }
-
-  function handleOfflinePinBackspace() {
-    offlinePinInput = offlinePinInput.slice(0, -1);
-  }
-
-  function closeOfflinePinModal() {
-    showOfflinePinModal = false;
-    selectedAccountForOfflinePin = null;
-    offlinePinInput = "";
-    offlinePinError = "";
-    isVerifyingOfflinePin = false;
   }
 
   function handleWindowKeydown(e: KeyboardEvent) {
-    if (!showOfflinePinModal) return;
+    if (activeTab !== "PIN") return;
+
+    // Abaikan ketikan jika user sedang berada di elemen select atau input teks
+    const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+    if (tag === "select" || (tag === "input" && (e.target as HTMLElement)?.id !== "pinInputRaw")) {
+      return;
+    }
 
     if (e.key >= "0" && e.key <= "9") {
-      handleOfflinePinKeypad(e.key);
+      handlePinKeypad(e.key);
     } else if (e.key === "Backspace") {
-      handleOfflinePinBackspace();
+      handlePinBackspace();
     } else if (e.key === "Enter") {
-      handleVerifyOfflinePin();
-    } else if (e.key === "Escape") {
-      closeOfflinePinModal();
+      const form = document.getElementById("pinLoginForm") as HTMLFormElement;
+      form?.requestSubmit();
     }
   }
 
@@ -362,8 +355,8 @@
     window.location.href = loginUrl;
   }
 
-  async function handlePinLogin(e: SubmitEvent) {
-    e.preventDefault();
+  async function handlePinLogin(e?: SubmitEvent) {
+    if (e) e.preventDefault();
     pinError = "";
 
     if (inputPin.length < 4) {
@@ -371,19 +364,57 @@
       return;
     }
 
-    isSubmitting = true;
-
-    const targetUser = users.find((u) => u.pin === inputPin);
-    const identifier = targetUser ? targetUser.username : "";
-
-    if (!identifier) {
-      isSubmitting = false;
-      pinError = users.length === 0
-        ? "Belum ada pengguna terdaftar. Silakan buat akun Administrator pertama."
-        : "PIN tidak cocok dengan akun terdaftar di sistem.";
+    const currentAcc = selectedAccount;
+    if (!currentAcc) {
+      pinError = "Silakan pilih akun pengguna terlebih dahulu.";
       return;
     }
 
+    isSubmitting = true;
+
+    // Mapping PIN default per peran apotek jika belum pernah kustomisasi PIN
+    const rolePinMap: Record<string, string> = {
+      SUPERADMIN: "123456",
+      OWNER: "888888",
+      PHARMACIST: "112233",
+      CASHIER: "654321",
+      INVENTORY: "777777",
+      FINANCE: "999999",
+      GUEST: "123456"
+    };
+
+    const targetRole = (currentAcc.role || "CASHIER").toUpperCase();
+    const expectedPin = currentAcc.pin || rolePinMap[targetRole] || "123456";
+
+    // 1. VALIDASI SAAT MODE OFFLINE (Lokal tanpa request backend)
+    if (isOffline) {
+      if (inputPin.trim() !== expectedPin.trim()) {
+        isSubmitting = false;
+        pinError = `PIN salah untuk akun ${currentAcc.fullName}.`;
+        return;
+      }
+
+      // PIN valid! Aktifkan sesi akun terpilih secara offline
+      isSubmitting = false;
+      const targetSaved: SavedAccount = {
+        id: currentAcc.id,
+        fullName: currentAcc.fullName,
+        username: currentAcc.username,
+        email: currentAcc.email,
+        role: currentAcc.role,
+        branchId: currentAcc.branchId || selectedBranchId || "1",
+        branchName: currentAcc.branchName || "Apotek Hafidz Farma",
+        avatarUrl: currentAcc.avatarUrl,
+        pin: inputPin.trim(),
+        lastLoginAt: Date.now()
+      };
+
+      handleSelectSavedAccount(targetSaved);
+      return;
+    }
+
+    // 2. VALIDASI SAAT MODE ONLINE (Kirim identifier akun terpilih ke API)
+    const identifier = currentAcc.username || currentAcc.email || currentAcc.id;
     const res = await authStore.loginWithApi(identifier, inputPin, selectedBranchId);
     isSubmitting = false;
 
@@ -402,13 +433,20 @@
         }
       }, 300);
     } else {
-      pinError = res.error || "PIN tidak cocok dengan akun terdaftar.";
+      pinError = res.error || `PIN tidak cocok untuk akun ${currentAcc.fullName}.`;
     }
   }
 
   function handlePinKeypad(digit: string) {
     if (inputPin.length < 6) {
       inputPin += digit;
+      pinError = "";
+      if (inputPin.length === 6) {
+        setTimeout(() => {
+          const form = document.getElementById("pinLoginForm") as HTMLFormElement;
+          form?.requestSubmit();
+        }, 120);
+      }
     }
   }
 
@@ -555,7 +593,7 @@
                     {#if isOffline}
                       <div class="flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 group-hover:bg-amber-200 px-2 py-0.5 rounded-lg border border-amber-300 flex-shrink-0 transition-colors">
                         <KeyRound class="w-3.5 h-3.5 text-amber-700" />
-                        <span>PIN Offline</span>
+                        <span>Ketik PIN</span>
                       </div>
                     {:else}
                       <div class="flex items-center gap-1 text-[11px] font-bold text-brand-blue opacity-80 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all flex-shrink-0">
@@ -624,17 +662,44 @@
       </div>
     {:else}
       <!-- TAB 2: PIN 6-DIGIT KASIR LOGIN -->
-      <form onsubmit={handlePinLogin} class="space-y-4">
+      <form id="pinLoginForm" onsubmit={handlePinLogin} class="space-y-4">
+        <!-- Preview Kartu Akun Terpilih -->
+        {#if selectedAccount}
+          <div class="p-2.5 bg-slate-50/90 border border-slate-200/90 rounded-2xl flex items-center justify-between gap-2.5">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-brand-blue to-cyan-500 text-white flex items-center justify-center font-bold text-xs ring-1 ring-blue-100 overflow-hidden flex-shrink-0">
+                {#if selectedAccount.avatarUrl}
+                  <img
+                    src={selectedAccount.avatarUrl}
+                    alt={selectedAccount.fullName}
+                    class="w-full h-full object-cover"
+                    onerror={(e) => ((e.currentTarget as HTMLElement).style.display = 'none')}
+                  />
+                {:else}
+                  <span>{selectedAccount.fullName.slice(0, 2).toUpperCase()}</span>
+                {/if}
+              </div>
+              <div class="min-w-0">
+                <div class="text-xs font-bold text-slate-800 truncate">{selectedAccount.fullName}</div>
+                <div class="text-[10px] text-slate-500 truncate">{selectedAccount.email || `@${selectedAccount.username}`}</div>
+              </div>
+            </div>
+            <span class="px-2 py-0.5 rounded text-[9px] font-black flex-shrink-0 {selectedAccount.role === 'SUPERADMIN' ? 'bg-blue-100 text-blue-800' : selectedAccount.role === 'OWNER' ? 'bg-amber-100 text-amber-800' : selectedAccount.role === 'GUEST' ? 'bg-amber-100 text-amber-900 border border-amber-300' : selectedAccount.role === 'PHARMACIST' ? 'bg-purple-100 text-purple-800' : 'bg-emerald-100 text-emerald-800'}">
+              {selectedAccount.role}
+            </span>
+          </div>
+        {/if}
+
         <!-- PIN Display Dots -->
-        <div class="space-y-1.5">
+        <div class="space-y-1.5 pt-0.5">
           <span class="block text-xs font-bold text-slate-700 text-center">
-            Masuk dengan PIN (6 Digit)
+            {isOffline ? 'Masukkan PIN 6-Digit (Mode Offline)' : 'Masuk dengan PIN (6 Digit)'}
           </span>
-          <div class="flex items-center justify-center gap-2 py-2">
+          <div class="flex items-center justify-center gap-2 py-1.5">
             {#each Array(6) as _, idx}
               <div
                 class="w-8 h-10 rounded-xl border-2 flex items-center justify-center text-lg font-mono font-bold transition-all {idx < inputPin.length
-                  ? 'border-[#df1c2d] bg-red-50 text-[#df1c2d] scale-105'
+                  ? (isOffline ? 'border-amber-500 bg-amber-50 text-amber-700 scale-105' : 'border-[#df1c2d] bg-red-50 text-[#df1c2d] scale-105')
                   : 'border-slate-200 bg-slate-50 text-slate-300'}"
               >
                 {idx < inputPin.length ? "●" : ""}
@@ -659,7 +724,7 @@
             <button
               type="button"
               onclick={() => handlePinKeypad(num)}
-              class="h-10 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-bold text-base transition-colors"
+              class="h-10 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-bold text-base transition-colors cursor-pointer"
             >
               {num}
             </button>
@@ -667,37 +732,67 @@
           <button
             type="button"
             onclick={() => (inputPin = "")}
-            class="h-10 rounded-xl bg-slate-100 hover:bg-red-100 text-red-600 font-bold text-xs transition-colors"
+            class="h-10 rounded-xl bg-slate-100 hover:bg-red-100 text-red-600 font-bold text-xs transition-colors cursor-pointer"
           >
             Hapus
           </button>
           <button
             type="button"
             onclick={() => handlePinKeypad("0")}
-            class="h-10 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-bold text-base transition-colors"
+            class="h-10 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-bold text-base transition-colors cursor-pointer"
           >
             0
           </button>
           <button
             type="button"
             onclick={handlePinBackspace}
-            class="h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors"
+            class="h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
           >
             &larr;
           </button>
+        </div>
+        
+        <!-- SELECT PILIH AKUN PENGGUNA -->
+        <div class="space-y-1.5 text-left">
+          <label for="select-account-pin" class="block text-xs font-bold text-slate-700 text-center">
+            Pilih Akun Pengguna
+          </label>
+          <div class="relative">
+            <select
+              id="select-account-pin"
+              bind:value={selectedUserId}
+              onchange={() => {
+                inputPin = "";
+                pinError = "";
+              }}
+              class="w-full py-2.5 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue transition-all cursor-pointer"
+            >
+              {#if availableAccounts.length === 0}
+                <option value="" disabled>Belum ada akun terdaftar</option>
+              {:else}
+                {#each availableAccounts as acc}
+                  <option value={acc.id}>
+                    {acc.fullName} ({acc.role}) {acc.branchName ? `• ${acc.branchName}` : ''}
+                  </option>
+                {/each}
+              {/if}
+            </select>
+          </div>
         </div>
 
         <!-- Submit PIN Button -->
         <button
           type="submit"
-          disabled={isSubmitting || inputPin.length < 6}
-          class="w-full py-2.5 px-4 bg-[#df1c2d] hover:bg-[#c91827] text-white font-bold rounded-xl text-xs sm:text-sm shadow-md shadow-red-600/20 flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed mt-2 cursor-pointer"
+          disabled={isSubmitting || inputPin.length < 4}
+          class="w-full py-2.5 px-4 font-bold rounded-xl text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed mt-2 cursor-pointer {isOffline
+            ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/20'
+            : 'bg-[#df1c2d] hover:bg-[#c91827] text-white shadow-red-600/20'}"
         >
           {#if isSubmitting}
             <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
             <span>Memverifikasi PIN...</span>
           {:else}
-            <span>Verifikasi PIN & Masuk Kasir</span>
+            <span>{isOffline ? 'Verifikasi PIN & Masuk Offline' : 'Verifikasi PIN & Masuk Kasir'}</span>
             <ArrowRight class="w-4 h-4" />
           {/if}
         </button>
@@ -715,155 +810,6 @@
       <span>Sistem Terenkripsi SSL 256-bit</span>
     </div>
   </div>
-
-  <!-- MODAL PROMPT PIN 6-DIGIT SAAT OFFLINE -->
-  {#if showOfflinePinModal && selectedAccountForOfflinePin}
-    <div
-      class="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div class="relative bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-sm w-full p-6 space-y-4 animate-in zoom-in-95 duration-150">
-        <!-- Modal Header -->
-        <div class="flex items-center justify-between pb-2 border-b border-slate-100">
-          <div class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-full text-[11px] font-bold">
-            <WifiOff class="w-3.5 h-3.5 text-amber-600" />
-            <span>Verifikasi PIN Offline</span>
-          </div>
-          <button
-            type="button"
-            onclick={closeOfflinePinModal}
-            class="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-xl transition-colors cursor-pointer"
-            title="Tutup"
-          >
-            <X class="w-5 h-5" />
-          </button>
-        </div>
-
-        <!-- Target Account Information Card -->
-        <div class="flex items-center gap-3 p-3 bg-slate-50/90 rounded-2xl border border-slate-200/80">
-          <div class="w-11 h-11 rounded-full bg-gradient-to-tr from-brand-blue to-cyan-500 text-white flex items-center justify-center font-bold text-xs ring-2 ring-blue-100 overflow-hidden flex-shrink-0">
-            {#if selectedAccountForOfflinePin.avatarUrl}
-              <img
-                src={selectedAccountForOfflinePin.avatarUrl}
-                alt={selectedAccountForOfflinePin.fullName}
-                class="w-full h-full object-cover"
-                onerror={(e) => ((e.currentTarget as HTMLElement).style.display = 'none')}
-              />
-            {:else}
-              <span>{selectedAccountForOfflinePin.fullName.slice(0, 2).toUpperCase()}</span>
-            {/if}
-          </div>
-          <div class="min-w-0 flex-1">
-            <div class="text-xs font-bold text-slate-800 truncate flex items-center gap-1.5">
-              <span class="truncate">{selectedAccountForOfflinePin.fullName}</span>
-              <span class="px-1.5 py-0.2 rounded text-[9px] font-black flex-shrink-0 {selectedAccountForOfflinePin.role === 'SUPERADMIN' ? 'bg-blue-100 text-blue-800' : selectedAccountForOfflinePin.role === 'OWNER' ? 'bg-amber-100 text-amber-800' : selectedAccountForOfflinePin.role === 'GUEST' ? 'bg-amber-100 text-amber-900 border border-amber-300' : selectedAccountForOfflinePin.role === 'PHARMACIST' ? 'bg-purple-100 text-purple-800' : 'bg-emerald-100 text-emerald-800'}">
-                {selectedAccountForOfflinePin.role}
-              </span>
-            </div>
-            <div class="text-[11px] text-slate-500 truncate mt-0.5">
-              {selectedAccountForOfflinePin.branchName || "Apotek Hafidz Farma Pusat"}
-            </div>
-          </div>
-        </div>
-
-        <!-- PIN Display Dots -->
-        <div class="flex items-center justify-center gap-2 py-1">
-          {#each Array(6) as _, idx}
-            <div
-              class="w-8 h-10 rounded-xl border-2 flex items-center justify-center text-lg font-mono font-bold transition-all {idx < offlinePinInput.length
-                ? 'border-amber-500 bg-amber-50 text-amber-700 scale-105'
-                : 'border-slate-200 bg-slate-50 text-slate-300'}"
-            >
-              {idx < offlinePinInput.length ? "●" : ""}
-            </div>
-          {/each}
-        </div>
-
-        <!-- Hidden Input for Hardware Keyboard -->
-        <input
-          id="offlinePinInputRaw"
-          type="password"
-          maxlength="6"
-          bind:value={offlinePinInput}
-          class="sr-only"
-          autocomplete="one-time-code"
-          oninput={() => {
-            if (offlinePinInput.length === 6) {
-              setTimeout(() => handleVerifyOfflinePin(), 100);
-            }
-          }}
-        />
-
-        {#if offlinePinError}
-          <div class="p-2.5 bg-red-50 text-red-700 border border-red-200 text-xs rounded-xl flex items-center gap-2">
-            <AlertCircle class="w-4 h-4 text-red-600 flex-shrink-0" />
-            <span>{offlinePinError}</span>
-          </div>
-        {/if}
-
-        <!-- Touchscreen Virtual Keypad -->
-        <div class="grid grid-cols-3 gap-1.5 max-w-[240px] mx-auto pt-1">
-          {#each ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as num}
-            <button
-              type="button"
-              onclick={() => handleOfflinePinKeypad(num)}
-              class="h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-bold text-sm transition-colors cursor-pointer"
-            >
-              {num}
-            </button>
-          {/each}
-          <button
-            type="button"
-            onclick={() => (offlinePinInput = "")}
-            class="h-9 rounded-xl bg-slate-100 hover:bg-red-100 text-red-600 font-bold text-xs transition-colors cursor-pointer"
-          >
-            Hapus
-          </button>
-          <button
-            type="button"
-            onclick={() => handleOfflinePinKeypad("0")}
-            class="h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-bold text-sm transition-colors cursor-pointer"
-          >
-            0
-          </button>
-          <button
-            type="button"
-            onclick={handleOfflinePinBackspace}
-            class="h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
-          >
-            &larr;
-          </button>
-        </div>
-
-        <!-- Action Buttons -->
-        <div class="space-y-2 pt-2">
-          <button
-            type="button"
-            disabled={isVerifyingOfflinePin || offlinePinInput.length < 4}
-            onclick={() => handleVerifyOfflinePin()}
-            class="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs sm:text-sm shadow-md shadow-amber-600/20 flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-          >
-            {#if isVerifyingOfflinePin}
-              <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-              <span>Memverifikasi PIN...</span>
-            {:else}
-              <Lock class="w-4 h-4" />
-              <span>Verifikasi & Masuk Offline</span>
-            {/if}
-          </button>
-
-          <button
-            type="button"
-            onclick={closeOfflinePinModal}
-            class="w-full py-2 px-3 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-          >
-            Batal
-          </button>
-        </div>
-      </div>
-    </div>
-  {/if}
 
   <!-- BOTTOM COPYRIGHT -->
   <div class="relative z-10 mt-6 text-center text-xs text-white/70">

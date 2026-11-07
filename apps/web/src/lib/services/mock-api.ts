@@ -613,6 +613,20 @@ class MockApiService {
       payload
     };
   }
+
+  updateProductInMemory(product: any) {
+    const idx = this.products.findIndex((p) => p.id === product.id);
+    if (idx !== -1) {
+      this.products[idx] = { ...this.products[idx], ...product };
+    } else {
+      this.products.unshift(product as Product);
+    }
+  }
+
+  invalidateProductsCache() {
+    this.isLoadedFromApi = false;
+    this.loadPromise = null;
+  }
 }
 
 export const mockApi = new MockApiService();

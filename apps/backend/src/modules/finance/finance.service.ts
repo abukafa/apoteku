@@ -1,5 +1,5 @@
 import { db, schema } from "@apoteku/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, or, desc, sql } from "drizzle-orm";
 
 export interface RecordDebtPaymentPayload {
   tenantId?: string;
@@ -24,6 +24,19 @@ class FinanceService {
   async recordDebtPayment(payload: RecordDebtPaymentPayload) {
     const tenantId = await this.getTenantId(payload.tenantId);
 
+    const isUuid = (val?: string) =>
+      Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
+
+    const numericLegacyId = Number(payload.purchaseInvoiceId);
+    const invoiceCondition = isUuid(payload.purchaseInvoiceId)
+      ? eq(schema.purchaseInvoices.id, payload.purchaseInvoiceId)
+      : !isNaN(numericLegacyId) && numericLegacyId > 0
+        ? or(
+            eq(schema.purchaseInvoices.invoiceNumber, payload.purchaseInvoiceId),
+            eq(schema.purchaseInvoices.legacyIdPembelian, numericLegacyId)
+          )
+        : eq(schema.purchaseInvoices.invoiceNumber, payload.purchaseInvoiceId);
+
     const [invoice] = await db
       .select({
         id: schema.purchaseInvoices.id,
@@ -37,11 +50,11 @@ class FinanceService {
       })
       .from(schema.purchaseInvoices)
       .leftJoin(schema.suppliers, eq(schema.purchaseInvoices.supplierId, schema.suppliers.id))
-      .where(eq(schema.purchaseInvoices.id, payload.purchaseInvoiceId))
+      .where(invoiceCondition)
       .limit(1);
 
     if (!invoice) {
-      throw new Error(`Faktur Pembelian dengan ID ${payload.purchaseInvoiceId} tidak ditemukan`);
+      throw new Error(`Faktur Pembelian dengan referensi ${payload.purchaseInvoiceId} tidak ditemukan`);
     }
 
     const currentPaid = Number(invoice.paidAmount || 0);
@@ -55,17 +68,25 @@ class FinanceService {
     const newPaidAmount = currentPaid + paymentAmount;
     const isPaidOff = newPaidAmount >= grandTotal;
 
-    const isUuid = (val?: string) =>
-      Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
-
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
     const randomSeq = Math.floor(100 + Math.random() * 900);
     const paymentNumber = payload.paymentNumber || `RLH-${dateStr}-${randomSeq}`;
     const paymentId = crypto.randomUUID();
     const paymentDateStr = payload.paymentDate || now.toISOString().slice(0, 10);
-    const paidBy = isUuid(payload.paidBy) ? (payload.paidBy as string) : crypto.randomUUID();
-    const branchId = (isUuid(payload.branchId) ? payload.branchId : invoice.branchId) || crypto.randomUUID();
+
+    // Pastikan paidBy & branchId valid dengan relasi foreign key
+    let paidBy = isUuid(payload.paidBy) ? (payload.paidBy as string) : undefined;
+    if (!paidBy) {
+      const [u] = await db.select({ id: schema.users.id }).from(schema.users).limit(1);
+      paidBy = u ? u.id : crypto.randomUUID();
+    }
+
+    let branchId = (isUuid(payload.branchId) ? payload.branchId : invoice.branchId) || undefined;
+    if (!branchId) {
+      const [b] = await db.select({ id: schema.branches.id }).from(schema.branches).limit(1);
+      branchId = b ? b.id : crypto.randomUUID();
+    }
 
     // 1. Insert into debt_payments
     const [createdPayment] = await db
@@ -199,6 +220,80 @@ class FinanceService {
       unpaidInvoicesCount: agg?.unpaidCount || 0,
       paidOffInvoicesCount: agg?.paidOffCount || 0
     };
+  }
+
+  async deleteDebtPayment(paymentId: string) {
+    const [payment] = await db
+      .select({
+        id: schema.debtPayments.id,
+        paymentNumber: schema.debtPayments.paymentNumber,
+        amountPaid: schema.debtPayments.amountPaid,
+        purchaseInvoiceId: schema.debtPayments.purchaseInvoiceId
+      })
+      .from(schema.debtPayments)
+      .where(eq(schema.debtPayments.id, paymentId))
+      .limit(1);
+
+    if (!payment) {
+      throw new Error(`Data pembayaran dengan ID "${paymentId}" tidak ditemukan`);
+    }
+
+    const [invoice] = await db
+      .select({
+        id: schema.purchaseInvoices.id,
+        invoiceNumber: schema.purchaseInvoices.invoiceNumber,
+        grandTotal: schema.purchaseInvoices.grandTotal,
+        paidAmount: schema.purchaseInvoices.paidAmount,
+        isPaidOff: schema.purchaseInvoices.isPaidOff
+      })
+      .from(schema.purchaseInvoices)
+      .where(eq(schema.purchaseInvoices.id, payment.purchaseInvoiceId))
+      .limit(1);
+
+    const paymentAmount = Number(payment.amountPaid || 0);
+
+    return await db.transaction(async (tx) => {
+      let restoredInvoice = null;
+
+      if (invoice) {
+        const currentPaid = Number(invoice.paidAmount || 0);
+        const grandTotal = Number(invoice.grandTotal || 0);
+        const newPaidAmount = Math.max(0, currentPaid - paymentAmount);
+        const isPaidOff = newPaidAmount >= grandTotal;
+
+        await tx
+          .update(schema.purchaseInvoices)
+          .set({
+            paidAmount: String(newPaidAmount),
+            isPaidOff
+          })
+          .where(eq(schema.purchaseInvoices.id, invoice.id));
+
+        restoredInvoice = {
+          id: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          grandTotal,
+          previousPaid: currentPaid,
+          newPaidAmount,
+          remainingDebt: Math.max(0, grandTotal - newPaidAmount),
+          isPaidOff
+        };
+      }
+
+      await tx
+        .delete(schema.debtPayments)
+        .where(eq(schema.debtPayments.id, payment.id));
+
+      return {
+        success: true,
+        message: `Bukti pembayaran ${payment.paymentNumber} sebesar Rp ${paymentAmount.toLocaleString("id-ID")} berhasil dibatalkan. Saldo tagihan faktur telah dipulihkan.`,
+        data: {
+          deletedPaymentId: payment.id,
+          paymentNumber: payment.paymentNumber,
+          restoredInvoice
+        }
+      };
+    });
   }
 }
 

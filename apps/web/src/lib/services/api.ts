@@ -124,6 +124,12 @@ export const api = {
     async getPurchases(limit = 100) {
       return await apiFetch<any>(`/api/purchases?limit=${limit}`);
     },
+    async createPurchase(payload: any) {
+      return await apiFetch<any>("/api/purchases", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
     async getPurchaseOrders(limit = 100) {
       return await apiFetch<any>(`/api/purchase-orders?limit=${limit}`);
     },
@@ -131,6 +137,113 @@ export const api = {
       return await apiFetch<any>("/api/purchase-orders", {
         method: "POST",
         body: JSON.stringify(payload)
+      });
+    }
+  },
+  customers: {
+    async list() {
+      return await apiFetch<any>("/api/customers");
+    },
+    async create(payload: {
+      name: string;
+      code?: string;
+      phone?: string;
+      address?: string;
+      customerType?: string;
+      priceTier?: string;
+      pointBalance?: number;
+      isActive?: boolean;
+    }) {
+      return await apiFetch<any>("/api/customers", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async update(
+      id: string,
+      payload: {
+        name?: string;
+        code?: string;
+        phone?: string;
+        address?: string;
+        customerType?: string;
+        priceTier?: string;
+        pointBalance?: number;
+        isActive?: boolean;
+      }
+    ) {
+      return await apiFetch<any>(`/api/customers/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+    },
+    async delete(id: string) {
+      return await apiFetch<any>(`/api/customers/${id}`, {
+        method: "DELETE"
+      });
+    }
+  },
+  suppliers: {
+    async list() {
+      return await apiFetch<any>("/api/suppliers");
+    },
+    async create(payload: {
+      name: string;
+      code?: string;
+      phone?: string;
+      email?: string;
+      address?: string;
+      contactPerson?: string;
+      paymentTermDays?: number;
+      topDays?: number;
+      isActive?: boolean;
+    }) {
+      return await apiFetch<any>("/api/suppliers", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async update(
+      id: string,
+      payload: {
+        name?: string;
+        code?: string;
+        phone?: string;
+        email?: string;
+        address?: string;
+        contactPerson?: string;
+        paymentTermDays?: number;
+        topDays?: number;
+        isActive?: boolean;
+      }
+    ) {
+      return await apiFetch<any>(`/api/suppliers/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+    },
+    async delete(id: string) {
+      return await apiFetch<any>(`/api/suppliers/${id}`, {
+        method: "DELETE"
+      });
+    }
+  },
+  products: {
+    async create(payload: any) {
+      return await apiFetch<any>("/api/products", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async update(id: string, payload: any) {
+      return await apiFetch<any>(`/api/products/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+    },
+    async delete(id: string) {
+      return await apiFetch<any>(`/api/products/${id}`, {
+        method: "DELETE"
       });
     }
   },
@@ -193,12 +306,78 @@ export const api = {
       });
     }
   },
+  tenant: {
+    async get() {
+      return await apiFetch<any>("/api/tenant");
+    },
+    async update(payload: {
+      id?: string;
+      code?: string;
+      name?: string;
+      taxPercent?: number;
+      isActive?: boolean;
+    }) {
+      return await apiFetch<any>("/api/tenant", {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+    }
+  },
   branches: {
     async list() {
       return await apiFetch<any>("/api/branches");
     },
+    async create(payload: {
+      code: string;
+      name: string;
+      address?: string;
+      phone?: string;
+      receiptHeader?: string;
+      receiptFooter?: string;
+      createDefaultLocation?: boolean;
+      defaultLocationCode?: string;
+      defaultLocationName?: string;
+    }) {
+      return await apiFetch<any>("/api/branches", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
     async update(id: string, payload: any) {
       return await apiFetch<any>(`/api/branches/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+    }
+  },
+  locations: {
+    async list(branchId?: string) {
+      const q = branchId ? `?branch_id=${encodeURIComponent(branchId)}` : "";
+      return await apiFetch<any>(`/api/inventory-locations${q}`);
+    },
+    async create(payload: {
+      branchId: string;
+      code: string;
+      name: string;
+      isDefault?: boolean;
+      isActive?: boolean;
+    }) {
+      return await apiFetch<any>("/api/inventory-locations", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async update(
+      id: string,
+      payload: {
+        branchId?: string;
+        code?: string;
+        name?: string;
+        isDefault?: boolean;
+        isActive?: boolean;
+      }
+    ) {
+      return await apiFetch<any>(`/api/inventory-locations/${id}`, {
         method: "PUT",
         body: JSON.stringify(payload)
       });
@@ -272,6 +451,21 @@ export const api = {
       });
     }
   },
+  inventory: {
+    async recordOpname(payload: any) {
+      return await apiFetch<any>("/api/inventory/opname", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async getOpnameHistory(params: { branchId?: string; limit?: number } = {}) {
+      const sp = new URLSearchParams();
+      if (params.branchId) sp.append("branch_id", params.branchId);
+      if (params.limit) sp.append("limit", String(params.limit));
+      const qs = sp.toString() ? `?${sp.toString()}` : "";
+      return await apiFetch<any>(`/api/inventory/opname${qs}`);
+    }
+  },
   finance: {
     async getDebtPayments(params: { branchId?: string; invoiceId?: string; limit?: number } = {}) {
       const sp = new URLSearchParams();
@@ -298,6 +492,11 @@ export const api = {
       return await apiFetch<any>("/api/finance/debt-payments", {
         method: "POST",
         body: JSON.stringify(payload)
+      });
+    },
+    async deleteDebtPayment(paymentId: string) {
+      return await apiFetch<any>(`/api/finance/debt-payments/${paymentId}`, {
+        method: "DELETE"
       });
     },
     async getCashflow() {

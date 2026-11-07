@@ -384,50 +384,100 @@
     branchConsignments.reduce((a, b) => a + b.unsettledAmount, 0)
   );
 
-  function handleSaveNewInvoice() {
-    if (!newInvoiceNumber.trim()) return;
+  let isSavingInvoice = $state(false);
+
+  async function handleSaveNewInvoice() {
+    if (!newInvoiceNumber.trim()) {
+      alert("Nomor faktur wajib diisi");
+      return;
+    }
+    if (newInvoiceItems.length === 0) {
+      alert("Tambahkan minimal 1 item obat pada faktur");
+      return;
+    }
 
     const supplierObj =
       suppliers.find((s) => s.name === newInvoiceSupplier) || suppliers[0];
     const branchObj =
       branches.find((b) => b.id === newInvoiceBranchId) || branches[0];
 
-    const createdInvoice: PurchaseInvoiceRecord = {
-      id: `inv-${Date.now()}`,
-      invoiceNumber: newInvoiceNumber.trim().toUpperCase(),
-      poNumber: newInvoicePoNumber !== "NONE" ? newInvoicePoNumber : undefined,
-      supplierId: supplierObj?.id || "sup-01",
-      supplierName: newInvoiceSupplier,
-      branchId: newInvoiceBranchId,
-      branchName: branchObj?.name || "Apotek Hafidz Farma Pusat",
-      invoiceDate: newInvoiceDate,
-      dueDate: newInvoiceDueDate,
-      totalAmount: invoiceGrandTotal,
-      paidAmount: 0,
-      status: "UNPAID",
-      itemsCount: newInvoiceItems.length,
-      taxPercent: newInvoiceTaxIncluded ? 11 : 0,
-      notes:
-        newInvoicePoNumber !== "NONE"
-          ? `Penerimaan atas SP ${newInvoicePoNumber}`
-          : "Faktur pembelian PBF multi-item",
-      items: [...newInvoiceItems],
-      payments: []
-    };
+    isSavingInvoice = true;
+    try {
+      const payload = {
+        branchId: newInvoiceBranchId,
+        supplierId: supplierObj?.id,
+        supplierName: newInvoiceSupplier,
+        invoiceNumber: newInvoiceNumber.trim().toUpperCase(),
+        invoiceDate: newInvoiceDate,
+        dueDate: newInvoiceDueDate,
+        isCredit: true,
+        subtotal: invoiceSubtotalBruto,
+        discountAmount: invoiceTotalDiscount,
+        taxAmount: invoiceTaxAmount,
+        grandTotal: invoiceGrandTotal,
+        poNumber: newInvoicePoNumber !== "NONE" ? newInvoicePoNumber : undefined,
+        items: newInvoiceItems.map((item) => ({
+          productId: item.productId,
+          productName: item.productName,
+          batchNo: item.batchNo,
+          expiredDate: item.expiredDate,
+          unitName: item.unit,
+          qty: item.qty,
+          buyPrice: item.hna,
+          discountPercent: item.disc1,
+          discountAmount: Math.round((item.qty * item.hna * item.disc1) / 100),
+          subtotal: Math.round(item.qty * item.hna * (1 - item.disc1 / 100) * (1 - item.disc2 / 100))
+        }))
+      };
 
-    invoices = [createdInvoice, ...invoices];
+      const res = await api.erp.createPurchase(payload).catch((err: any) => {
+        console.warn("API createPurchase failed or offline, fallbacking locally:", err);
+        return null;
+      });
 
-    if (newInvoicePoNumber !== "NONE") {
-      purchaseOrders = purchaseOrders.map((sp) =>
-        sp.orderNumber === newInvoicePoNumber
-          ? { ...sp, status: "RECEIVED" }
-          : sp
-      );
+      const createdInvoice: PurchaseInvoiceRecord = {
+        id: res?.data?.invoice?.id || `inv-${Date.now()}`,
+        invoiceNumber: newInvoiceNumber.trim().toUpperCase(),
+        poNumber: newInvoicePoNumber !== "NONE" ? newInvoicePoNumber : undefined,
+        supplierId: supplierObj?.id || "sup-01",
+        supplierName: newInvoiceSupplier,
+        branchId: newInvoiceBranchId,
+        branchName: branchObj?.name || "Apotek Hafidz Farma Pusat",
+        invoiceDate: newInvoiceDate,
+        dueDate: newInvoiceDueDate,
+        totalAmount: invoiceGrandTotal,
+        paidAmount: 0,
+        status: "UNPAID",
+        itemsCount: newInvoiceItems.length,
+        taxPercent: newInvoiceTaxIncluded ? 11 : 0,
+        notes:
+          newInvoicePoNumber !== "NONE"
+            ? `Penerimaan atas SP ${newInvoicePoNumber}`
+            : "Faktur pembelian PBF multi-item",
+        items: [...newInvoiceItems],
+        payments: []
+      };
+
+      invoices = [createdInvoice, ...invoices];
+
+      if (newInvoicePoNumber !== "NONE") {
+        purchaseOrders = purchaseOrders.map((sp) =>
+          sp.orderNumber === newInvoicePoNumber
+            ? { ...sp, status: "RECEIVED" }
+            : sp
+        );
+      }
+
+      isAddInvoiceModalOpen = false;
+      newInvoiceNumber = "";
+      newInvoicePoNumber = "NONE";
+
+      alert(res?.message || `Faktur ${createdInvoice.invoiceNumber} berhasil disimpan dan stok otomatis tercatat.`);
+    } catch (err: any) {
+      alert(err?.message || "Terjadi kesalahan saat menyimpan faktur.");
+    } finally {
+      isSavingInvoice = false;
     }
-
-    isAddInvoiceModalOpen = false;
-    newInvoiceNumber = "";
-    newInvoicePoNumber = "NONE";
   }
 
   function openReceiveSpIntoInvoice(sp: PurchaseOrderRecord) {
@@ -1338,9 +1388,15 @@
         <button
           type="button"
           onclick={handleSaveNewInvoice}
-          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
+          disabled={isSavingInvoice}
+          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm disabled:opacity-50 inline-flex items-center gap-1.5"
         >
-          Simpan Faktur
+          {#if isSavingInvoice}
+            <div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            <span>Menyimpan & Menambah Stok...</span>
+          {:else}
+            <span>Simpan Faktur</span>
+          {/if}
         </button>
       </div>
     </div>

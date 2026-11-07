@@ -10,6 +10,7 @@ import { erpRoutes } from "./modules/erp/erp.routes.js";
 import { shiftRoutes } from "./modules/shift/shift.routes.js";
 import { prescriptionRoutes } from "./modules/prescription/prescription.routes.js";
 import { transferRoutes } from "./modules/inventory/transfer.routes.js";
+import { opnameRoutes } from "./modules/inventory/opname.routes.js";
 import { financeRoutes } from "./modules/finance/finance.routes.js";
 import { returnsRoutes } from "./modules/returns/returns.routes.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
@@ -79,6 +80,7 @@ export const app = new Elysia()
   .use(shiftRoutes)
   .use(prescriptionRoutes)
   .use(transferRoutes)
+  .use(opnameRoutes)
   .use(financeRoutes)
   .use(returnsRoutes)
   .use(authRoutes)

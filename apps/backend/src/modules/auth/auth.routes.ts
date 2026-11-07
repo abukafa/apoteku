@@ -1,6 +1,6 @@
 import { Elysia, t } from "elysia";
 import { db, schema } from "@apoteku/db";
-import { eq, or, sql } from "drizzle-orm";
+import { eq, or, and, sql } from "drizzle-orm";
 
 export const authRoutes = new Elysia({ prefix: "/api" })
   // 1. AUTH LOGIN
@@ -1020,37 +1020,168 @@ export const authRoutes = new Elysia({ prefix: "/api" })
     }
   )
 
-  // 4. GET ALL BRANCHES
+  // 4. TENANT (GET & UPDATE MASTER ORGANISASI)
+  .get(
+    "/tenant",
+    async ({ headers }) => {
+      try {
+        const headerTenantId = headers["x-tenant-id"];
+        let tenantRow: typeof schema.tenants.$inferSelect | undefined;
+        if (headerTenantId && /^[0-9a-fA-F-]{36}$/.test(headerTenantId)) {
+          const [found] = await db
+            .select()
+            .from(schema.tenants)
+            .where(eq(schema.tenants.id, headerTenantId))
+            .limit(1);
+          tenantRow = found;
+        }
+        if (!tenantRow) {
+          const [first] = await db.select().from(schema.tenants).limit(1);
+          tenantRow = first;
+        }
+        if (!tenantRow) {
+          return { success: false, error: "Data tenant belum ditemukan di database" };
+        }
+        return {
+          success: true,
+          data: {
+            id: tenantRow.id,
+            code: tenantRow.code,
+            name: tenantRow.name,
+            taxPercent: Number(tenantRow.taxPercent || 11),
+            isActive: tenantRow.isActive,
+            createdAt: tenantRow.createdAt
+          }
+        };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      detail: {
+        tags: ["Auth & Users"],
+        summary: "Ambil Profil Organisasi / Tenant Utama"
+      }
+    }
+  )
+
+  .put(
+    "/tenant",
+    async ({ body, set }) => {
+      try {
+        let targetId = body.id;
+        if (!targetId || !/^[0-9a-fA-F-]{36}$/.test(targetId)) {
+          const [first] = await db.select({ id: schema.tenants.id }).from(schema.tenants).limit(1);
+          if (!first) {
+            set.status = 404;
+            return { success: false, error: "Tenant tidak ditemukan" };
+          }
+          targetId = first.id;
+        }
+
+        const updatePayload: Record<string, any> = {};
+        if (body.code !== undefined) updatePayload.code = body.code.trim().toUpperCase();
+        if (body.name !== undefined) updatePayload.name = body.name.trim();
+        if (body.taxPercent !== undefined) updatePayload.taxPercent = String(Number(body.taxPercent));
+        if (body.isActive !== undefined) updatePayload.isActive = Boolean(body.isActive);
+
+        const [updated] = await db
+          .update(schema.tenants)
+          .set(updatePayload)
+          .where(eq(schema.tenants.id, targetId))
+          .returning();
+
+        if (!updated) {
+          set.status = 404;
+          return { success: false, error: "Tenant tidak ditemukan" };
+        }
+
+        return {
+          success: true,
+          message: `Data organisasi "${updated.name}" berhasil diperbarui`,
+          data: {
+            id: updated.id,
+            code: updated.code,
+            name: updated.name,
+            taxPercent: Number(updated.taxPercent || 11),
+            isActive: updated.isActive,
+            createdAt: updated.createdAt
+          }
+        };
+      } catch (err: any) {
+        set.status = 400;
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      body: t.Object({
+        id: t.Optional(t.String()),
+        code: t.Optional(t.String()),
+        name: t.Optional(t.String()),
+        taxPercent: t.Optional(t.Number()),
+        isActive: t.Optional(t.Boolean())
+      }),
+      detail: {
+        tags: ["Auth & Users"],
+        summary: "Perbarui Data Organisasi / Tenant (Superadmin & Owner)"
+      }
+    }
+  )
+
+  // 5. GET ALL BRANCHES (BESERTA LOKASI INVENTORI PER CABANG)
   .get(
     "/branches",
     async () => {
       try {
-        const branchList = await db
-          .select({
-            id: schema.branches.id,
-            code: schema.branches.code,
-            name: schema.branches.name,
-            address: schema.branches.address,
-            phone: schema.branches.phone,
-            receiptHeader: schema.branches.receiptHeader,
-            receiptFooter: schema.branches.receiptFooter,
-            createdAt: schema.branches.createdAt
-          })
-          .from(schema.branches)
-          .orderBy(schema.branches.code);
+        const [branchList, locationList] = await Promise.all([
+          db
+            .select({
+              id: schema.branches.id,
+              tenantId: schema.branches.tenantId,
+              code: schema.branches.code,
+              name: schema.branches.name,
+              address: schema.branches.address,
+              phone: schema.branches.phone,
+              receiptHeader: schema.branches.receiptHeader,
+              receiptFooter: schema.branches.receiptFooter,
+              createdAt: schema.branches.createdAt
+            })
+            .from(schema.branches)
+            .orderBy(schema.branches.code),
+          db
+            .select({
+              id: schema.inventoryLocations.id,
+              tenantId: schema.inventoryLocations.tenantId,
+              branchId: schema.inventoryLocations.branchId,
+              code: schema.inventoryLocations.code,
+              name: schema.inventoryLocations.name,
+              isDefault: schema.inventoryLocations.isDefault,
+              isActive: schema.inventoryLocations.isActive
+            })
+            .from(schema.inventoryLocations)
+            .orderBy(schema.inventoryLocations.code)
+        ]);
+
+        const locationsByBranch = new Map<string, typeof locationList>();
+        for (const loc of locationList) {
+          const list = locationsByBranch.get(loc.branchId) || [];
+          list.push(loc);
+          locationsByBranch.set(loc.branchId, list);
+        }
 
         return {
           success: true,
           data: branchList.map((b) => ({
             id: b.id,
+            tenantId: b.tenantId,
             code: b.code,
             name: b.name,
-            address: b.address || "Jl. Raya Tasikmalaya",
-            phone: b.phone || "082316802828",
+            address: b.address || "",
+            phone: b.phone || "",
             receiptHeader: b.receiptHeader || b.name,
             receiptFooter: b.receiptFooter || "Semoga lekas sembuh. Terima kasih.",
-            siaNumber: "503/044/SIA/DPMPTSP/2024",
-            pharmacistName: "apt. Ghina Nadhifah, S.Farm."
+            createdAt: b.createdAt,
+            locations: locationsByBranch.get(b.id) || []
           }))
         };
       } catch (err: any) {
@@ -1060,25 +1191,108 @@ export const authRoutes = new Elysia({ prefix: "/api" })
     {
       detail: {
         tags: ["Auth & Users"],
-        summary: "Daftar Seluruh Cabang Apotek Jaringan"
+        summary: "Daftar Seluruh Cabang Apotek & Titik Lokasi Inventori"
       }
     }
   )
 
-  // 5. UPDATE BRANCH
+  // 5b. CREATE NEW BRANCH (+ OPSIONAL LOKASI INVENTORI DEFAULT)
+  .post(
+    "/branches",
+    async ({ body, set }) => {
+      try {
+        const [tenant] = await db.select({ id: schema.tenants.id }).from(schema.tenants).limit(1);
+        if (!tenant) {
+          set.status = 400;
+          return { success: false, error: "Tenant belum tersedia di database" };
+        }
+
+        const code = body.code.trim().toUpperCase();
+        const name = body.name.trim();
+        if (!code || !name) {
+          set.status = 400;
+          return { success: false, error: "Kode cabang dan nama cabang wajib diisi" };
+        }
+
+        const [createdBranch] = await db
+          .insert(schema.branches)
+          .values({
+            tenantId: tenant.id,
+            code,
+            name,
+            address: body.address?.trim() || null,
+            phone: body.phone?.trim() || null,
+            receiptHeader: body.receiptHeader?.trim() || name,
+            receiptFooter: body.receiptFooter?.trim() || "Semoga lekas sembuh. Terima kasih."
+          })
+          .returning();
+
+        const createdLocations: any[] = [];
+        if (body.createDefaultLocation !== false) {
+          const locCode = (body.defaultLocationCode || `${code}-UTAMA`).trim().toUpperCase();
+          const locName = (body.defaultLocationName || `Etalase & Gudang ${name}`).trim();
+          const [loc] = await db
+            .insert(schema.inventoryLocations)
+            .values({
+              tenantId: tenant.id,
+              branchId: createdBranch.id,
+              code: locCode,
+              name: locName,
+              isDefault: true,
+              isActive: true
+            })
+            .returning();
+          if (loc) createdLocations.push(loc);
+        }
+
+        return {
+          success: true,
+          message: `Cabang "${createdBranch.name}" berhasil ditambahkan`,
+          data: {
+            ...createdBranch,
+            locations: createdLocations
+          }
+        };
+      } catch (err: any) {
+        set.status = 400;
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      body: t.Object({
+        code: t.String(),
+        name: t.String(),
+        address: t.Optional(t.String()),
+        phone: t.Optional(t.String()),
+        receiptHeader: t.Optional(t.String()),
+        receiptFooter: t.Optional(t.String()),
+        createDefaultLocation: t.Optional(t.Boolean()),
+        defaultLocationCode: t.Optional(t.String()),
+        defaultLocationName: t.Optional(t.String())
+      }),
+      detail: {
+        tags: ["Auth & Users"],
+        summary: "Tambah Cabang Baru Beserta Lokasi Inventori Utama"
+      }
+    }
+  )
+
+  // 5c. UPDATE BRANCH
   .put(
     "/branches/:id",
     async ({ params, body, set }) => {
       try {
+        const updatePayload: Record<string, any> = {};
+        if (body.code !== undefined) updatePayload.code = body.code.trim().toUpperCase();
+        if (body.name !== undefined) updatePayload.name = body.name.trim();
+        if (body.address !== undefined) updatePayload.address = body.address.trim();
+        if (body.phone !== undefined) updatePayload.phone = body.phone.trim();
+        if (body.receiptHeader !== undefined) updatePayload.receiptHeader = body.receiptHeader.trim();
+        if (body.receiptFooter !== undefined) updatePayload.receiptFooter = body.receiptFooter.trim();
+
         const [updated] = await db
           .update(schema.branches)
-          .set({
-            name: body.name,
-            address: body.address,
-            phone: body.phone,
-            receiptHeader: body.receiptHeader,
-            receiptFooter: body.receiptFooter
-          })
+          .set(updatePayload)
           .where(eq(schema.branches.id, params.id))
           .returning();
 
@@ -1087,9 +1301,184 @@ export const authRoutes = new Elysia({ prefix: "/api" })
           return { success: false, error: "Cabang tidak ditemukan" };
         }
 
+        const branchLocations = await db
+          .select()
+          .from(schema.inventoryLocations)
+          .where(eq(schema.inventoryLocations.branchId, updated.id))
+          .orderBy(schema.inventoryLocations.code);
+
         return {
           success: true,
           message: `Cabang ${updated.name} berhasil diperbarui`,
+          data: {
+            ...updated,
+            locations: branchLocations
+          }
+        };
+      } catch (err: any) {
+        set.status = 400;
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      body: t.Object({
+        code: t.Optional(t.String()),
+        name: t.Optional(t.String()),
+        address: t.Optional(t.String()),
+        phone: t.Optional(t.String()),
+        receiptHeader: t.Optional(t.String()),
+        receiptFooter: t.Optional(t.String())
+      }),
+      detail: {
+        tags: ["Auth & Users"],
+        summary: "Perbarui Informasi Cabang Apotek"
+      }
+    }
+  )
+
+  // 6. INVENTORY LOCATIONS (LOKASI SIMPAN STOK PER CABANG)
+  .get(
+    "/inventory-locations",
+    async ({ query }) => {
+      try {
+        const branchId = query.branch_id;
+        const rows = await db
+          .select({
+            id: schema.inventoryLocations.id,
+            tenantId: schema.inventoryLocations.tenantId,
+            branchId: schema.inventoryLocations.branchId,
+            code: schema.inventoryLocations.code,
+            name: schema.inventoryLocations.name,
+            isDefault: schema.inventoryLocations.isDefault,
+            isActive: schema.inventoryLocations.isActive,
+            branchName: schema.branches.name,
+            branchCode: schema.branches.code
+          })
+          .from(schema.inventoryLocations)
+          .leftJoin(schema.branches, eq(schema.inventoryLocations.branchId, schema.branches.id))
+          .where(branchId ? eq(schema.inventoryLocations.branchId, branchId) : undefined)
+          .orderBy(schema.inventoryLocations.code);
+
+        return {
+          success: true,
+          data: rows
+        };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      query: t.Object({
+        branch_id: t.Optional(t.String())
+      }),
+      detail: {
+        tags: ["Auth & Users"],
+        summary: "Daftar Lokasi Penyimpanan Inventori (Etalase / Gudang)"
+      }
+    }
+  )
+
+  .post(
+    "/inventory-locations",
+    async ({ body, set }) => {
+      try {
+        const [tenant] = await db.select({ id: schema.tenants.id }).from(schema.tenants).limit(1);
+        if (!tenant) {
+          set.status = 400;
+          return { success: false, error: "Tenant tidak ditemukan" };
+        }
+
+        const code = body.code.trim().toUpperCase();
+        const name = body.name.trim();
+        if (!body.branchId || !code || !name) {
+          set.status = 400;
+          return { success: false, error: "Cabang, kode lokasi, dan nama lokasi wajib diisi" };
+        }
+
+        if (body.isDefault) {
+          await db
+            .update(schema.inventoryLocations)
+            .set({ isDefault: false })
+            .where(eq(schema.inventoryLocations.branchId, body.branchId));
+        }
+
+        const [created] = await db
+          .insert(schema.inventoryLocations)
+          .values({
+            tenantId: tenant.id,
+            branchId: body.branchId,
+            code,
+            name,
+            isDefault: Boolean(body.isDefault),
+            isActive: body.isActive !== false
+          })
+          .returning();
+
+        return {
+          success: true,
+          message: `Lokasi inventori "${created.name}" berhasil ditambahkan`,
+          data: created
+        };
+      } catch (err: any) {
+        set.status = 400;
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      body: t.Object({
+        branchId: t.String(),
+        code: t.String(),
+        name: t.String(),
+        isDefault: t.Optional(t.Boolean()),
+        isActive: t.Optional(t.Boolean())
+      }),
+      detail: {
+        tags: ["Auth & Users"],
+        summary: "Tambah Lokasi Penyimpanan Inventori Baru pada Cabang"
+      }
+    }
+  )
+
+  .put(
+    "/inventory-locations/:id",
+    async ({ params, body, set }) => {
+      try {
+        const [existing] = await db
+          .select()
+          .from(schema.inventoryLocations)
+          .where(eq(schema.inventoryLocations.id, params.id))
+          .limit(1);
+
+        if (!existing) {
+          set.status = 404;
+          return { success: false, error: "Lokasi inventori tidak ditemukan" };
+        }
+
+        const targetBranchId = body.branchId || existing.branchId;
+        if (body.isDefault) {
+          await db
+            .update(schema.inventoryLocations)
+            .set({ isDefault: false })
+            .where(eq(schema.inventoryLocations.branchId, targetBranchId));
+        }
+
+        const updatePayload: Record<string, any> = {};
+        if (body.branchId !== undefined) updatePayload.branchId = body.branchId;
+        if (body.code !== undefined) updatePayload.code = body.code.trim().toUpperCase();
+        if (body.name !== undefined) updatePayload.name = body.name.trim();
+        if (body.isDefault !== undefined) updatePayload.isDefault = Boolean(body.isDefault);
+        if (body.isActive !== undefined) updatePayload.isActive = Boolean(body.isActive);
+
+        const [updated] = await db
+          .update(schema.inventoryLocations)
+          .set(updatePayload)
+          .where(eq(schema.inventoryLocations.id, params.id))
+          .returning();
+
+        return {
+          success: true,
+          message: `Lokasi inventori "${updated.name}" berhasil diperbarui`,
           data: updated
         };
       } catch (err: any) {
@@ -1100,15 +1489,15 @@ export const authRoutes = new Elysia({ prefix: "/api" })
     {
       params: t.Object({ id: t.String() }),
       body: t.Object({
+        branchId: t.Optional(t.String()),
+        code: t.Optional(t.String()),
         name: t.Optional(t.String()),
-        address: t.Optional(t.String()),
-        phone: t.Optional(t.String()),
-        receiptHeader: t.Optional(t.String()),
-        receiptFooter: t.Optional(t.String())
+        isDefault: t.Optional(t.Boolean()),
+        isActive: t.Optional(t.Boolean())
       }),
       detail: {
         tags: ["Auth & Users"],
-        summary: "Perbarui Informasi Cabang Apotek"
+        summary: "Perbarui Lokasi Penyimpanan Inventori"
       }
     }
   );

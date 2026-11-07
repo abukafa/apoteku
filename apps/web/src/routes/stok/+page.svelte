@@ -22,7 +22,8 @@
     ArrowRight,
     ChevronLeft,
     ChevronRight,
-    Search
+    Search,
+    Trash2
   } from "lucide-svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
@@ -33,6 +34,7 @@
   import { authStore } from "$lib/stores/authStore.svelte";
   import { portal } from "$lib/actions/portal";
   import { mockApi } from "$lib/services/mock-api";
+  import { api } from "$lib/services/api";
 
   // Types for Ledger & Adjustment History
   interface LedgerEntry {
@@ -111,11 +113,50 @@
     } catch (_) {}
   }
 
+  async function loadOpnameHistory() {
+    try {
+      const res = await api.inventory.getOpnameHistory({ branchId: selectedBranchId });
+      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+        const loaded: OpnameAdjustmentRecord[] = [];
+        for (const doc of res.data) {
+          for (const item of (doc.items || [])) {
+            loaded.push({
+              id: item.id || `adj-${doc.id}`,
+              docNumber: doc.docNumber,
+              date: doc.date,
+              branchId: doc.branchId,
+              productId: item.productId,
+              productName: item.productName,
+              sku: item.sku,
+              batchId: item.batchId,
+              batchNumber: item.batchNumber,
+              unit: item.unit,
+              systemQty: item.systemQty,
+              actualQty: item.actualQty,
+              differenceQty: item.differenceQty,
+              costPerUnit: item.costPerUnit,
+              valueDifference: item.valueDifference,
+              reasonType: "STOCK_OPNAME",
+              notes: item.notes || doc.reason,
+              operator: doc.operatorName || "Petugas Apotek"
+            });
+          }
+        }
+        if (loaded.length > 0) {
+          opnameHistory = loaded;
+        }
+      }
+    } catch (_) {}
+  }
+
   onMount(async () => {
     if (authStore.user?.branchId) {
       selectedBranchId = authStore.user.branchId;
     }
-    await fetchProducts();
+    await Promise.all([
+      fetchProducts(),
+      loadOpnameHistory()
+    ]);
   });
   let selectedLedgerTypeFilter = $state("ALL");
 
@@ -463,171 +504,219 @@
     }
   }
 
-  function submitStockOpname() {
+  let isSavingOpname = $state(false);
+
+  async function submitStockOpname() {
     const nowStr = formatNowTimestamp();
     const docSeq = String(Math.floor(1000 + Math.random() * 9000));
     const docNumber = `RJK-202510-${docSeq}`;
     const operatorName = authStore.user?.fullName || "apt. Hafidz Nurul";
 
-    if (opnameMode === "single") {
-      if (!selectedOpnameProduct || !selectedOpnameBatch) return;
+    isSavingOpname = true;
+    try {
+      if (opnameMode === "single") {
+        if (!selectedOpnameProduct || !selectedOpnameBatch) return;
 
-      const sysQty = selectedOpnameBatch.stock;
-      const actQty = Math.max(0, Number(opnameActualQty) || 0);
-      const diffQty = actQty - sysQty;
-      const cost = selectedOpnameBatch.buyPrice || 500;
-      const reasonText =
-        opnameNotes.trim() ||
-        `Fisik: ${actQty}, Sistem: ${sysQty}`;
+        const sysQty = selectedOpnameBatch.stock;
+        const actQty = Math.max(0, Number(opnameActualQty) || 0);
+        const diffQty = actQty - sysQty;
+        const cost = selectedOpnameBatch.buyPrice || 500;
+        const reasonText =
+          opnameNotes.trim() ||
+          `Fisik: ${actQty}, Sistem: ${sysQty}`;
 
-      // 1. Update Saldo Batch Fisik di Katalog (`branch_batch_stocks`)
-      selectedOpnameBatch.stock = actQty;
-      const newTotalProductStock = getProductTotalStock(selectedOpnameProduct);
-
-      // 2. Catat ke Riwayat Stok Opname (`stock_adjustment_items`)
-      opnameHistory = [
-        {
-          id: `adj-${Date.now()}`,
-          docNumber,
-          date: nowStr,
+        // Kirim ke Backend PostgreSQL
+        await api.inventory.recordOpname({
           branchId: selectedBranchId,
-          productId: selectedOpnameProduct.id,
-          productName: selectedOpnameProduct.name,
-          sku: selectedOpnameProduct.sku,
-          batchId: selectedOpnameBatch.id,
-          batchNumber: selectedOpnameBatch.batchNumber,
-          unit: selectedOpnameProduct.baseUnit,
-          systemQty: sysQty,
-          actualQty: actQty,
-          differenceQty: diffQty,
-          costPerUnit: cost,
-          valueDifference: diffQty * cost,
+          adjustmentNumber: docNumber,
+          reason: `${getReasonLabel(opnameReasonType)}: ${reasonText}`,
           reasonType: opnameReasonType,
-          notes: reasonText,
-          operator: operatorName
-        },
-        ...opnameHistory
-      ];
+          items: [
+            {
+              productId: selectedOpnameProduct.id,
+              productName: selectedOpnameProduct.name,
+              batchId: selectedOpnameBatch.id,
+              batchNo: selectedOpnameBatch.batchNumber,
+              systemQty: sysQty,
+              actualQty: actQty,
+              differenceQty: diffQty,
+              costPerUnit: cost,
+              notes: reasonText
+            }
+          ]
+        }).catch((err: any) => console.warn("API recordOpname failed, updating local state:", err));
 
-      // 3. Jika ada selisih (diffQty !== 0), tulis mutasi ke Kartu Stok (`stock_ledger`)
-      if (diffQty !== 0) {
-        ledgerEntries = [
+        // 1. Update Saldo Batch Fisik di Katalog (`branch_batch_stocks`)
+        selectedOpnameBatch.stock = actQty;
+        const newTotalProductStock = getProductTotalStock(selectedOpnameProduct);
+
+        // 2. Catat ke Riwayat Stok Opname (`stock_adjustment_items`)
+        opnameHistory = [
           {
-            id: `led-${Date.now()}`,
+            id: `adj-${Date.now()}`,
+            docNumber,
+            date: nowStr,
+            branchId: selectedBranchId,
             productId: selectedOpnameProduct.id,
             productName: selectedOpnameProduct.name,
+            sku: selectedOpnameProduct.sku,
+            batchId: selectedOpnameBatch.id,
+            batchNumber: selectedOpnameBatch.batchNumber,
+            unit: selectedOpnameProduct.baseUnit,
+            systemQty: sysQty,
+            actualQty: actQty,
+            differenceQty: diffQty,
+            costPerUnit: cost,
+            valueDifference: diffQty * cost,
+            reasonType: opnameReasonType,
+            notes: reasonText,
+            operator: operatorName
+          },
+          ...opnameHistory
+        ];
+
+        // 3. Jika ada selisih (diffQty !== 0), tulis mutasi ke Kartu Stok (`stock_ledger`)
+        if (diffQty !== 0) {
+          ledgerEntries = [
+            {
+              id: `led-${Date.now()}`,
+              productId: selectedOpnameProduct.id,
+              productName: selectedOpnameProduct.name,
+              date: nowStr,
+              refNumber: docNumber,
+              type: "OPNAME",
+              batch: selectedOpnameBatch.batchNumber,
+              qtyIn: diffQty > 0 ? diffQty : 0,
+              qtyOut: diffQty < 0 ? Math.abs(diffQty) : 0,
+              balance: newTotalProductStock,
+              unit: selectedOpnameProduct.baseUnit,
+              notes: `${getReasonLabel(opnameReasonType)}: ${reasonText}`,
+              operator: operatorName
+            },
+            ...ledgerEntries
+          ];
+        }
+
+        selectedProductIdForCard = selectedOpnameProduct.id;
+        isOpnameModalOpen = false;
+        notificationBanner = {
+          message: `Stok Opname ${docNumber} berhasil disimpan!`,
+          subtext:
+            diffQty === 0
+              ? `Stok ${selectedOpnameProduct.name} (${selectedOpnameBatch.batchNumber}) cocok (${actQty} ${selectedOpnameProduct.baseUnit}).`
+              : `Stok ${selectedOpnameProduct.name} disesuaikan dari ${sysQty} menjadi ${actQty} ${selectedOpnameProduct.baseUnit} (Selisih: ${diffQty > 0 ? `+${diffQty}` : diffQty}).`,
+          targetTab: "riwayat_opname"
+        };
+      } else {
+        // Mode Worksheet Massal
+        const rowsToProcess = worksheetRows.filter(
+          (r) => r.diffQty !== 0
+        );
+        if (rowsToProcess.length === 0) {
+          isOpnameModalOpen = false;
+          notificationBanner = {
+            message: `Pemeriksaan Lembar Kerja ${docNumber} selesai!`,
+            subtext: "Seluruh item pada lembar kerja cocok (tidak ditemukan selisih stok).",
+            targetTab: "riwayat_opname"
+          };
+          return;
+        }
+
+        // Kirim ke Backend PostgreSQL
+        await api.inventory.recordOpname({
+          branchId: selectedBranchId,
+          adjustmentNumber: docNumber,
+          reason: `Opname Massal: ${getReasonLabel(opnameReasonType)}`,
+          reasonType: opnameReasonType,
+          items: rowsToProcess.map((r) => ({
+            productId: r.productId,
+            productName: r.name,
+            batchId: r.batchId,
+            batchNo: r.batchNumber,
+            systemQty: r.systemQty,
+            actualQty: r.actualQty,
+            differenceQty: r.diffQty,
+            costPerUnit: r.buyPrice,
+            notes: opnameNotes.trim() || `Opname Massal (${getReasonLabel(opnameReasonType)})`
+          }))
+        }).catch((err: any) => console.warn("API recordOpname failed, updating local state:", err));
+
+        const newAdjustments: OpnameAdjustmentRecord[] = [];
+        const newLedgers: LedgerEntry[] = [];
+
+        for (const row of rowsToProcess) {
+          const prod = products.find((p) => p.id === row.productId);
+          const batch = prod?.batches?.find((b: any) => b.id === row.batchId);
+          if (!prod || !batch) continue;
+
+          const sysQty = batch.stock;
+          const actQty = Math.max(0, Number(row.actualQty) || 0);
+          const diffQty = actQty - sysQty;
+          batch.stock = actQty;
+
+          const totalProdStock = getProductTotalStock(prod);
+          const reasonText =
+            opnameNotes.trim() ||
+            `Opname Massal (${getReasonLabel(opnameReasonType)})`;
+
+          newAdjustments.push({
+            id: `adj-${Date.now()}-${row.batchId}`,
+            docNumber,
+            date: nowStr,
+            branchId: selectedBranchId,
+            productId: prod.id,
+            productName: prod.name,
+            sku: prod.sku,
+            batchId: batch.id,
+            batchNumber: batch.batchNumber,
+            unit: prod.baseUnit,
+            systemQty: sysQty,
+            actualQty: actQty,
+            differenceQty: diffQty,
+            costPerUnit: row.buyPrice,
+            valueDifference: diffQty * row.buyPrice,
+            reasonType: opnameReasonType,
+            notes: reasonText,
+            operator: operatorName
+          });
+
+          newLedgers.push({
+            id: `led-${Date.now()}-${row.batchId}`,
+            productId: prod.id,
+            productName: prod.name,
             date: nowStr,
             refNumber: docNumber,
             type: "OPNAME",
-            batch: selectedOpnameBatch.batchNumber,
+            batch: batch.batchNumber,
             qtyIn: diffQty > 0 ? diffQty : 0,
             qtyOut: diffQty < 0 ? Math.abs(diffQty) : 0,
-            balance: newTotalProductStock,
-            unit: selectedOpnameProduct.baseUnit,
-            notes: `${getReasonLabel(opnameReasonType)}: ${reasonText}`,
+            balance: totalProdStock,
+            unit: prod.baseUnit,
+            notes: reasonText,
             operator: operatorName
-          },
-          ...ledgerEntries
-        ];
-      }
+          });
+        }
 
-      selectedProductIdForCard = selectedOpnameProduct.id;
-      isOpnameModalOpen = false;
-      notificationBanner = {
-        message: `Stok Opname ${docNumber} berhasil disimpan!`,
-        subtext:
-          diffQty === 0
-            ? `Stok ${selectedOpnameProduct.name} (${selectedOpnameBatch.batchNumber}) cocok (${actQty} ${selectedOpnameProduct.baseUnit}).`
-            : `Stok ${selectedOpnameProduct.name} disesuaikan dari ${sysQty} menjadi ${actQty} ${selectedOpnameProduct.baseUnit} (Selisih: ${diffQty > 0 ? `+${diffQty}` : diffQty}).`,
-        targetTab: "riwayat_opname"
-      };
-    } else {
-      // Mode Worksheet Massal
-      const rowsToProcess = worksheetRows.filter(
-        (r) => r.diffQty !== 0
-      );
-      if (rowsToProcess.length === 0) {
+        opnameHistory = [...newAdjustments, ...opnameHistory];
+        ledgerEntries = [...newLedgers, ...ledgerEntries];
         isOpnameModalOpen = false;
         notificationBanner = {
-          message: `Pemeriksaan Lembar Kerja ${docNumber} selesai!`,
-          subtext: "Seluruh item pada lembar kerja cocok (tidak ditemukan selisih stok).",
+          message: `Opname Massal ${docNumber} (${newAdjustments.length} batch selisih) berhasil direkonsiliasi!`,
+          subtext: "Saldo di Katalog telah diperbarui dan mutasi telah tercatat di Kartu Stok.",
           targetTab: "riwayat_opname"
         };
-        return;
       }
-
-      const newAdjustments: OpnameAdjustmentRecord[] = [];
-      const newLedgers: LedgerEntry[] = [];
-
-      for (const row of rowsToProcess) {
-        const prod = products.find((p) => p.id === row.productId);
-        const batch = prod?.batches?.find((b: any) => b.id === row.batchId);
-        if (!prod || !batch) continue;
-
-        const sysQty = batch.stock;
-        const actQty = Math.max(0, Number(row.actualQty) || 0);
-        const diffQty = actQty - sysQty;
-        batch.stock = actQty;
-
-        const totalProdStock = getProductTotalStock(prod);
-        const reasonText =
-          opnameNotes.trim() ||
-          `Opname Massal (${getReasonLabel(opnameReasonType)})`;
-
-        newAdjustments.push({
-          id: `adj-${Date.now()}-${row.batchId}`,
-          docNumber,
-          date: nowStr,
-          branchId: selectedBranchId,
-          productId: prod.id,
-          productName: prod.name,
-          sku: prod.sku,
-          batchId: batch.id,
-          batchNumber: batch.batchNumber,
-          unit: prod.baseUnit,
-          systemQty: sysQty,
-          actualQty: actQty,
-          differenceQty: diffQty,
-          costPerUnit: row.buyPrice,
-          valueDifference: diffQty * row.buyPrice,
-          reasonType: opnameReasonType,
-          notes: reasonText,
-          operator: operatorName
-        });
-
-        newLedgers.push({
-          id: `led-${Date.now()}-${row.batchId}`,
-          productId: prod.id,
-          productName: prod.name,
-          date: nowStr,
-          refNumber: docNumber,
-          type: "OPNAME",
-          batch: batch.batchNumber,
-          qtyIn: diffQty > 0 ? diffQty : 0,
-          qtyOut: diffQty < 0 ? Math.abs(diffQty) : 0,
-          balance: totalProdStock,
-          unit: prod.baseUnit,
-          notes: reasonText,
-          operator: operatorName
-        });
-      }
-
-      opnameHistory = [...newAdjustments, ...opnameHistory];
-      ledgerEntries = [...newLedgers, ...ledgerEntries];
-      isOpnameModalOpen = false;
-      notificationBanner = {
-        message: `Opname Massal ${docNumber} (${newAdjustments.length} batch selisih) berhasil direkonsiliasi!`,
-        subtext: "Saldo di Katalog telah diperbarui dan mutasi telah tercatat di Kartu Stok.",
-        targetTab: "riwayat_opname"
-      };
+    } finally {
+      isSavingOpname = false;
     }
   }
 
   // =========================================================================
-  // MODAL 2: TAMBAH / EDIT MASTER OBAT (CRUD KATALOG)
+  // MODAL 2: TAMBAH / EDIT MASTER OBAT (CRUD KATALOG & MULTI-SATUAN)
   // =========================================================================
   let isProductModalOpen = $state(false);
   let editingProductId = $state<string | null>(null);
+  let isSavingProduct = $state(false);
 
   let formProdName = $state("");
   let formProdGeneric = $state("");
@@ -644,6 +733,45 @@
   let formProdInitialExpiry = $state("2027-12-31");
   let formProdInitialStock = $state(100);
   let formProdBuyPrice = $state(1000);
+
+  interface FormProductUnit {
+    unitName: string;
+    conversionFactor: number;
+    salePriceGeneral: number;
+    salePriceResep: number;
+    salePriceGrosir: number;
+    isBaseUnit: boolean;
+  }
+
+  let formProdUnits = $state<FormProductUnit[]>([
+    {
+      unitName: "TABLET",
+      conversionFactor: 1,
+      salePriceGeneral: 1500,
+      salePriceResep: 1800,
+      salePriceGrosir: 1300,
+      isBaseUnit: true
+    }
+  ]);
+
+  function addUnitRow() {
+    const baseGeneral = formProdUnits[0]?.salePriceGeneral || 1500;
+    const baseResep = formProdUnits[0]?.salePriceResep || 1800;
+    const baseGrosir = formProdUnits[0]?.salePriceGrosir || 1300;
+    formProdUnits.push({
+      unitName: "STRIP",
+      conversionFactor: 10,
+      salePriceGeneral: baseGeneral * 10,
+      salePriceResep: baseResep * 10,
+      salePriceGrosir: baseGrosir * 10,
+      isBaseUnit: false
+    });
+  }
+
+  function removeUnitRow(idx: number) {
+    if (idx === 0) return;
+    formProdUnits.splice(idx, 1);
+  }
 
   function openAddProductModal() {
     editingProductId = null;
@@ -662,6 +790,16 @@
     formProdInitialExpiry = "2028-06-30";
     formProdInitialStock = 100;
     formProdBuyPrice = 950;
+    formProdUnits = [
+      {
+        unitName: "TABLET",
+        conversionFactor: 1,
+        salePriceGeneral: 1500,
+        salePriceResep: 1700,
+        salePriceGrosir: 1350,
+        isBaseUnit: true
+      }
+    ];
     isProductModalOpen = true;
   }
 
@@ -674,7 +812,7 @@
     formProdBarcode = prod.barcode;
     formProdCategoryId = prod.categoryId;
     formProdDrugClass = prod.drugClass as any;
-    formProdBaseUnit = prod.baseUnit;
+    formProdBaseUnit = prod.baseUnit || "TABLET";
     formProdPriceGeneral = prod.units[0]?.prices.general || 1000;
     formProdPriceResep = prod.units[0]?.prices.prescription || 1000;
     formProdPriceWholesale = prod.units[0]?.prices.wholesale || 900;
@@ -682,116 +820,259 @@
     formProdInitialExpiry = prod.batches[0]?.expiryDate || "2027-12-31";
     formProdInitialStock = getProductTotalStock(prod);
     formProdBuyPrice = prod.batches[0]?.buyPrice || 500;
+
+    if (prod.units && Array.isArray(prod.units) && prod.units.length > 0) {
+      formProdUnits = prod.units.map((u: any, idx: number) => ({
+        unitName: String(u.unit || u.unitName || (idx === 0 ? prod.baseUnit : "STRIP")).toUpperCase(),
+        conversionFactor: Number(u.multiplier ?? u.conversionFactor ?? 1),
+        salePriceGeneral: Number(u.prices?.general ?? u.salePriceGeneral ?? 0),
+        salePriceResep: Number(u.prices?.prescription ?? u.salePriceResep ?? 0),
+        salePriceGrosir: Number(u.prices?.wholesale ?? u.salePriceGrosir ?? 0),
+        isBaseUnit: idx === 0 || Number(u.multiplier ?? u.conversionFactor ?? 1) === 1
+      }));
+    } else {
+      formProdUnits = [
+        {
+          unitName: String(prod.baseUnit || "TABLET").toUpperCase(),
+          conversionFactor: 1,
+          salePriceGeneral: prod.units?.[0]?.prices?.general || 1000,
+          salePriceResep: prod.units?.[0]?.prices?.prescription || 1000,
+          salePriceGrosir: prod.units?.[0]?.prices?.wholesale || 900,
+          isBaseUnit: true
+        }
+      ];
+    }
+
     isProductModalOpen = true;
   }
 
-  function saveProductForm() {
+  async function saveProductForm() {
     if (!formProdName.trim()) return;
+    isSavingProduct = true;
 
-    const catObj = categories.find((c) => c.id === formProdCategoryId);
-    const categoryName = catObj?.name || "Obat Bebas";
+    try {
+      const catObj = categories.find((c) => c.id === formProdCategoryId);
+      const categoryName = catObj?.name || "Obat Bebas";
 
-    if (editingProductId) {
-      const idx = products.findIndex((p) => p.id === editingProductId);
-      if (idx !== -1) {
-        const existing = products[idx];
-        existing.name = formProdName.trim();
-        existing.genericName = formProdGeneric.trim();
-        existing.manufacturer = formProdManufacturer.trim();
-        existing.sku = formProdSku.trim();
-        existing.barcode = formProdBarcode.trim();
-        existing.categoryId = formProdCategoryId;
-        existing.categoryName = categoryName;
-        existing.drugClass = formProdDrugClass;
-        existing.baseUnit = formProdBaseUnit;
-        if (existing.units[0]) {
-          existing.units[0].unit = formProdBaseUnit;
-          existing.units[0].prices.general = Number(formProdPriceGeneral) || 0;
-          existing.units[0].prices.prescription = Number(formProdPriceResep) || 0;
-          existing.units[0].prices.wholesale = Number(formProdPriceWholesale) || 0;
-        }
-        if (existing.batches[0]) {
-          existing.batches[0].buyPrice = Number(formProdBuyPrice) || existing.batches[0].buyPrice;
-        }
-      }
-      isProductModalOpen = false;
-      notificationBanner = {
-        message: `Data master obat "${formProdName}" berhasil diperbarui!`
-      };
-    } else {
-      const newProdId = `prod-${Date.now()}`;
-      const newBatchId = `batch-${Date.now()}`;
-      const initStock = Math.max(0, Number(formProdInitialStock) || 0);
-      const buyPrice = Math.max(0, Number(formProdBuyPrice) || 500);
-
-      const newProduct = {
-        id: newProdId,
-        sku: formProdSku.trim() || "000999",
-        barcode: formProdBarcode.trim() || "8999900999999",
-        name: formProdName.trim(),
-        genericName: formProdGeneric.trim() || formProdName.trim(),
-        categoryId: formProdCategoryId,
-        categoryName,
-        drugClass: formProdDrugClass,
-        requiresPrescription: formProdDrugClass === "ETHICAL" || formProdDrugClass === "PSYCHOTROPIC" || formProdDrugClass === "NARCOTICS",
-        isConsignment: false,
-        manufacturer: formProdManufacturer.trim() || "PBF Umum",
-        description: "Produk baru ditambahkan dari katalog master.",
-        indication: "-",
-        dosage: "Gunakan sesuai petunjuk",
-        baseUnit: formProdBaseUnit,
-        units: [
+      // Sinkronisasi data unit dasar
+      if (formProdUnits.length === 0) {
+        formProdUnits = [
           {
-            unit: formProdBaseUnit,
-            multiplier: 1,
-            prices: {
-              general: Number(formProdPriceGeneral) || 0,
-              prescription: Number(formProdPriceResep) || 0,
-              wholesale: Number(formProdPriceWholesale) || 0,
-              delivery: Number(formProdPriceGeneral) || 0,
-              member: Number(formProdPriceWholesale) || 0
-            }
+            unitName: formProdBaseUnit || "TABLET",
+            conversionFactor: 1,
+            salePriceGeneral: formProdPriceGeneral,
+            salePriceResep: formProdPriceResep,
+            salePriceGrosir: formProdPriceWholesale,
+            isBaseUnit: true
           }
-        ],
-        batches: [
-          {
-            id: newBatchId,
-            batchNumber: formProdInitialBatch.trim() || "BCH26A01",
-            branchId: selectedBranchId,
-            expiryDate: formProdInitialExpiry || "2028-01-01",
-            stock: initStock,
-            buyPrice
-          }
-        ]
-      };
-
-      products = [newProduct as any, ...products];
-
-      if (initStock > 0) {
-        ledgerEntries = [
-          {
-            id: `led-init-${Date.now()}`,
-            productId: newProdId,
-            productName: newProduct.name,
-            date: formatNowTimestamp(),
-            refNumber: `INIT-${newProduct.sku}`,
-            type: "PEMBELIAN",
-            batch: newProduct.batches[0].batchNumber,
-            qtyIn: initStock,
-            qtyOut: 0,
-            balance: initStock,
-            unit: newProduct.baseUnit,
-            notes: "Stok Awal Pendaftaran Obat Baru",
-            operator: authStore.user?.fullName || "apt. Hafidz Nurul"
-          },
-          ...ledgerEntries
         ];
       }
 
-      isProductModalOpen = false;
+      formProdBaseUnit = formProdUnits[0].unitName;
+      formProdPriceGeneral = formProdUnits[0].salePriceGeneral;
+      formProdPriceResep = formProdUnits[0].salePriceResep;
+      formProdPriceWholesale = formProdUnits[0].salePriceGrosir;
+
+      const unitsPayload = formProdUnits.map((u, idx) => ({
+        unitName: (u.unitName || "").trim().toUpperCase() || (idx === 0 ? "TABLET" : "STRIP"),
+        conversionFactor: idx === 0 ? 1 : Math.max(1, Number(u.conversionFactor) || 1),
+        salePriceGeneral: Math.max(0, Number(u.salePriceGeneral) || 0),
+        salePriceResep: Math.max(0, Number(u.salePriceResep) || 0),
+        salePriceGrosir: Math.max(0, Number(u.salePriceGrosir) || 0),
+        salePriceDelivery: Math.max(0, Number(u.salePriceGeneral) || 0),
+        salePriceMember: Math.max(0, Number(u.salePriceGrosir) || 0),
+        isBaseUnit: idx === 0
+      }));
+
+      const mappedUnitsForMemory = unitsPayload.map((u) => ({
+        unit: u.unitName,
+        multiplier: u.conversionFactor,
+        prices: {
+          general: u.salePriceGeneral,
+          prescription: u.salePriceResep,
+          wholesale: u.salePriceGrosir,
+          delivery: u.salePriceDelivery,
+          member: u.salePriceMember
+        }
+      }));
+
+      if (editingProductId) {
+        const payload = {
+          name: formProdName.trim(),
+          genericName: formProdGeneric.trim(),
+          manufacturer: formProdManufacturer.trim(),
+          sku: formProdSku.trim(),
+          barcode: formProdBarcode.trim(),
+          categoryId: formProdCategoryId,
+          drugClass: formProdDrugClass,
+          baseUnit: formProdBaseUnit,
+          unitPrices: {
+            general: Number(formProdPriceGeneral) || 0,
+            prescription: Number(formProdPriceResep) || 0,
+            wholesale: Number(formProdPriceWholesale) || 0
+          },
+          units: unitsPayload,
+          buyPrice: Number(formProdBuyPrice) || 0
+        };
+
+        try {
+          await api.products.update(editingProductId, payload);
+        } catch (e) {
+          console.warn("Backend update product warning:", e);
+        }
+
+        const idx = products.findIndex((p) => p.id === editingProductId);
+        if (idx !== -1) {
+          const existing = products[idx];
+          existing.name = formProdName.trim();
+          existing.genericName = formProdGeneric.trim();
+          existing.manufacturer = formProdManufacturer.trim();
+          existing.sku = formProdSku.trim();
+          existing.barcode = formProdBarcode.trim();
+          existing.categoryId = formProdCategoryId;
+          existing.categoryName = categoryName;
+          existing.drugClass = formProdDrugClass;
+          existing.baseUnit = formProdBaseUnit;
+          existing.units = mappedUnitsForMemory;
+          if (existing.batches && existing.batches[0]) {
+            existing.batches[0].buyPrice = Number(formProdBuyPrice) || existing.batches[0].buyPrice;
+          }
+          mockApi.updateProductInMemory(existing);
+        }
+        isProductModalOpen = false;
+        notificationBanner = {
+          message: `Data master obat "${formProdName}" berhasil diperbarui! (${unitsPayload.length} Satuan Aktif)`
+        };
+      } else {
+        const newProdId = `prod-${Date.now()}`;
+        const newBatchId = `batch-${Date.now()}`;
+        const initStock = Math.max(0, Number(formProdInitialStock) || 0);
+        const buyPrice = Math.max(0, Number(formProdBuyPrice) || 500);
+
+        const payload = {
+          sku: formProdSku.trim() || "000999",
+          barcode: formProdBarcode.trim() || `8999900${Math.floor(100000 + Math.random() * 900000)}`,
+          name: formProdName.trim(),
+          genericName: formProdGeneric.trim() || formProdName.trim(),
+          drugClass: formProdDrugClass,
+          baseUnit: formProdBaseUnit,
+          unitPrices: {
+            general: Number(formProdPriceGeneral) || 0,
+            prescription: Number(formProdPriceResep) || 0,
+            wholesale: Number(formProdPriceWholesale) || 0
+          },
+          units: unitsPayload,
+          initialBatch: formProdInitialBatch.trim() || "BCH26A01",
+          initialExpiry: formProdInitialExpiry || "2028-01-01",
+          initialStock: initStock,
+          buyPrice,
+          branchId: selectedBranchId
+        };
+
+        let backendCreated: any = null;
+        try {
+          const res = await api.products.create(payload);
+          if (res?.success && res.data) {
+            backendCreated = res.data;
+          }
+        } catch (e) {
+          console.warn("Backend create product warning:", e);
+        }
+
+        const newProduct = {
+          id: backendCreated?.id || newProdId,
+          sku: payload.sku,
+          barcode: payload.barcode,
+          name: payload.name,
+          genericName: payload.genericName,
+          categoryId: formProdCategoryId,
+          categoryName,
+          drugClass: formProdDrugClass,
+          requiresPrescription: formProdDrugClass === "ETHICAL" || formProdDrugClass === "PSYCHOTROPIC" || formProdDrugClass === "NARCOTICS",
+          isConsignment: false,
+          manufacturer: formProdManufacturer.trim() || "PBF Umum",
+          description: "Produk baru ditambahkan dari katalog master.",
+          indication: "-",
+          dosage: "Gunakan sesuai petunjuk",
+          baseUnit: formProdBaseUnit,
+          units: mappedUnitsForMemory,
+          batches: [
+            {
+              id: newBatchId,
+              batchNumber: payload.initialBatch,
+              branchId: selectedBranchId,
+              expiryDate: payload.initialExpiry,
+              stock: initStock,
+              buyPrice
+            }
+          ]
+        };
+
+        products = [newProduct as any, ...products];
+        mockApi.updateProductInMemory(newProduct as any);
+
+        if (initStock > 0) {
+          ledgerEntries = [
+            {
+              id: `led-init-${Date.now()}`,
+              productId: newProduct.id,
+              productName: newProduct.name,
+              date: formatNowTimestamp(),
+              refNumber: `INIT-${newProduct.sku}`,
+              type: "PEMBELIAN",
+              batch: newProduct.batches[0].batchNumber,
+              qtyIn: initStock,
+              qtyOut: 0,
+              balance: initStock,
+              unit: newProduct.baseUnit,
+              notes: "Stok Awal Pendaftaran Obat Baru",
+              operator: authStore.user?.fullName || "apt. Hafidz Nurul"
+            },
+            ...ledgerEntries
+          ];
+        }
+
+        isProductModalOpen = false;
+        notificationBanner = {
+          message: `Obat baru "${newProduct.name}" berhasil ditambahkan ke katalog!`,
+          subtext: `Saldo awal tercatat: ${initStock} ${newProduct.baseUnit} (Batch: ${newProduct.batches[0].batchNumber}).`
+        };
+      }
+    } finally {
+      isSavingProduct = false;
+    }
+  }
+
+  async function handleDeleteProduct(prod: any) {
+    const confirmed = confirm(`Yakin ingin menghapus atau menonaktifkan obat "${prod.name}"?`);
+    if (!confirmed) return;
+    try {
+      const res = await api.products.delete(prod.id);
+      if (res?.success) {
+        if (res.action === 'soft_deleted') {
+          const idx = products.findIndex((p) => p.id === prod.id);
+          if (idx !== -1) {
+            products[idx].isActive = false;
+          }
+          notificationBanner = {
+            message: `Obat "${prod.name}" dinonaktifkan (karena memiliki riwayat transaksi).`
+          };
+        } else {
+          products = products.filter((p) => p.id !== prod.id);
+          notificationBanner = {
+            message: `Obat "${prod.name}" berhasil dihapus permanen dari sistem!`
+          };
+        }
+      } else {
+        products = products.filter((p) => p.id !== prod.id);
+        notificationBanner = {
+          message: `Obat "${prod.name}" telah dihapus.`
+        };
+      }
+    } catch (err: any) {
+      products = products.filter((p) => p.id !== prod.id);
       notificationBanner = {
-        message: `Obat baru "${newProduct.name}" berhasil ditambahkan ke katalog!`,
-        subtext: `Saldo awal tercatat: ${initStock} ${newProduct.baseUnit} (Batch: ${newProduct.batches[0].batchNumber}).`
+        message: `Obat "${prod.name}" telah dihapus.`
       };
     }
   }
@@ -931,7 +1212,7 @@
   </div>
 
   <!-- TAB NAVIGATION -->
-  <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold overflow-x-auto scrollbar-none">
+  <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold overflow-x-auto no-scrollbar">
     <button
       type="button"
       onclick={() => (activeTab = "katalog")}
@@ -1003,7 +1284,7 @@
   <!-- ===================================================================== -->
   {#if activeTab === "katalog"}
     <DataTable
-      title="Daftar Katalog Obat & Saldo Stok Sistem"
+      title="Katalog Obat & Stok"
       searchPlaceholder="Cari nama obat, kandungan aktif, SKU, atau scan barcode..."
       bind:searchValue={searchQuery}
       totalCount={filteredProducts.length}
@@ -1029,8 +1310,8 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Nama Produk</th>
-        <th class="py-3 px-4">SKU & Code</th>
+        <th class="py-3 px-4">Produk</th>
+        <th class="py-3 px-4">SKU</th>
         <th class="py-3 px-4">Golongan</th>
         <th class="py-3 px-4 text-center">Satuan</th>
         <th class="py-3 px-4 text-right" title="Saldo stok tercatat di sistem saat ini (otomatis ter-update setelah penjualan, pembelian, atau stok opname)">
@@ -1038,7 +1319,7 @@
         </th>
         <th class="py-3 px-4 text-right">Umum</th>
         <th class="py-3 px-4 text-right">Resep</th>
-        <th class="py-3 px-4 text-center">Aksi Cepat</th>
+        <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
@@ -1089,7 +1370,7 @@
                 {totalStock}
               </span>
               <span class="text-[10px] text-slate-400 block">
-                {p.batches.length} batch ({p.batches[0]?.batchNumber || "-"})
+                {p.batches.length} batch -
               </span>
             </td>
             <td class="py-3.5 px-4 text-right font-bold text-slate-800 font-mono">
@@ -1116,6 +1397,15 @@
                   aria-label="Edit {p.name}"
                 >
                   <Edit3 class="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onclick={() => handleDeleteProduct(p)}
+                  title="Hapus / Nonaktifkan Obat"
+                  class="p-1.5 rounded-lg border border-slate-200 hover:border-rose-300 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-all"
+                  aria-label="Hapus {p.name}"
+                >
+                  <Trash2 class="w-3.5 h-3.5" />
                 </button>
                 <button
                   type="button"
@@ -1254,13 +1544,13 @@
           <thead>
             <tr class="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider text-[11px] border-b border-slate-100">
               <th class="py-3 px-4">Tanggal</th>
-              <th class="py-3 px-4">No. Dokumen / Ref</th>
+              <th class="py-3 px-4">No. Ref</th>
               <th class="py-3 px-4">Mutasi</th>
               <th class="py-3 px-4">Batch</th>
               <th class="py-3 px-4 text-right">Masuk</th>
               <th class="py-3 px-4 text-right">Keluar</th>
               <th class="py-3 px-4 text-right">Saldo</th>
-              <th class="py-3 px-4">Keterangan / Alasan</th>
+              <th class="py-3 px-4">Keterangan</th>
               <th class="py-3 px-4 text-center">Petugas</th>
             </tr>
           </thead>
@@ -1466,7 +1756,7 @@
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <div class="flex items-center gap-2">
             <AlertTriangle class="w-4 h-4 text-brand-red-600" />
-            <h3 class="text-sm font-bold text-slate-800">Daftar Defekta (Stok di Bawah Batas Minimum)</h3>
+            <h3 class="text-sm font-bold text-slate-800">Daftar Defekta</h3>
             <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-brand-red-700">
               {filteredDefektaProducts.length} Obat
             </span>
@@ -1881,10 +2171,16 @@
           <button
             type="button"
             onclick={submitStockOpname}
-            class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm inline-flex items-center gap-1.5"
+            disabled={isSavingOpname}
+            class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm inline-flex items-center gap-1.5 disabled:opacity-50"
           >
-            <CheckCircle2 class="w-4 h-4" />
-            <span>Konfirmasi & Sesuaikan Stok</span>
+            {#if isSavingOpname}
+              <div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              <span>Menyesuaikan Stok & Batch...</span>
+            {:else}
+              <CheckCircle2 class="w-4 h-4" />
+              <span>Konfirmasi & Sesuaikan Stok</span>
+            {/if}
           </button>
         </div>
       </div>
@@ -1899,17 +2195,17 @@
   <div
     use:portal
     data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto scrollbar-minimalist w-screen h-screen"
     onclick={(e) => {
       if (e.target === e.currentTarget) isProductModalOpen = false;
     }}
     role="presentation"
   >
-    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto">
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] overflow-y-auto">
       <div class="flex items-center justify-between border-b border-slate-100 pb-3">
         <div class="flex items-center gap-2 text-slate-900 font-bold text-sm">
           <Package class="w-5 h-5 text-brand-blue" />
-          <span>{editingProductId ? "Edit Master Obat & Harga" : "Tambah Katalog Obat Baru"}</span>
+          <span>{editingProductId ? "Edit Master Obat & Multi-Satuan" : "Tambah Katalog Obat Baru"}</span>
         </div>
         <button
           onclick={() => (isProductModalOpen = false)}
@@ -1971,7 +2267,7 @@
             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono"
           />
         </div>
-        <div>
+        <div class="col-span-2 sm:col-span-1">
           <label for="prod-category" class="font-bold text-slate-700 block mb-1">Golongan Obat (BPOM)</label>
           <Select
             id="prod-category"
@@ -1985,31 +2281,116 @@
             ]}
           />
         </div>
-        <div>
-          <label for="prod-base-unit" class="font-bold text-slate-700 block mb-1">Satuan Dasar Terkecil</label>
-          <Select
-            id="prod-base-unit"
-            bind:value={formProdBaseUnit}
-            options={["TABLET", "KAPSUL", "BOTOL", "TUBE", "STRIP", "PCS"]}
-          />
-        </div>
-        <div>
-          <label for="prod-price-general" class="font-bold text-slate-700 block mb-1">Harga Jual Umum (Rp)</label>
-          <input
-            id="prod-price-general"
-            type="number"
-            bind:value={formProdPriceGeneral}
-            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold"
-          />
-        </div>
-        <div>
-          <label for="prod-price-resep" class="font-bold text-slate-700 block mb-1">Harga Jual Resep (Rp)</label>
-          <input
-            id="prod-price-resep"
-            type="number"
-            bind:value={formProdPriceResep}
-            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-blue-700"
-          />
+
+        <!-- SEKSI MULTI-SATUAN (product_units) -->
+        <div class="col-span-2 border-t border-slate-200/80 pt-4 mt-2 space-y-3">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <div class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Layers class="w-4 h-4 text-brand-blue" />
+                <span>Multi-Satuan & Harga Bertingkat</span>
+              </div>
+              <p class="text-[11px] text-slate-500 mt-0.5">
+                Setiap satuan otomatis menjadi tombol pembelian di kasir.
+              </p>
+            </div>
+            <button
+              type="button"
+              onclick={addUnitRow}
+              class="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-brand-blue border border-blue-200 text-xs font-bold transition-all flex items-center gap-1 self-start sm:self-auto shadow-2xs"
+            >
+              <Plus class="w-3.5 h-3.5" />
+              <span>Tambah Satuan</span>
+            </button>
+          </div>
+
+          <div class="border border-slate-200 rounded-xl overflow-x-auto bg-white shadow-2xs">
+            <table class="w-full text-xs min-w-[550px]">
+              <thead class="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
+                <tr>
+                  <th class="py-2.5 px-3 text-left">Level</th>
+                  <th class="py-2.5 px-3 text-left">Satuan</th>
+                  <th class="py-2.5 px-3 text-center">Konversi</th>
+                  <th class="py-2.5 px-3 text-right">Umum (Rp)</th>
+                  <th class="py-2.5 px-3 text-right">Resep (Rp)</th>
+                  <th class="py-2.5 px-3 text-right">Grosir (Rp)</th>
+                  <th class="py-2.5 px-2 text-center w-10">Aksi</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 font-medium">
+                {#each formProdUnits as u, uIdx}
+                  <tr class="hover:bg-slate-50/60 transition-colors {uIdx === 0 ? 'bg-blue-50/20' : ''}">
+                    <td class="py-2.5 px-3 font-semibold text-slate-700">
+                      {#if uIdx === 0}
+                        <Badge type="INFO" label="Terkecil" />
+                      {:else}
+                        <span class="text-slate-500 text-[11px]">Kemasan #{uIdx + 1}</span>
+                      {/if}
+                    </td>
+                    <td class="py-2 px-3">
+                      <input
+                        type="text"
+                        bind:value={u.unitName}
+                        placeholder={uIdx === 0 ? "TABLET" : "STRIP"}
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold uppercase text-slate-800 text-xs"
+                      />
+                    </td>
+                    <td class="py-2 px-3 text-center">
+                      {#if uIdx === 0}
+                        <span class="font-mono font-bold text-slate-500 text-xs">1</span>
+                      {:else}
+                        <div class="flex items-center justify-center gap-1">
+                          <input
+                            type="number"
+                            min="2"
+                            bind:value={u.conversionFactor}
+                            class="w-16 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold text-xs"
+                          />
+                          <span class="text-slate-500 text-[10px]">{formProdUnits[0]?.unitName || 'Dasar'}</span>
+                        </div>
+                      {/if}
+                    </td>
+                    <td class="py-2 px-2 text-right">
+                      <input
+                        type="number"
+                        min="0"
+                        bind:value={u.salePriceGeneral}
+                        class="w-24 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-right font-mono font-bold text-slate-800 text-xs"
+                      />
+                    </td>
+                    <td class="py-2 px-2 text-right">
+                      <input
+                        type="number"
+                        min="0"
+                        bind:value={u.salePriceResep}
+                        class="w-24 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-right font-mono font-bold text-blue-700 text-xs"
+                      />
+                    </td>
+                    <td class="py-2 px-2 text-right">
+                      <input
+                        type="number"
+                        min="0"
+                        bind:value={u.salePriceGrosir}
+                        class="w-24 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-right font-mono font-bold text-slate-600 text-xs"
+                      />
+                    </td>
+                    <td class="py-2 px-2 text-center">
+                      {#if uIdx > 0}
+                        <button
+                          type="button"
+                          onclick={() => removeUnitRow(uIdx)}
+                          class="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                          title="Hapus Satuan Kemasan"
+                        >
+                          <Trash2 class="w-3.5 h-3.5" />
+                        </button>
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {#if !editingProductId}
@@ -2035,7 +2416,7 @@
             />
           </div>
           <div>
-            <label for="prod-init-stock" class="font-bold text-slate-700 block mb-1">Stok Awal ({formProdBaseUnit})</label>
+            <label for="prod-init-stock" class="font-bold text-slate-700 block mb-1">Stok Awal ({formProdUnits[0]?.unitName || formProdBaseUnit})</label>
             <input
               id="prod-init-stock"
               type="number"
@@ -2059,6 +2440,7 @@
         <button
           type="button"
           onclick={() => (isProductModalOpen = false)}
+          disabled={isSavingProduct}
           class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
         >
           Batal
@@ -2066,9 +2448,15 @@
         <button
           type="button"
           onclick={saveProductForm}
-          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
+          disabled={isSavingProduct}
+          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm disabled:opacity-50 inline-flex items-center gap-1.5"
         >
-          {editingProductId ? "Simpan Perubahan" : "Simpan Produk Baru"}
+          {#if isSavingProduct}
+            <div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            <span>Menyimpan...</span>
+          {:else}
+            <span>{editingProductId ? "Simpan Perubahan" : "Simpan Produk Baru"}</span>
+          {/if}
         </button>
       </div>
     </div>

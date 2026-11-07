@@ -179,4 +179,26 @@ export const financeRoutes = new Elysia({ prefix: "/api/finance" })
         summary: "Catat Pelunasan Hutang Faktur Pembelian PBF"
       }
     }
+  )
+
+  // 4. DELETE / VOID DEBT PAYMENT (BATALKAN PEMBAYARAN HUTANG)
+  .delete(
+    "/debt-payments/:id",
+    async ({ params }) => {
+      try {
+        const res = await financeService.deleteDebtPayment(params.id);
+        return res;
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      params: t.Object({
+        id: t.String()
+      }),
+      detail: {
+        tags: ["Keuangan & Hutang"],
+        summary: "Batalkan Pelunasan Hutang & Pulihkan Saldo Tagihan Faktur"
+      }
+    }
   );

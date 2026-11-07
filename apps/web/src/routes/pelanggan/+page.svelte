@@ -11,7 +11,9 @@
     Calendar,
     Search,
     DollarSign,
-    X
+    X,
+    Edit3,
+    Trash2
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
@@ -26,19 +28,157 @@
   let customers = $state<any[]>([]);
   let activeTab = $state<"semua" | "piutang">("semua");
   let searchQuery = $state("");
+  let successMessage = $state("");
+
+  async function loadCustomers() {
+    try {
+      const res = await api.customers.list();
+      if (res?.success && Array.isArray(res.data)) {
+        customers = res.data;
+      } else {
+        await mockApi.ensureDataLoaded();
+        const live = await mockApi.getCustomers();
+        if (live && live.length > 0) {
+          customers = live as any;
+        }
+      }
+    } catch (_) {
+      try {
+        await mockApi.ensureDataLoaded();
+        const live = await mockApi.getCustomers();
+        if (live && live.length > 0) {
+          customers = live as any;
+        }
+      } catch (err) {}
+    }
+  }
 
   onMount(async () => {
-    try {
-      await mockApi.ensureDataLoaded();
-      const live = await mockApi.getCustomers();
-      if (live && live.length > 0) {
-        customers = live as any;
-      }
-    } catch (_) {}
+    await loadCustomers();
   });
 
-  // Modals
-  let isAddCustomerModalOpen = $state(false);
+  // Customer Add / Edit State
+  let isCustomerModalOpen = $state(false);
+  let editingCustomerId = $state<string | null>(null);
+  let isSavingCustomer = $state(false);
+  let customerModalError = $state("");
+
+  let customerForm = $state({
+    name: "",
+    code: "",
+    phone: "",
+    address: "",
+    customerType: "UMUM",
+    pointBalance: 0,
+    isActive: true
+  });
+
+  function openAddCustomerModal() {
+    editingCustomerId = null;
+    customerModalError = "";
+    customerForm = {
+      name: "",
+      code: "",
+      phone: "",
+      address: "",
+      customerType: "UMUM",
+      pointBalance: 0,
+      isActive: true
+    };
+    isCustomerModalOpen = true;
+  }
+
+  function openEditCustomerModal(c: any) {
+    editingCustomerId = c.id;
+    customerModalError = "";
+    const rawType = String(c.customerType || c.priceTier || "UMUM").toUpperCase();
+    const customerType =
+      rawType === "MEMBER" ? "MEMBER" :
+      rawType === "PRESCRIPTION" || rawType === "RESEP" ? "RESEP" :
+      rawType === "WHOLESALE" || rawType === "GROSIR" ? "GROSIR" : "UMUM";
+
+    customerForm = {
+      name: c.name || "",
+      code: c.code || "",
+      phone: c.phone || "",
+      address: c.address || "",
+      customerType,
+      pointBalance: Number(c.pointBalance ?? c.loyaltyPoints ?? 0),
+      isActive: c.isActive !== false
+    };
+    isCustomerModalOpen = true;
+  }
+
+  async function handleSaveCustomerSubmit() {
+    customerModalError = "";
+    if (!customerForm.name.trim()) {
+      customerModalError = "Nama pelanggan wajib diisi.";
+      return;
+    }
+
+    isSavingCustomer = true;
+    try {
+      if (editingCustomerId) {
+        const res = await api.customers.update(editingCustomerId, {
+          name: customerForm.name.trim(),
+          code: customerForm.code.trim().toUpperCase() || undefined,
+          phone: customerForm.phone.trim(),
+          address: customerForm.address.trim(),
+          customerType: customerForm.customerType,
+          pointBalance: Number(customerForm.pointBalance || 0),
+          isActive: customerForm.isActive
+        });
+        if (res?.success) {
+          isCustomerModalOpen = false;
+          await loadCustomers();
+          successMessage = `Data pelanggan "${customerForm.name}" berhasil diperbarui!`;
+          setTimeout(() => (successMessage = ""), 3000);
+        } else {
+          customerModalError = res?.error || "Gagal memperbarui data pelanggan.";
+        }
+      } else {
+        const res = await api.customers.create({
+          name: customerForm.name.trim(),
+          code: customerForm.code.trim().toUpperCase() || undefined,
+          phone: customerForm.phone.trim(),
+          address: customerForm.address.trim(),
+          customerType: customerForm.customerType,
+          pointBalance: Number(customerForm.pointBalance || 0),
+          isActive: customerForm.isActive
+        });
+        if (res?.success) {
+          isCustomerModalOpen = false;
+          await loadCustomers();
+          successMessage = `Pelanggan baru "${customerForm.name}" berhasil didaftarkan!`;
+          setTimeout(() => (successMessage = ""), 3000);
+        } else {
+          customerModalError = res?.error || "Gagal menambahkan pelanggan baru.";
+        }
+      }
+    } catch (e: any) {
+      customerModalError = e.message || "Terjadi kesalahan saat menyimpan pelanggan.";
+    } finally {
+      isSavingCustomer = false;
+    }
+  }
+
+  async function handleDeleteCustomer(c: any) {
+    if (!confirm(`Apakah Anda yakin ingin menghapus pelanggan "${c.name}"?`)) return;
+    try {
+      const res = await api.customers.delete(c.id);
+      if (res?.success) {
+        await loadCustomers();
+        successMessage = res.message || `Pelanggan "${c.name}" berhasil dihapus.`;
+        setTimeout(() => (successMessage = ""), 3000);
+      } else {
+        alert("Gagal menghapus: " + (res?.error || "Kesalahan server"));
+      }
+    } catch (e: any) {
+      alert("Gagal menghapus: " + e.message);
+    }
+  }
+
+  // Modals for Debt
   let isReceiveDebtPaymentOpen = $state(false);
   let selectedDebtCustomer = $state<any>(null);
   let debtPaymentAmount = $state(0);
@@ -68,7 +208,7 @@
     }).format(num);
   }
 
-  // Filtered (searches across all 366 customers before pagination)
+  // Filtered (searches across all customers before pagination)
   const PAGE_SIZE = 25;
   let customerPage = $state(1);
   let debtPage = $state(1);
@@ -76,9 +216,9 @@
   let filteredCustomers = $derived(
     customers.filter(
       (c) =>
-        c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.phone.includes(searchQuery)
+        (c.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (c.code || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (c.phone || "").includes(searchQuery)
     )
   );
 
@@ -119,7 +259,7 @@
   );
 
   let activeMembersCount = $derived(
-    customers.filter((c) => c.priceTier === "member").length
+    customers.filter((c) => (c.customerType || c.priceTier || "").toLowerCase() === "member").length
   );
 
   let totalReceivables = $derived(
@@ -141,21 +281,28 @@
   <!-- PAGE HEADER -->
   <PageHeader
     title="Pelanggan & Pasien"
-    subtitle="Loyalitas member, dan manajemen piutang"
+    subtitle="Loyalitas member, data pasien, dan manajemen piutang"
     icon={Users}
     breadcrumbs={[{ label: "Pelanggan" }]}
   >
     {#snippet actions()}
       <button
         type="button"
-        onclick={() => (isAddCustomerModalOpen = true)}
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+        onclick={openAddCustomerModal}
+        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm cursor-pointer"
       >
         <Plus class="w-4 h-4" />
         <span>Tambah Pelanggan Baru</span>
       </button>
     {/snippet}
   </PageHeader>
+
+  {#if successMessage}
+    <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-2xl flex items-center gap-2">
+      <CheckCircle2 class="w-4 h-4 text-emerald-600" />
+      <span>{successMessage}</span>
+    </div>
+  {/if}
 
   <!-- METRIC CARDS -->
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -228,10 +375,10 @@
     >
       {#snippet header()}
         <th class="py-3 px-4">Kode</th>
-        <th class="py-3 px-4">Nama Pelanggan</th>
+        <th class="py-3 px-4">Pelanggan</th>
         <th class="py-3 px-4">Kontak</th>
-        <th class="py-3 px-4">Alamat Domisili</th>
-        <th class="py-3 px-4">Tingkat</th>
+        <th class="py-3 px-4">Alamat</th>
+        <th class="py-3 px-4">Tipe</th>
         <th class="py-3 px-4 text-center">Loyalitas</th>
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
@@ -249,32 +396,50 @@
         {:else}
           {#each paginatedCustomers as c}
             <tr class="hover:bg-blue-50/40 transition-colors">
-              <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{c.code}</td>
+              <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
+                <span class="px-2 py-0.5 rounded-lg bg-slate-100 font-mono text-[11px]">
+                  #{c.code || "-"}
+                </span>
+              </td>
               <td class="py-3.5 px-4">
                 <div class="font-bold text-slate-800">{c.name}</div>
+                {#if c.isActive === false}
+                  <span class="inline-block px-1.5 py-0.2 rounded bg-red-100 text-red-700 text-[9px] font-bold">NONAKTIF</span>
+                {/if}
               </td>
               <td class="py-3.5 px-4 font-mono text-slate-600 text-xs">
-                {c.phone}
+                {c.phone || "-"}
               </td>
               <td class="py-3.5 px-4 text-slate-500 text-xs max-w-xs truncate">
-                {c.address}
+                {c.address || "-"}
               </td>
               <td class="py-3.5 px-4">
-                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase {c.priceTier === 'wholesale' ? 'bg-purple-100 text-purple-700' : c.priceTier === 'member' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">
-                  {c.priceTier}
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase {(c.customerType || c.priceTier || '').toUpperCase() === 'GROSIR' ? 'bg-purple-100 text-purple-700' : (c.customerType || c.priceTier || '').toUpperCase() === 'MEMBER' ? 'bg-emerald-100 text-emerald-700' : (c.customerType || c.priceTier || '').toUpperCase() === 'RESEP' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}">
+                  {c.customerType || c.priceTier || "UMUM"}
                 </span>
               </td>
               <td class="py-3.5 px-4 text-center font-black text-amber-600">
-                {c.loyaltyPoints} Poin
+                {c.pointBalance ?? c.loyaltyPoints ?? 0} Poin
               </td>
               <td class="py-3.5 px-4 text-center">
-                <button
-                  type="button"
-                  onclick={() => alert(`Buka riwayat transaksi untuk ${c.name}`)}
-                  class="px-2.5 py-1 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-600 hover:text-brand-blue text-[11px] font-bold transition-all"
-                >
-                  Riwayat Medis
-                </button>
+                <div class="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onclick={() => openEditCustomerModal(c)}
+                    class="p-1.5 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-600 hover:text-brand-blue text-[11px] font-bold transition-all cursor-pointer"
+                    title="Edit Data Pelanggan"
+                  >
+                    <Edit3 class="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => handleDeleteCustomer(c)}
+                    class="p-1.5 rounded-lg border border-slate-200 hover:border-red-400 hover:bg-red-50 text-slate-400 hover:text-red-600 text-[11px] font-bold transition-all cursor-pointer"
+                    title="Hapus Pelanggan"
+                  >
+                    <Trash2 class="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </td>
             </tr>
           {/each}
@@ -285,7 +450,7 @@
   <!-- TAB 2: BUKU PIUTANG -->
   {:else if activeTab === "piutang"}
     <DataTable
-      title="Buku Piutang & Kartu Bon Pelanggan"
+      title="Buku Piutang & Bon Pelanggan"
       searchPlaceholder="Cari nama debitur atau nomor bon..."
       bind:searchValue={searchQuery}
       totalCount={filteredDebtCustomers.length}
@@ -295,11 +460,11 @@
       onPageChange={(p) => (debtPage = p)}
     >
       {#snippet header()}
-        <th class="py-3 px-4">No. Bon / Tagihan</th>
-        <th class="py-3 px-4">Nama Pelanggan</th>
+        <th class="py-3 px-4">Bon</th>
+        <th class="py-3 px-4">Pelanggan</th>
         <th class="py-3 px-4">Kontak</th>
-        <th class="py-3 px-4">Jatuh Tempo</th>
-        <th class="py-3 px-4 text-right">Saldo Piutang</th>
+        <th class="py-3 px-4">Tempo</th>
+        <th class="py-3 px-4 text-right">Piutang</th>
         <th class="py-3 px-4 text-center">Status</th>
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
@@ -328,7 +493,7 @@
                 <button
                   type="button"
                   onclick={() => openDebtPayment(d)}
-                  class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors"
+                  class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
                 >
                   Terima Bayar
                 </button>
@@ -345,91 +510,217 @@
   {/if}
 </div>
 
-<!-- MODAL TAMBAH PELANGGAN -->
-{#if isAddCustomerModalOpen}
+<!-- MODAL TAMBAH / EDIT PELANGGAN -->
+{#if isCustomerModalOpen}
   <div
     use:portal
     data-modal-overlay
     class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
-      if (e.target === e.currentTarget) isAddCustomerModalOpen = false;
+      if (e.target === e.currentTarget) isCustomerModalOpen = false;
     }}
     role="presentation"
   >
-    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto">
       <div class="flex items-center justify-between border-b border-slate-100 pb-3">
         <div class="flex items-center gap-2 text-slate-900 font-bold">
           <Users class="w-5 h-5 text-brand-blue" />
-          <span>Tambah Pelanggan / Pasien Baru</span>
+          <span>{editingCustomerId ? "Edit Data Pelanggan / Pasien" : "Tambah Pelanggan / Pasien Baru"}</span>
         </div>
         <button
-          onclick={() => (isAddCustomerModalOpen = false)}
-          class="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+          onclick={() => (isCustomerModalOpen = false)}
+          class="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
           aria-label="Tutup"
         >
           <X class="w-5 h-5" />
         </button>
       </div>
 
-      <div class="grid grid-cols-2 gap-3 text-xs">
-        <div class="col-span-2">
-          <label for="cust-name" class="font-bold text-slate-700 block mb-1">Nama Lengkap Pasien</label>
+      {#if customerModalError}
+        <div class="p-3 bg-red-50 border border-red-200 text-red-700 text-xs font-bold rounded-xl">
+          {customerModalError}
+        </div>
+      {/if}
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+        <div class="sm:col-span-2">
+          <label for="cust-name" class="font-bold text-slate-700 block mb-1">Nama Lengkap Pasien *</label>
           <input
             id="cust-name"
             type="text"
+            bind:value={customerForm.name}
             placeholder="Contoh: Ibu Rina Marlina"
-            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-medium"
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-900 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
           />
         </div>
+
+        <div>
+          <label for="cust-code" class="font-bold text-slate-700 block mb-1">Kode Member (Opsional)</label>
+          <input
+            id="cust-code"
+            type="text"
+            bind:value={customerForm.code}
+            placeholder="Otomatis jika kosong"
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono uppercase"
+          />
+        </div>
+
         <div>
           <label for="cust-phone" class="font-bold text-slate-700 block mb-1">Nomor WhatsApp / HP</label>
           <input
             id="cust-phone"
             type="tel"
-            placeholder="08123456789"
+            bind:value={customerForm.phone}
+            placeholder="08xxxxxxxxxx"
             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono"
           />
         </div>
+
         <div>
           <label for="cust-tier" class="font-bold text-slate-700 block mb-1">Kategori Tingkat Harga</label>
-          <Select
+          <select
             id="cust-tier"
-            options={[
-              { value: "general", label: "Umum (Reguler)" },
-              { value: "member", label: "Member Card (Diskon 5%)" },
-              { value: "prescription", label: "Pasien Resep Dokter" },
-              { value: "wholesale", label: "Grosir / Bidan / Klinik" }
-            ]}
+            bind:value={customerForm.customerType}
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-800 cursor-pointer"
+          >
+            <option value="UMUM">UMUM (Harga Reguler)</option>
+            <option value="MEMBER">MEMBER (Diskon Khusus Pelanggan Setia)</option>
+            <option value="RESEP">RESEP (Pasien Resep Dokter)</option>
+            <option value="GROSIR">GROSIR (Bidan / Klinik / Partai Besar)</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="cust-points" class="font-bold text-slate-700 block mb-1">Saldo Poin Loyalitas</label>
+          <input
+            id="cust-points"
+            type="number"
+            min="0"
+            bind:value={customerForm.pointBalance}
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold"
           />
         </div>
-        <div class="col-span-2">
-          <label for="cust-addr" class="font-bold text-slate-700 block mb-1">Alamat Lengkap</label>
+
+        <div class="sm:col-span-2">
+          <label for="cust-addr" class="font-bold text-slate-700 block mb-1">Alamat Domisili</label>
           <input
             id="cust-addr"
             type="text"
-            placeholder="Kp. Sukaluyu No. 12, Tasikmalaya"
+            bind:value={customerForm.address}
+            placeholder="Alamat domisili lengkap..."
             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2"
           />
+        </div>
+
+        <div class="sm:col-span-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+          <label class="inline-flex items-center gap-2 font-bold text-slate-700 cursor-pointer">
+            <input
+              type="checkbox"
+              bind:checked={customerForm.isActive}
+              class="rounded border-slate-300 text-brand-blue focus:ring-brand-blue"
+            />
+            <span>Status Pelanggan Aktif</span>
+          </label>
         </div>
       </div>
 
       <div class="border-t border-slate-100 pt-4 flex items-center justify-end gap-2">
         <button
           type="button"
-          onclick={() => (isAddCustomerModalOpen = false)}
-          class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
+          onclick={() => (isCustomerModalOpen = false)}
+          class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50 cursor-pointer"
         >
           Batal
         </button>
         <button
           type="button"
-          onclick={() => {
-            isAddCustomerModalOpen = false;
-            alert("Data pelanggan baru berhasil disimpan!");
-          }}
-          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
+          disabled={isSavingCustomer}
+          onclick={handleSaveCustomerSubmit}
+          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm disabled:opacity-50 cursor-pointer"
         >
-          Simpan Pelanggan
+          {isSavingCustomer ? "Menyimpan..." : editingCustomerId ? "Simpan Perubahan" : "Simpan Pelanggan"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL TERIMA PEMBAYARAN PIUTANG PASIEN -->
+{#if isReceiveDebtPaymentOpen && selectedDebtCustomer}
+  <div
+    use:portal
+    data-modal-overlay
+    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) isReceiveDebtPaymentOpen = false;
+    }}
+    role="presentation"
+  >
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-md w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2 text-slate-900 font-bold">
+          <CreditCard class="w-5 h-5 text-brand-blue" />
+          <span>Penerimaan Pembayaran Piutang Pasien</span>
+        </div>
+        <button
+          onclick={() => (isReceiveDebtPaymentOpen = false)}
+          class="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+          aria-label="Tutup"
+        >
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
+          <div class="text-slate-500 text-[11px]">Nama Pasien / Debitur:</div>
+          <div class="font-bold text-slate-900 text-sm">{selectedDebtCustomer.customerName}</div>
+          <div class="font-mono text-slate-600 text-xs">No. Bon: {selectedDebtCustomer.invoiceRef}</div>
+          <div class="flex justify-between pt-2 border-t border-slate-200 font-bold">
+            <span class="text-slate-500">Saldo Piutang:</span>
+            <span class="text-brand-red-600 font-mono">{formatRupiah(selectedDebtCustomer.totalDebt)}</span>
+          </div>
+        </div>
+
+        <div>
+          <label for="pay-meth" class="font-bold text-slate-700 block mb-1">Metode Penerimaan</label>
+          <Select
+            id="pay-meth"
+            bind:value={debtPaymentMethod}
+            options={[
+              "KAS_TUNAI (Tunai Kasir)",
+              "TRANSFER_BCA (Rekening BCA Apotek)",
+              "QRIS_DINAMIS (Scan QRIS Kasir)"
+            ]}
+          />
+        </div>
+
+        <div>
+          <label for="debt-pay-amount" class="font-bold text-slate-700 block mb-1">Nominal Diterima (Rp)</label>
+          <input
+            id="debt-pay-amount"
+            type="number"
+            bind:value={debtPaymentAmount}
+            max={selectedDebtCustomer.totalDebt}
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 text-sm"
+          />
+        </div>
+      </div>
+
+      <div class="border-t border-slate-100 pt-3 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onclick={() => (isReceiveDebtPaymentOpen = false)}
+          class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50 cursor-pointer"
+        >
+          Batal
+        </button>
+        <button
+          type="button"
+          onclick={handleSaveDebtPayment}
+          class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm cursor-pointer"
+        >
+          Simpan & Cetak Kwitansi
         </button>
       </div>
     </div>

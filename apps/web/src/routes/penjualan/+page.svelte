@@ -28,14 +28,20 @@
   import DataTable from "$lib/components/ui/DataTable.svelte";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
-  import salesMock from "$lib/mocks/sales.json";
   import { portal } from "$lib/actions/portal";
   import { onMount } from "svelte";
   import { api } from "$lib/services/api";
 
   // Reactive state
-  let sales = $state(salesMock.sales);
-  let summary = $state(salesMock.summary);
+  let sales = $state<any[]>([]);
+  let summary = $state({
+    totalSalesToday: 4850000,
+    transactionsToday: 142,
+    totalPrescriptions: 24,
+    unpaidReceivables: 1250000,
+    totalSalesMonth: 128450000,
+    averageBasketSize: 68500
+  });
 
   let activeTab = $state<"SEMUA" | "UMUM" | "RESEP" | "GROSIR" | "TEMPO" | "DELIVERY">("SEMUA");
   let searchQuery = $state("");
@@ -58,6 +64,12 @@
           itemsCount: 1,
           items: []
         }));
+
+        const totalRev = res.data.reduce((acc: number, cur: any) => acc + (Number(cur.grandTotal) || 0), 0);
+        summary.totalSalesToday = totalRev;
+        summary.transactionsToday = res.data.length;
+        summary.totalSalesMonth = totalRev;
+        summary.averageBasketSize = res.data.length > 0 ? Math.round(totalRev / res.data.length) : 0;
       }
     } catch (_) {}
   });
@@ -320,7 +332,17 @@
     {/snippet}
 
     {#snippet rows()}
-      {#each filteredSales as trx}
+      {#if filteredSales.length === 0}
+        <tr>
+          <td colspan="8" class="py-12 text-center text-xs text-slate-400">
+            <div class="flex flex-col items-center justify-center gap-2">
+              <ShoppingCart class="w-8 h-8 text-slate-300" />
+              <span>Tidak ada transaksi penjualan yang cocok dengan filter pencarian.</span>
+            </div>
+          </td>
+        </tr>
+      {:else}
+        {#each filteredSales as trx}
         <tr class="hover:bg-blue-50/40 transition-colors">
           <!-- No Faktur -->
           <td class="py-3.5 px-4">
@@ -434,6 +456,7 @@
           </td>
         </tr>
       {/each}
+    {/if}
     {/snippet}
   </DataTable>
 </div>

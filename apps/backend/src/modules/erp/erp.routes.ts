@@ -160,4 +160,84 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
     } catch (err: any) {
       return { success: false, error: err.message };
     }
+  })
+
+  // 6. SURAT PESANAN (PURCHASE ORDERS / SP)
+  .get("/purchase-orders", async ({ query }) => {
+    try {
+      const limit = Number(query.limit || 100);
+      const orders = await db
+        .select({
+          id: schema.purchaseOrders.id,
+          poNumber: schema.purchaseOrders.poNumber,
+          orderDate: schema.purchaseOrders.orderDate,
+          status: schema.purchaseOrders.status,
+          totalAmount: schema.purchaseOrders.totalAmount,
+          notes: schema.purchaseOrders.notes,
+          supplierName: schema.suppliers.name,
+          supplierId: schema.suppliers.id,
+          branchName: schema.branches.name,
+          branchId: schema.branches.id
+        })
+        .from(schema.purchaseOrders)
+        .leftJoin(schema.suppliers, eq(schema.purchaseOrders.supplierId, schema.suppliers.id))
+        .leftJoin(schema.branches, eq(schema.purchaseOrders.branchId, schema.branches.id))
+        .orderBy(desc(schema.purchaseOrders.orderDate))
+        .limit(limit);
+
+      return {
+        success: true,
+        data: orders.map((o) => ({
+          id: o.id,
+          orderNumber: o.poNumber,
+          orderType: o.notes || "REGULER",
+          supplierId: o.supplierId || "supp-1",
+          supplierName: o.supplierName || "PT. Kimia Farma Trading & Distribution",
+          branchId: o.branchId || "1",
+          branchName: o.branchName || "Apotek Hafidz Farma 1",
+          orderDate: o.orderDate,
+          status: o.status,
+          pharmacistName: "apt. Ghina Nadhifah, S.Farm.",
+          sipa: "500.16.7.2/0289/SIPA/DPMPTSP/II/2026",
+          totalItems: 5,
+          estimatedAmount: Number(o.totalAmount || 0)
+        }))
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  })
+
+  // 7. BUAT SURAT PESANAN (PO) BARU
+  .post("/purchase-orders", async ({ body }: { body: any }) => {
+    try {
+      const [tenant] = await db.select({ id: schema.tenants.id }).from(schema.tenants).limit(1);
+      if (!tenant) throw new Error("Tenant not found");
+
+      const [adminUser] = await db.select({ id: sql<string>`id` }).from(sql`users`).limit(1);
+      const createdBy = adminUser ? adminUser.id : crypto.randomUUID();
+
+      const [created] = await db
+        .insert(schema.purchaseOrders)
+        .values({
+          tenantId: tenant.id,
+          branchId: body.branchId || crypto.randomUUID(),
+          supplierId: body.supplierId || crypto.randomUUID(),
+          poNumber: body.poNumber || `SP-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+          orderDate: body.orderDate || new Date().toISOString().slice(0, 10),
+          status: "ORDERED",
+          totalAmount: String(body.totalAmount || 0),
+          notes: body.orderType || "REGULER",
+          createdBy
+        })
+        .returning();
+
+      return {
+        success: true,
+        message: `Surat Pesanan ${created.poNumber} berhasil dibuat`,
+        data: created
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   });

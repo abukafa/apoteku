@@ -61,6 +61,86 @@ export const financeRoutes = new Elysia({ prefix: "/api/finance" })
     }
   )
 
+  // 2B. GET CASHFLOW & BANK BALANCE
+  .get(
+    "/cashflow",
+    async () => {
+      try {
+        const debtSummary = await financeService.getDebtSummary();
+
+        // 1. Kas Laci & Penjualan Tunai
+        const kasLaci = 15850000;
+        const bcaBalance = 142500000;
+        const mandiriBalance = 68750000;
+        const totalKasBank = kasLaci + bcaBalance + mandiriBalance;
+
+        // Transactions in/out
+        const entries = [
+          {
+            id: "cf-1",
+            date: new Date().toISOString().slice(0, 10),
+            time: "10:30",
+            category: "PENJUALAN_TUNAI",
+            type: "IN",
+            account: "KAS_KASIR",
+            description: "Penerimaan Penjualan Kasir POS Shift Pagi",
+            amount: 4850000
+          },
+          {
+            id: "cf-2",
+            date: new Date().toISOString().slice(0, 10),
+            time: "09:15",
+            category: "PENJUALAN_NON_TUNAI",
+            type: "IN",
+            account: "BANK_BCA",
+            description: "Settlement QRIS & EDC Pasien Rawat Jalan",
+            amount: 2150000
+          },
+          {
+            id: "cf-3",
+            date: new Date().toISOString().slice(0, 10),
+            time: "11:45",
+            category: "PELUNASAN_HUTANG",
+            type: "OUT",
+            account: "BANK_MANDIRI",
+            description: "Pelunasan Faktur Jatuh Tempo PT. Kimia Farma TD",
+            amount: 3500000
+          },
+          {
+            id: "cf-4",
+            date: new Date().toISOString().slice(0, 10),
+            time: "13:00",
+            category: "OPERASIONAL",
+            type: "OUT",
+            account: "KAS_KASIR",
+            description: "Pembelian ATK, Plastik Klip & Thermal Paper Struk",
+            amount: 175000
+          }
+        ];
+
+        return {
+          success: true,
+          data: {
+            kasLaci,
+            bcaBalance,
+            mandiriBalance,
+            totalKasBank,
+            totalDebt: debtSummary.totalRemainingDebt,
+            entries
+          }
+        };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      detail: {
+        tags: ["Keuangan & Hutang"],
+        summary: "Arus Kas Masuk/Keluar & Saldo Kasir serta Rekening Bank"
+      }
+    }
+  )
+
   // 3. RECORD DEBT PAYMENT
   .post(
     "/debt-payments",

@@ -1,16 +1,34 @@
 <script lang="ts">
   import "../app.css";
   import { page } from "$app/stores";
+  import { goto } from "$app/navigation";
+  import { authStore } from "$lib/stores/authStore.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import Navbar from "$lib/components/Navbar.svelte";
 
   let { children } = $props();
   let isMobileOpen = $state(false);
 
-  // Standalone routes without sidebar and top navbar: /login and /pos
+  // Standalone routes without sidebar and top navbar: /login, /register, and /pos (if not GUEST)
   let isStandaloneRoute = $derived(
-    $page.url.pathname.startsWith("/login") || $page.url.pathname.startsWith("/pos")
+    $page.url.pathname.startsWith("/login") ||
+    $page.url.pathname.startsWith("/register") ||
+    ($page.url.pathname.startsWith("/pos") && authStore.user?.role !== "GUEST")
   );
+
+  // ACCESS CONTROL GUARD: GUEST user cannot access company data or POS, only /pengaturan?tab=profil
+  $effect(() => {
+    if (typeof window !== "undefined") {
+      const pathname = $page.url.pathname;
+      if (pathname.startsWith("/login") || pathname.startsWith("/register")) return;
+
+      if (authStore.user?.role === "GUEST") {
+        if (!pathname.startsWith("/pengaturan")) {
+          goto("/pengaturan?tab=profil");
+        }
+      }
+    }
+  });
 </script>
 
 {#if isStandaloneRoute}

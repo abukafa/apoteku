@@ -18,17 +18,18 @@
   import DataTable from "$lib/components/ui/DataTable.svelte";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
-  import customersData from "$lib/mocks/customers.json";
   import { portal } from "$lib/actions/portal";
   import { onMount } from "svelte";
   import { mockApi } from "$lib/services/mock-api";
+  import { api } from "$lib/services/api";
 
-  let customers = $state(customersData);
+  let customers = $state<any[]>([]);
   let activeTab = $state<"semua" | "piutang">("semua");
   let searchQuery = $state("");
 
   onMount(async () => {
     try {
+      await mockApi.ensureDataLoaded();
       const live = await mockApi.getCustomers();
       if (live && live.length > 0) {
         customers = live as any;
@@ -205,37 +206,48 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredCustomers as c}
-          <tr class="hover:bg-blue-50/40 transition-colors">
-            <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{c.code}</td>
-            <td class="py-3.5 px-4">
-              <div class="font-bold text-slate-800">{c.name}</div>
-            </td>
-            <td class="py-3.5 px-4 font-mono text-slate-600 text-xs">
-              {c.phone}
-            </td>
-            <td class="py-3.5 px-4 text-slate-500 text-xs max-w-xs truncate">
-              {c.address}
-            </td>
-            <td class="py-3.5 px-4">
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase {c.priceTier === 'wholesale' ? 'bg-purple-100 text-purple-700' : c.priceTier === 'member' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">
-                {c.priceTier}
-              </span>
-            </td>
-            <td class="py-3.5 px-4 text-center font-black text-amber-600">
-              {c.loyaltyPoints} Poin
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              <button
-                type="button"
-                onclick={() => alert(`Buka riwayat transaksi untuk ${c.name}`)}
-                class="px-2.5 py-1 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-600 hover:text-brand-blue text-[11px] font-bold transition-all"
-              >
-                Riwayat Medis
-              </button>
+        {#if filteredCustomers.length === 0}
+          <tr>
+            <td colspan="7" class="py-12 text-center text-xs text-slate-400">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <Users class="w-8 h-8 text-slate-300" />
+                <span>Tidak ada data pelanggan yang ditemukan.</span>
+              </div>
             </td>
           </tr>
-        {/each}
+        {:else}
+          {#each filteredCustomers as c}
+            <tr class="hover:bg-blue-50/40 transition-colors">
+              <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{c.code}</td>
+              <td class="py-3.5 px-4">
+                <div class="font-bold text-slate-800">{c.name}</div>
+              </td>
+              <td class="py-3.5 px-4 font-mono text-slate-600 text-xs">
+                {c.phone}
+              </td>
+              <td class="py-3.5 px-4 text-slate-500 text-xs max-w-xs truncate">
+                {c.address}
+              </td>
+              <td class="py-3.5 px-4">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase {c.priceTier === 'wholesale' ? 'bg-purple-100 text-purple-700' : c.priceTier === 'member' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">
+                  {c.priceTier}
+                </span>
+              </td>
+              <td class="py-3.5 px-4 text-center font-black text-amber-600">
+                {c.loyaltyPoints} Poin
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                <button
+                  type="button"
+                  onclick={() => alert(`Buka riwayat transaksi untuk ${c.name}`)}
+                  class="px-2.5 py-1 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-600 hover:text-brand-blue text-[11px] font-bold transition-all"
+                >
+                  Riwayat Medis
+                </button>
+              </td>
+            </tr>
+          {/each}
+        {/if}
       {/snippet}
     </DataTable>
 

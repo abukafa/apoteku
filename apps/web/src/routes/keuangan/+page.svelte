@@ -11,6 +11,7 @@
     CheckCircle2,
     Lock,
     Eye,
+    Store,
     X
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
@@ -18,10 +19,10 @@
   import DataTable from "$lib/components/ui/DataTable.svelte";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
-  import branchesData from "$lib/mocks/branches.json";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
   import { mockApi } from "$lib/services/mock-api";
+  import { authStore } from "$lib/stores/authStore.svelte";
 
   interface CashLedgerEntry {
     id: string;
@@ -58,8 +59,8 @@
   }
 
   // Master Data & Filters
-  let branches = $state<any[]>(branchesData);
-  let selectedBranchId = $state("ALL");
+  let branches = $state<any[]>([]);
+  let selectedBranchId = $state(authStore.user?.branchId || "1");
   let activeTab = $state<"buku_kas" | "rekonsiliasi_shift">("buku_kas");
 
   let ledgerTypeFilter = $state<"ALL" | "IN" | "OUT">("ALL");
@@ -214,7 +215,7 @@
 
   // Form Catat Mutasi Kas Kecil State
   let expenseForm = $state({
-    branchId: "1",
+    branchId: authStore.user?.branchId || "1",
     type: "OUT" as "IN" | "OUT",
     category: "Perlengkapan Apotek",
     account: "KAS_LACI" as "KAS_LACI" | "KAS_BRANKAS" | "BANK_BCA",
@@ -224,15 +225,47 @@
   });
 
   onMount(async () => {
-    selectedBranchId = "ALL";
+    if (authStore.user?.branchId) {
+      selectedBranchId = authStore.user.branchId;
+      expenseForm.branchId = authStore.user.branchId;
+    }
     try {
       await mockApi.ensureDataLoaded();
-      const bList = await mockApi.getBranches();
-      if (bList.length > 0) branches = bList;
+      const [bList, shiftRes, cfRes] = await Promise.all([
+        mockApi.getBranches(),
+        api.shift.list(),
+        api.finance.getCashflow()
+      ]);
+      if (bList.length > 0) {
+        branches = bList;
+        if (!authStore.user?.branchId && bList[0]?.id) {
+          selectedBranchId = bList[0].id;
+          expenseForm.branchId = bList[0].id;
+        }
+      }
 
-      const res = await api.shift.list();
-      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
-        shiftRecords = res.data;
+      if (shiftRes?.success && Array.isArray(shiftRes.data) && shiftRes.data.length > 0) {
+        shiftRecords = shiftRes.data;
+      }
+      if (cfRes?.success && cfRes.data) {
+        const d = cfRes.data;
+        if (d.kasLaci) payoutAmount = d.kasLaci;
+        if (Array.isArray(d.entries) && d.entries.length > 0) {
+          cashEntries = d.entries.map((e: any) => ({
+            id: e.id,
+            branchId: "1",
+            branchName: "Apotek Hafidz Farma Pusat",
+            time: `${e.date} ${e.time}`,
+            type: e.type,
+            category: e.category,
+            account: e.account,
+            refNumber: `CF-${e.id}`,
+            amount: e.amount,
+            balance: 5000000,
+            operator: "Sistem Keuangan",
+            description: e.description
+          }));
+        }
       }
     } catch (_) {}
   });
@@ -434,17 +467,24 @@
     breadcrumbs={[{ label: "Keuangan" }]}
   >
     {#snippet actions()}
-      <!-- Branch Selector -->
-      <div class="w-56">
-        <Select
-          value={selectedBranchId}
-          onchange={(val) => (selectedBranchId = val)}
-          options={[
-            { value: "ALL", label: "Semua Cabang Apotek" },
-            ...branches.map((b) => ({ value: b.id, label: b.name }))
-          ]}
-        />
-      </div>
+      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
+      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+        <div class="w-56">
+          <Select
+            value={selectedBranchId}
+            onchange={(val) => (selectedBranchId = val)}
+            options={[
+              { value: "ALL", label: "Semua Cabang Apotek" },
+              ...branches.map((b) => ({ value: b.id, label: b.name }))
+            ]}
+          />
+        </div>
+      {:else}
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
+          <Store class="w-3.5 h-3.5 text-brand-blue" />
+          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+        </div>
+      {/if}
 
       <button
         type="button"
@@ -778,13 +818,21 @@
         </div>
 
         <div>
-          <label for="exp-branch" class="font-bold text-slate-700 block mb-1">Cabang Apotek</label>
-          <Select
-            id="exp-branch"
-            value={expenseForm.branchId}
-            onchange={(val) => (expenseForm.branchId = val)}
-            options={branches.map((b) => ({ value: b.id, label: b.name }))}
-          />
+          {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+            <label for="exp-branch" class="font-bold text-slate-700 block mb-1">Cabang Apotek</label>
+            <Select
+              id="exp-branch"
+              value={expenseForm.branchId}
+              onchange={(val) => (expenseForm.branchId = val)}
+              options={branches.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          {:else}
+            <span class="font-bold text-slate-700 block mb-1">Cabang Apotek</span>
+            <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 flex items-center gap-2">
+              <Store class="w-4 h-4 text-brand-blue" />
+              <span>{authStore.user?.branchName || branches.find((b) => b.id === expenseForm.branchId)?.name || "Cabang Utama"}</span>
+            </div>
+          {/if}
         </div>
 
         <div class="col-span-2">

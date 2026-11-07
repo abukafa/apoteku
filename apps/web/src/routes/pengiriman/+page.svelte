@@ -21,9 +21,6 @@
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
-  import transfersData from "$lib/mocks/transfers.json";
-  import branchesData from "$lib/mocks/branches.json";
-  import productsData from "$lib/mocks/products.json";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
@@ -61,21 +58,11 @@
   }
 
   // State
-  let transfers = $state<TransferDoc[]>(
-    structuredClone(transfersData).map((t: any) => ({
-      ...t,
-      courierName: t.courierName || "Kurir Internal",
-      items: t.items.map((it: any) => ({
-        ...it,
-        receivedQty: t.status === "RECEIVED" ? it.qty : undefined,
-        discrepancyQty: t.status === "RECEIVED" ? 0 : undefined
-      }))
-    }))
-  );
-  let branches = $state<any[]>(branchesData);
-  let products = $state<any[]>(productsData);
+  let transfers = $state<TransferDoc[]>([]);
+  let branches = $state<any[]>([]);
+  let products = $state<any[]>([]);
 
-  let selectedBranchFilter = $state<string>("ALL");
+  let selectedBranchFilter = $state<string>(authStore.user?.branchId || "1");
   let activeTab = $state<"semua" | "in_transit" | "requested" | "received">("semua");
   let searchQuery = $state("");
 
@@ -87,7 +74,8 @@
 
   onMount(async () => {
     if (authStore.user?.branchId) {
-      selectedBranchFilter = "ALL";
+      selectedBranchFilter = authStore.user.branchId;
+      formFromBranchId = authStore.user.branchId;
     }
     try {
       await mockApi.ensureDataLoaded();
@@ -98,12 +86,17 @@
       ]);
       if (branchList.length > 0) {
         branches = branchList;
-        if (branchList[0]?.id) formFromBranchId = branchList[0].id;
-        if (branchList[1]?.id) formToBranchId = branchList[1].id;
+        if (!authStore.user?.branchId && branchList[0]?.id) {
+          formFromBranchId = branchList[0].id;
+          selectedBranchFilter = branchList[0].id;
+        }
+        const altDest = branchList.find((b) => b.id !== formFromBranchId);
+        if (altDest?.id) formToBranchId = altDest.id;
       }
       if (prodList.length > 0) {
         products = prodList;
         draftProductId = prodList[0]?.id || "";
+        draftBatchNumber = prodList[0]?.batches[0]?.batchNumber || "";
       }
       if (transferList?.success && Array.isArray(transferList.data) && transferList.data.length > 0) {
         transfers = transferList.data;
@@ -184,8 +177,8 @@
   let formTransferNotes = $state("");
 
   // Draft item selector
-  let draftProductId = $state(productsData[0]?.id || "");
-  let draftBatchNumber = $state(productsData[0]?.batches[0]?.batchNumber || "");
+  let draftProductId = $state("");
+  let draftBatchNumber = $state("");
   let draftQty = $state(20);
   let draftUnit = $state("STRIP");
 
@@ -208,8 +201,7 @@
   );
 
   function openAddTransferModal() {
-    formFromBranchId =
-      selectedBranchFilter !== "ALL" ? selectedBranchFilter : "1";
+    formFromBranchId = authStore.user?.branchId || (selectedBranchFilter !== "ALL" ? selectedBranchFilter : "1");
     const firstDest = branches.find((b) => b.id !== formFromBranchId);
     formToBranchId = firstDest?.id || "2";
     formCourierName = "Kurir Internal - Kang Asep";
@@ -492,21 +484,29 @@
           <span>Kirim Barang Baru</span>
         </button>
 
-        <Select
-          bind:value={selectedBranchFilter}
-          icon={Store}
-          variant="soft"
-          size="sm"
-          align="right"
-          options={[
-            { value: "ALL", label: "Semua Cabang (Konsolidasi)" },
-            ...branches.map((b) => ({
-              value: b.id,
-              label: `${b.name} (${b.code})`,
-              sublabel: b.address
-            }))
-          ]}
-        />
+        <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
+        {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+          <Select
+            bind:value={selectedBranchFilter}
+            icon={Store}
+            variant="soft"
+            size="sm"
+            align="right"
+            options={[
+              { value: "ALL", label: "Semua Cabang (Konsolidasi)" },
+              ...branches.map((b) => ({
+                value: b.id,
+                label: `${b.name}`,
+                sublabel: b.address
+              }))
+            ]}
+          />
+        {:else}
+          <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
+            <Store class="w-3.5 h-3.5 text-brand-blue" />
+            <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchFilter)?.name || "Apotek Hafidz Farma Pusat"}</span>
+          </div>
+        {/if}
       </div>
     {/snippet}
   </PageHeader>
@@ -635,91 +635,101 @@
     {/snippet}
 
     {#snippet rows()}
-      {#each filteredTransfers as t}
-        <tr class="hover:bg-blue-50/40 transition-colors">
-          <td class="py-3.5 px-4">
-            <div class="font-mono font-bold text-brand-blue">{t.transferNumber}</div>
-            {#if t.receiptNumber}
-              <div class="text-[10px] font-mono text-emerald-700 mt-0.5">
-                Terima: {t.receiptNumber}
-              </div>
-            {/if}
-          </td>
-          <td class="py-3.5 px-4">
-            <div class="font-bold text-slate-800">{t.fromBranchName}</div>
-            <div class="text-[11px] text-slate-400">Oleh: {t.operator}</div>
-          </td>
-          <td class="py-3.5 px-4">
-            <div class="font-bold text-slate-800">{t.toBranchName}</div>
-            {#if t.receivedBy}
-              <div class="text-[11px] text-emerald-700">Diterima: {t.receivedBy}</div>
-            {/if}
-          </td>
-          <td class="py-3.5 px-4">
-            <div class="font-mono text-slate-600 text-[11px]">{t.transferDate}</div>
-            {#if t.courierName}
-              <div class="text-[11px] text-slate-400 mt-0.5">{t.courierName}</div>
-            {/if}
-          </td>
-          <td class="py-3.5 px-4">
-            <div class="space-y-1">
-              {#each t.items as item}
-                <div class="text-[11px] text-slate-700 font-medium flex items-center gap-1.5 flex-wrap">
-                  <span>• {item.productName}</span>
-                  <span class="font-bold text-slate-900">({item.qty} {item.unit})</span>
-                  <span class="text-slate-400 font-mono text-[10px]">[{item.batchNumber}]</span>
-                  {#if item.discrepancyQty !== undefined && item.discrepancyQty !== 0}
-                    <span class="px-1.5 py-0.5 rounded bg-red-100 text-brand-red-700 font-mono font-bold text-[10px]">
-                      Fisik: {item.receivedQty} (Selisih {item.discrepancyQty})
-                    </span>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-          </td>
-          <td class="py-3.5 px-4 text-center">
-            {#if t.status === "RECEIVED"}
-              <Badge type="SUCCESS" label="DITERIMA" />
-            {:else if t.status === "RECEIVED_DISCREPANCY"}
-              <Badge type="DANGER" label="SELISIH TERIMA" />
-            {:else if t.status === "IN_TRANSIT"}
-              <Badge type="WARNING" label="DI JALAN" />
-            {:else}
-              <Badge type="INFO" label="DIMINTA" />
-            {/if}
-          </td>
-          <td class="py-3.5 px-4 text-center">
-            <div class="flex items-center justify-center gap-1.5">
-              {#if t.status === "IN_TRANSIT"}
-                <button
-                  type="button"
-                  onclick={() => openReceiveModal(t)}
-                  class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors shadow-xs"
-                >
-                  Terima
-                </button>
-              {:else if t.status === "REQUESTED"}
-                <button
-                  type="button"
-                  onclick={() => dispatchRequestedTransfer(t)}
-                  class="px-2.5 py-1 rounded-lg bg-brand-blue-600 hover:bg-brand-blue-700 text-white font-bold text-[11px] inline-flex items-center gap-1 transition-colors shadow-xs"
-                >
-                  <Send class="w-3 h-3" />
-                  <span>Kirim</span>
-                </button>
-              {/if}
-              <button
-                type="button"
-                onclick={() => openDetailModal(t)}
-                class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-brand-blue"
-                title="Lihat Detail & Cetak Surat Jalan"
-              >
-                <Printer class="w-4 h-4" />
-              </button>
-            </div>
+      {#if filteredTransfers.length === 0}
+        <tr>
+          <td colspan="7" class="text-center py-12 text-slate-400">
+            <Truck class="w-10 h-10 mx-auto mb-2 opacity-30" />
+            <p class="font-medium text-sm">Tidak ada data surat jalan atau mutasi cabang</p>
+            <p class="text-xs text-slate-400">Gunakan tombol "Buat Surat Jalan" untuk memulai pengiriman antarcabang.</p>
           </td>
         </tr>
-      {/each}
+      {:else}
+        {#each filteredTransfers as t}
+          <tr class="hover:bg-blue-50/40 transition-colors">
+            <td class="py-3.5 px-4">
+              <div class="font-mono font-bold text-brand-blue">{t.transferNumber}</div>
+              {#if t.receiptNumber}
+                <div class="text-[10px] font-mono text-emerald-700 mt-0.5">
+                  Terima: {t.receiptNumber}
+                </div>
+              {/if}
+            </td>
+            <td class="py-3.5 px-4">
+              <div class="font-bold text-slate-800">{t.fromBranchName}</div>
+              <div class="text-[11px] text-slate-400">Oleh: {t.operator}</div>
+            </td>
+            <td class="py-3.5 px-4">
+              <div class="font-bold text-slate-800">{t.toBranchName}</div>
+              {#if t.receivedBy}
+                <div class="text-[11px] text-emerald-700">Diterima: {t.receivedBy}</div>
+              {/if}
+            </td>
+            <td class="py-3.5 px-4">
+              <div class="font-mono text-slate-600 text-[11px]">{t.transferDate}</div>
+              {#if t.courierName}
+                <div class="text-[11px] text-slate-400 mt-0.5">{t.courierName}</div>
+              {/if}
+            </td>
+            <td class="py-3.5 px-4">
+              <div class="space-y-1">
+                {#each t.items as item}
+                  <div class="text-[11px] text-slate-700 font-medium flex items-center gap-1.5 flex-wrap">
+                    <span>• {item.productName}</span>
+                    <span class="font-bold text-slate-900">({item.qty} {item.unit})</span>
+                    <span class="text-slate-400 font-mono text-[10px]">[{item.batchNumber}]</span>
+                    {#if item.discrepancyQty !== undefined && item.discrepancyQty !== 0}
+                      <span class="px-1.5 py-0.5 rounded bg-red-100 text-brand-red-700 font-mono font-bold text-[10px]">
+                        Fisik: {item.receivedQty} (Selisih {item.discrepancyQty})
+                      </span>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            </td>
+            <td class="py-3.5 px-4 text-center">
+              {#if t.status === "RECEIVED"}
+                <Badge type="SUCCESS" label="DITERIMA" />
+              {:else if t.status === "RECEIVED_DISCREPANCY"}
+                <Badge type="DANGER" label="SELISIH TERIMA" />
+              {:else if t.status === "IN_TRANSIT"}
+                <Badge type="WARNING" label="DI JALAN" />
+              {:else}
+                <Badge type="INFO" label="DIMINTA" />
+              {/if}
+            </td>
+            <td class="py-3.5 px-4 text-center">
+              <div class="flex items-center justify-center gap-1.5">
+                {#if t.status === "IN_TRANSIT"}
+                  <button
+                    type="button"
+                    onclick={() => openReceiveModal(t)}
+                    class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors shadow-xs"
+                  >
+                    Terima
+                  </button>
+                {:else if t.status === "REQUESTED"}
+                  <button
+                    type="button"
+                    onclick={() => dispatchRequestedTransfer(t)}
+                    class="px-2.5 py-1 rounded-lg bg-brand-blue-600 hover:bg-brand-blue-700 text-white font-bold text-[11px] inline-flex items-center gap-1 transition-colors shadow-xs"
+                  >
+                    <Send class="w-3 h-3" />
+                    <span>Kirim</span>
+                  </button>
+                {/if}
+                <button
+                  type="button"
+                  onclick={() => openDetailModal(t)}
+                  class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-brand-blue"
+                  title="Lihat Detail & Cetak Surat Jalan"
+                >
+                  <Printer class="w-4 h-4" />
+                </button>
+              </div>
+            </td>
+          </tr>
+        {/each}
+      {/if}
     {/snippet}
   </DataTable>
 </div>
@@ -759,17 +769,25 @@
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
         <div>
-          <label for="trf-from" class="font-bold text-slate-700 block mb-1">Cabang Pengirim (Asal)</label>
-          <Select
-            id="trf-from"
-            bind:value={formFromBranchId}
-            onchange={(val) => handleFromBranchChange(val)}
-            options={branches.map((b) => ({
-              value: b.id,
-              label: b.name,
-              sublabel: b.code
-            }))}
-          />
+          {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+            <label for="trf-from" class="font-bold text-slate-700 block mb-1">Cabang Pengirim (Asal)</label>
+            <Select
+              id="trf-from"
+              bind:value={formFromBranchId}
+              onchange={(val) => handleFromBranchChange(val)}
+              options={branches.map((b) => ({
+                value: b.id,
+                label: b.name,
+                sublabel: b.code
+              }))}
+            />
+          {:else}
+            <span class="font-bold text-slate-700 block mb-1">Cabang Pengirim (Asal)</span>
+            <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 flex items-center gap-2">
+              <Store class="w-4 h-4 text-brand-blue" />
+              <span>{authStore.user?.branchName || branches.find((b) => b.id === formFromBranchId)?.name || "Cabang Asal"}</span>
+            </div>
+          {/if}
         </div>
         <div>
           <label for="trf-to" class="font-bold text-slate-700 block mb-1">Cabang Penerima (Tujuan)</label>

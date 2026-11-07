@@ -17,17 +17,17 @@
   import DataTable from "$lib/components/ui/DataTable.svelte";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
-  import suppliersData from "$lib/mocks/suppliers.json";
   import { portal } from "$lib/actions/portal";
   import { onMount } from "svelte";
   import { mockApi } from "$lib/services/mock-api";
 
-  let suppliers = $state(suppliersData);
+  let suppliers = $state<any[]>([]);
   let activeTab = $state<"semua" | "hutang">("semua");
   let searchQuery = $state("");
 
   onMount(async () => {
     try {
+      await mockApi.ensureDataLoaded();
       const live = await mockApi.getSuppliers();
       if (live && live.length > 0) {
         suppliers = live as any;
@@ -211,27 +211,38 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredSuppliers as s}
-          <tr class="hover:bg-blue-50/40 transition-colors">
-            <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{s.code}</td>
-            <td class="py-3.5 px-4">
-              <div class="font-bold text-slate-900">{s.name}</div>
-            </td>
-            <td class="py-3.5 px-4 font-mono text-slate-600 text-xs">{s.phone}</td>
-            <td class="py-3.5 px-4 text-slate-500 text-xs max-w-xs truncate">{s.address}</td>
-            <td class="py-3.5 px-4 text-center">
-              <Badge type="SUCCESS" label="AKTIF" />
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              <a
-                href="/pembelian"
-                class="px-2.5 py-1 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-600 hover:text-brand-blue text-[11px] font-bold transition-all inline-block"
-              >
-                + Buat SP
-              </a>
+        {#if filteredSuppliers.length === 0}
+          <tr>
+            <td colspan="6" class="py-12 text-center text-xs text-slate-400">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <Building2 class="w-8 h-8 text-slate-300" />
+                <span>Tidak ada data distributor PBF yang ditemukan.</span>
+              </div>
             </td>
           </tr>
-        {/each}
+        {:else}
+          {#each filteredSuppliers as s}
+            <tr class="hover:bg-blue-50/40 transition-colors">
+              <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{s.code}</td>
+              <td class="py-3.5 px-4">
+                <div class="font-bold text-slate-900">{s.name}</div>
+              </td>
+              <td class="py-3.5 px-4 font-mono text-slate-600 text-xs">{s.phone}</td>
+              <td class="py-3.5 px-4 text-slate-500 text-xs max-w-xs truncate">{s.address}</td>
+              <td class="py-3.5 px-4 text-center">
+                <Badge type="SUCCESS" label="AKTIF" />
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                <a
+                  href="/pembelian"
+                  class="px-2.5 py-1 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-600 hover:text-brand-blue text-[11px] font-bold transition-all inline-block"
+                >
+                  + Buat SP
+                </a>
+              </td>
+            </tr>
+          {/each}
+        {/if}
       {/snippet}
     </DataTable>
 

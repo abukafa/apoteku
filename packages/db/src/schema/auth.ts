@@ -41,6 +41,32 @@ export const branches = pgTable(
   ]
 );
 
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .references(() => tenants.id, { onDelete: "cascade" })
+      .notNull(),
+    branchId: uuid("branch_id")
+      .references(() => branches.id, { onDelete: "set null" }),
+    username: varchar("username", { length: 100 }).notNull(),
+    fullName: varchar("full_name", { length: 255 }).notNull(),
+    email: varchar("email", { length: 255 }),
+    phone: varchar("phone", { length: 50 }),
+    role: varchar("role", { length: 50 }).notNull(), // 'SUPERADMIN' | 'OWNER' | 'PHARMACIST' | 'CASHIER' | 'INVENTORY' | 'FINANCE'
+    pin: varchar("pin", { length: 20 }),
+    passwordHash: text("password_hash"),
+    avatarUrl: text("avatar_url"),
+    isActive: boolean("is_active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (t) => [
+    uniqueIndex("uq_user_tenant_username").on(t.tenantId, t.username),
+    index("idx_user_branch").on(t.branchId)
+  ]
+);
+
 export const inventoryLocations = pgTable(
   "inventory_locations",
   {

@@ -18,6 +18,7 @@
     ClipboardCheck,
     Sparkles,
     Paperclip,
+    Store,
     X
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
@@ -26,13 +27,17 @@
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
-  import doctorsData from "$lib/mocks/doctors.json";
-  import customersData from "$lib/mocks/customers.json";
-  import productsData from "$lib/mocks/products.json";
-  import branchesData from "$lib/mocks/branches.json";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
   import { mockApi } from "$lib/services/mock-api";
+  import { authStore } from "$lib/stores/authStore.svelte";
+
+  const DEFAULT_DOCTORS = [
+    { id: "doc-1", name: "dr. Hendra Setiawan, Sp.PD", sip: "SIP.503/441/Dinkes/2024", specialization: "Spesialis Penyakit Dalam", hospital: "RSUD Garut" },
+    { id: "doc-2", name: "dr. Anisa Rahmawati, Sp.A", sip: "SIP.503/442/Dinkes/2024", specialization: "Spesialis Anak", hospital: "RSIA Intan Husada" },
+    { id: "doc-3", name: "dr. Budi Santoso, Sp.JP", sip: "SIP.503/443/Dinkes/2024", specialization: "Spesialis Jantung", hospital: "Klinik Jantung Sehat" },
+    { id: "doc-4", name: "dr. Siti Nurhaliza", sip: "SIP.503/444/Dinkes/2024", specialization: "Dokter Umum", hospital: "Puskesmas Tarogong" }
+  ];
 
   interface PrescriptionItem {
     productId: string;
@@ -90,13 +95,13 @@
   }
 
   // Master Data State
-  let doctors = $state(doctorsData);
-  let customers = $state<any[]>(customersData);
-  let products = $state<any[]>(productsData);
-  let branches = $state<any[]>(branchesData);
+  let doctors = $state(DEFAULT_DOCTORS);
+  let customers = $state<any[]>([]);
+  let products = $state<any[]>([]);
+  let branches = $state<any[]>([]);
 
   // Filter & Navigation State
-  let selectedBranchId = $state("ALL");
+  let selectedBranchId = $state(authStore.user?.branchId || "1");
   let activeTab = $state<"resep" | "etiket" | "konseling">("resep");
   let statusFilter = $state<"ALL" | "DRAFT" | "VERIFIED" | "DISPENSED">("ALL");
   let searchQuery = $state("");
@@ -270,7 +275,7 @@
 
   // Form Input Resep Baru State
   let newResepForm = $state({
-    branchId: "1",
+    branchId: authStore.user?.branchId || "1",
     patientName: "Ny. Santi (Resep Rutin) (AHF-000003)",
     doctorName: "dr. Hendra Sp.PD (RSUD dr. Soekardjo)",
     type: "RACIKAN" as "RACIKAN" | "NON_RACIKAN",
@@ -340,7 +345,10 @@
   });
 
   onMount(async () => {
-    selectedBranchId = "ALL";
+    if (authStore.user?.branchId) {
+      selectedBranchId = authStore.user.branchId;
+      newResepForm.branchId = authStore.user.branchId;
+    }
     try {
       await mockApi.ensureDataLoaded();
       const [prods, custs, branchList, prescList] = await Promise.all([
@@ -358,7 +366,8 @@
       if (custs.length > 0) customers = custs;
       if (branchList.length > 0) {
         branches = branchList;
-        if (newResepForm.branchId === "1" && branchList[0]?.id) {
+        if (!authStore.user?.branchId && branchList[0]?.id) {
+          selectedBranchId = branchList[0].id;
           newResepForm.branchId = branchList[0].id;
         }
       }
@@ -638,17 +647,24 @@
     breadcrumbs={[{ label: "Pelayanan Kefarmasian" }]}
   >
     {#snippet actions()}
-      <!-- Branch Selector -->
-      <div class="w-56">
-        <Select
-          value={selectedBranchId}
-          onchange={(val) => (selectedBranchId = val)}
-          options={[
-            { value: "ALL", label: "Semua Cabang Apotek" },
-            ...branches.map((b) => ({ value: b.id, label: b.name }))
-          ]}
-        />
-      </div>
+      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
+      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+        <div class="w-56">
+          <Select
+            value={selectedBranchId}
+            onchange={(val) => (selectedBranchId = val)}
+            options={[
+              { value: "ALL", label: "Semua Cabang Apotek" },
+              ...branches.map((b) => ({ value: b.id, label: b.name }))
+            ]}
+          />
+        </div>
+      {:else}
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
+          <Store class="w-3.5 h-3.5 text-brand-blue" />
+          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+        </div>
+      {/if}
 
       <button
         type="button"
@@ -772,7 +788,17 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredPrescriptions as r}
+        {#if filteredPrescriptions.length === 0}
+          <tr>
+            <td colspan="7" class="py-12 text-center text-xs text-slate-400">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <FileText class="w-8 h-8 text-slate-300" />
+                <span>Belum ada antrian resep dokter. Silakan klik tombol "Input Resep Dokter Baru".</span>
+              </div>
+            </td>
+          </tr>
+        {:else}
+          {#each filteredPrescriptions as r}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
               {r.recipeNumber}
@@ -857,6 +883,7 @@
             </td>
           </tr>
         {/each}
+        {/if}
       {/snippet}
     </DataTable>
 
@@ -1051,31 +1078,41 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredCounselings as c}
-          <tr class="hover:bg-blue-50/40 transition-colors">
-            <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
-              {c.recipeNumber}
-              <div class="text-[10px] text-slate-400 font-normal">{c.date}</div>
-            </td>
-            <td class="py-3.5 px-4 font-bold text-slate-800">
-              {c.patientName}
-              <div class="text-slate-500 font-semibold text-xs">{c.doctorName}</div>
-            </td>
-            <td class="py-3.5 px-4">
-              <div class="font-bold text-slate-800 text-xs">{c.drugSummary}</div>
-              <div class="text-[11px] text-brand-blue font-mono font-semibold">{c.signa}</div>
-            </td>
-            <td class="py-3.5 px-4 text-xs text-slate-600">
-              {c.allergyNote}
-            </td>
-            <td class="py-3.5 px-4 text-xs text-slate-700 max-w-sm">
-              {c.pioPoints}
-            </td>
-            <td class="py-3.5 px-4 text-xs font-bold text-slate-800">
-              {c.pharmacistName}
+        {#if filteredCounselings.length === 0}
+          <tr>
+            <td colspan="6" class="text-center py-12 text-slate-400">
+              <ClipboardCheck class="w-10 h-10 mx-auto mb-2 opacity-30" />
+              <p class="font-medium text-sm">Belum ada catatan dokumentasi PIO & konseling</p>
+              <p class="text-xs text-slate-400">Catatan konseling akan otomatis terekam saat resep selesai diproses.</p>
             </td>
           </tr>
-        {/each}
+        {:else}
+          {#each filteredCounselings as c}
+            <tr class="hover:bg-blue-50/40 transition-colors">
+              <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
+                {c.recipeNumber}
+                <div class="text-[10px] text-slate-400 font-normal">{c.date}</div>
+              </td>
+              <td class="py-3.5 px-4 font-bold text-slate-800">
+                {c.patientName}
+                <div class="text-slate-500 font-semibold text-xs">{c.doctorName}</div>
+              </td>
+              <td class="py-3.5 px-4">
+                <div class="font-bold text-slate-800 text-xs">{c.drugSummary}</div>
+                <div class="text-[11px] text-brand-blue font-mono font-semibold">{c.signa}</div>
+              </td>
+              <td class="py-3.5 px-4 text-xs text-slate-600">
+                {c.allergyNote}
+              </td>
+              <td class="py-3.5 px-4 text-xs text-slate-700 max-w-sm">
+                {c.pioPoints}
+              </td>
+              <td class="py-3.5 px-4 text-xs font-bold text-slate-800">
+                {c.pharmacistName}
+              </td>
+            </tr>
+          {/each}
+        {/if}
       {/snippet}
     </DataTable>
   {/if}

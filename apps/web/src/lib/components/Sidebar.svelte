@@ -21,8 +21,11 @@
     Receipt,
     Wifi,
     Cloud,
-    ShieldCheck
+    ShieldCheck,
+    ShieldAlert,
+    User
   } from "lucide-svelte";
+  import { authStore } from "$lib/stores/authStore.svelte";
 
   let { isMobileOpen = $bindable(false) } = $props();
 
@@ -178,46 +181,59 @@
 
   <!-- MIDDLE: VERTICAL MENU ITEMS GROUPED -->
   <nav class="flex-1 px-3 py-3 overflow-y-auto space-y-4 no-scrollbar">
-    {#each menuGroups as group}
-      <div class="space-y-1">
-        <!-- GROUP SECTION HEADER -->
-        <div class="flex items-center justify-between px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-300/80">
-          <span class="flex items-center gap-1.5">
-            {#if group.type === "offline"}
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>
-            {:else}
-              <span class="w-1.5 h-1.5 rounded-full bg-sky-300"></span>
-            {/if}
-            {group.title}
-          </span>
-          <span class="text-[9px] px-1.5 py-0.5 rounded font-medium tracking-normal {group.type === 'offline' ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/30' : 'bg-white/10 text-slate-300'}">
-            {group.typeLabel}
-          </span>
-        </div>
-
-        <!-- MENU ITEMS IN GROUP -->
-        {#each group.items as item}
-          {@const active = isActive(item.href)}
-          <a
-            href={item.href}
-            onclick={() => (isMobileOpen = false)}
-            class="flex items-center justify-between px-3.5 py-2.2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-150 {active
-              ? 'bg-gradient-to-r from-[#df1c2d] from-60% to-[#073e92] text-white px-4 py-2 rounded-lg shadow-md'
-              : 'text-slate-200/90 hover:bg-white/10 hover:text-white px-4 py-1'}"
-          >
-            <div class="flex items-center gap-3 min-w-0">
-              <item.icon class="w-4 h-4 flex-shrink-0 {active ? 'text-white' : 'text-slate-300'}" />
-              <span class="truncate">{item.name}</span>
-            </div>
-            {#if item.badge}
-              <span class="ml-2 text-[9px] px-1.5 py-0.5 rounded-full uppercase font-bold tracking-wider {item.badgeVariant === 'kiosk' ? 'bg-amber-400 text-slate-900 shadow-sm' : 'bg-white/20 text-white'}">
-                {item.badge}
-              </span>
-            {/if}
-          </a>
-        {/each}
+    {#if authStore.user?.role === "GUEST"}
+      <div class="px-2 py-3 space-y-3">
+        <a
+          href="/pengaturan?tab=profil"
+          onclick={() => (isMobileOpen = false)}
+          class="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#df1c2d] to-[#073e92] text-white text-xs font-bold shadow-md cursor-pointer"
+        >
+          <User class="w-4 h-4" />
+          <span>Profil & PIN Saya</span>
+        </a>
       </div>
-    {/each}
+    {:else}
+      {#each menuGroups as group}
+        <div class="space-y-1">
+          <!-- GROUP SECTION HEADER -->
+          <div class="flex items-center justify-between px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-300/80">
+            <span class="flex items-center gap-1.5">
+              {#if group.type === "offline"}
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>
+              {:else}
+                <span class="w-1.5 h-1.5 rounded-full bg-sky-300"></span>
+              {/if}
+              {group.title}
+            </span>
+            <span class="text-[9px] px-1.5 py-0.5 rounded font-medium tracking-normal {group.type === 'offline' ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/30' : 'bg-white/10 text-slate-300'}">
+              {group.typeLabel}
+            </span>
+          </div>
+
+          <!-- MENU ITEMS IN GROUP -->
+          {#each group.items as item}
+            {@const active = isActive(item.href)}
+            <a
+              href={item.href}
+              onclick={() => (isMobileOpen = false)}
+              class="flex items-center justify-between px-3.5 py-2.2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-150 {active
+                ? 'bg-gradient-to-r from-[#df1c2d] from-60% to-[#073e92] text-white px-4 py-2 rounded-lg shadow-md'
+                : 'text-slate-200/90 hover:bg-white/10 hover:text-white px-4 py-1'}"
+            >
+              <div class="flex items-center gap-3 min-w-0">
+                <item.icon class="w-4 h-4 flex-shrink-0 {active ? 'text-white' : 'text-slate-300'}" />
+                <span class="truncate">{item.name}</span>
+              </div>
+              {#if item.badge}
+                <span class="ml-2 text-[9px] px-1.5 py-0.5 rounded-full uppercase font-bold tracking-wider {item.badgeVariant === 'kiosk' ? 'bg-amber-400 text-slate-900 shadow-sm' : 'bg-white/20 text-white'}">
+                  {item.badge}
+                </span>
+              {/if}
+            </a>
+          {/each}
+        </div>
+      {/each}
+    {/if}
   </nav>
 
   <!-- BOTTOM: SYSTEM STATUS PILL -->

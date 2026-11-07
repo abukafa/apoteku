@@ -1,11 +1,3 @@
-import branchesData from '../mocks/branches.json';
-import categoriesData from '../mocks/categories.json';
-import customersData from '../mocks/customers.json';
-import doctorsData from '../mocks/doctors.json';
-import productsData from '../mocks/products.json';
-import shiftsData from '../mocks/cashier-shifts.json';
-import suppliersData from '../mocks/suppliers.json';
-import usersData from '../mocks/users.json';
 import type { ActiveUser } from '../stores/authStore.svelte';
 import { browser } from '$app/environment';
 import { api } from './api.js';
@@ -74,6 +66,7 @@ export interface Category {
   code: string;
   name: string;
   icon?: string;
+  description?: string;
 }
 
 export interface Customer {
@@ -88,11 +81,12 @@ export interface Customer {
 
 export interface Doctor {
   id: string;
-  code: string;
+  code?: string;
   name: string;
   sip: string;
-  hospital: string;
-  phone: string;
+  hospital?: string;
+  phone?: string;
+  specialization?: string;
 }
 
 export interface Supplier {
@@ -169,15 +163,30 @@ export interface CheckoutResult {
 // Simulasi network delay
 const delay = (ms = 120) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const DEFAULT_CATEGORIES: Category[] = [
+  { id: "cat-1", name: "Obat Bebas & Alkes", code: "BEBAS", description: "Obat bebas tanda hijau" },
+  { id: "cat-2", name: "Obat Bebas Terbatas", code: "BEBAS_TERBATAS", description: "Obat bebas terbatas tanda biru" },
+  { id: "cat-3", name: "Obat Keras", code: "KERAS", description: "Obat keras tanda merah lingkaran K" },
+  { id: "cat-4", name: "Narkotika & Psikotropika", code: "NARKOTIKA", description: "Obat terkontrol regulasi Kemenkes" },
+  { id: "cat-5", name: "Herbal & Suplemen", code: "HERBAL", description: "Jamu, herbal terstandar & fitofarmaka" }
+];
+
+const DEFAULT_DOCTORS: Doctor[] = [
+  { id: "doc-1", name: "dr. Hendra Setiawan, Sp.PD", sip: "SIP.503/441/Dinkes/2024", specialization: "Spesialis Penyakit Dalam", phone: "081234567891" },
+  { id: "doc-2", name: "dr. Anisa Rahmawati, Sp.A", sip: "SIP.503/442/Dinkes/2024", specialization: "Spesialis Anak", phone: "081234567892" },
+  { id: "doc-3", name: "dr. Budi Santoso, Sp.JP", sip: "SIP.503/443/Dinkes/2024", specialization: "Spesialis Jantung & Pembuluh Darah", phone: "081234567893" },
+  { id: "doc-4", name: "dr. Siti Nurhaliza", sip: "SIP.503/444/Dinkes/2024", specialization: "Dokter Umum", phone: "081234567894" }
+];
+
 class MockApiService {
-  private products: Product[] = productsData as unknown as Product[];
-  private branches: Branch[] = branchesData;
-  private categories: Category[] = categoriesData;
-  private customers: Customer[] = customersData as unknown as Customer[];
-  private doctors: Doctor[] = doctorsData;
-  private suppliers: Supplier[] = suppliersData;
-  private shifts: CashierShift[] = shiftsData as unknown as CashierShift[];
-  private users: ActiveUser[] = usersData as unknown as ActiveUser[];
+  private products: Product[] = [];
+  private branches: Branch[] = [];
+  private categories: Category[] = DEFAULT_CATEGORIES;
+  private customers: Customer[] = [];
+  private doctors: Doctor[] = DEFAULT_DOCTORS;
+  private suppliers: Supplier[] = [];
+  private shifts: CashierShift[] = [];
+  private users: ActiveUser[] = [];
 
   private isLoadedFromApi = false;
   private isSuppliersLoaded = false;
@@ -251,8 +260,23 @@ class MockApiService {
   }
 
   async getUsers(): Promise<ActiveUser[]> {
-    await delay(60);
+    try {
+      const res = await api.users.list();
+      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+        this.users = res.data;
+      }
+    } catch (_) {}
     return [...this.users];
+  }
+
+  async getBranches(): Promise<Branch[]> {
+    try {
+      const res = await api.branches.list();
+      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+        this.branches = res.data;
+      }
+    } catch (_) {}
+    return [...this.branches];
   }
 
   async getUserByEmail(email: string): Promise<ActiveUser | null> {
@@ -263,11 +287,6 @@ class MockApiService {
   async getUserById(id: string): Promise<ActiveUser | null> {
     await delay(40);
     return this.users.find((u) => u.id === id) || null;
-  }
-
-  async getBranches(): Promise<Branch[]> {
-    await this.ensureDataLoaded();
-    return [...this.branches];
   }
 
   async getCategories(): Promise<Category[]> {
@@ -295,7 +314,7 @@ class MockApiService {
       (d) =>
         d.name.toLowerCase().includes(q) ||
         d.sip.toLowerCase().includes(q) ||
-        d.hospital.toLowerCase().includes(q)
+        (d.hospital ? d.hospital.toLowerCase().includes(q) : false)
     );
   }
 

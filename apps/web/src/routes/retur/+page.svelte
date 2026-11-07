@@ -10,6 +10,7 @@
     Printer,
     Eye,
     Check,
+    Store,
     X
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
@@ -18,14 +19,10 @@
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
-  import branchesData from "$lib/mocks/branches.json";
-  import productsData from "$lib/mocks/products.json";
-  import suppliersData from "$lib/mocks/suppliers.json";
-  import customersData from "$lib/mocks/customers.json";
-  import procurementData from "$lib/mocks/procurement.json";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
   import { mockApi } from "$lib/services/mock-api";
+  import { authStore } from "$lib/stores/authStore.svelte";
 
   interface CustomerReturnRecord {
     id: string;
@@ -68,14 +65,14 @@
   }
 
   // Master Data
-  let branches = $state<any[]>(branchesData);
-  let products = $state<any[]>(productsData);
-  let suppliers = $state<any[]>(suppliersData);
-  let customers = $state<any[]>(customersData);
-  let purchaseInvoices = $state<any[]>(procurementData.purchaseInvoices);
+  let branches = $state<any[]>([]);
+  let products = $state<any[]>([]);
+  let suppliers = $state<any[]>([]);
+  let customers = $state<any[]>([]);
+  let purchaseInvoices = $state<any[]>([]);
 
   // Filter & Tab State
-  let selectedBranchId = $state("ALL");
+  let selectedBranchId = $state(authStore.user?.branchId || "1");
   let activeTab = $state<"penjualan" | "pembelian">("penjualan");
   let salesReturnStatusFilter = $state<"ALL" | "PENDING" | "APPROVED">("ALL");
   let purchaseReturnStatusFilter = $state<
@@ -95,112 +92,13 @@
   let resolveCreditNoteNo = $state("");
   let resolveSettlementType = $state<"NOTA_KREDIT" | "TUKAR_BATCH">("NOTA_KREDIT");
 
-  // Mock Retur Penjualan
-  let customerReturns = $state<CustomerReturnRecord[]>([
-    {
-      id: "ret-cust-001",
-      returnNumber: "RET-JL-2025-001",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      originalTrx: "PJ-1025-0284",
-      customerName: "Bapak Rudi Hartono",
-      date: "2025-10-27 11:20",
-      productName: "Paracetamol 500mg (Kimia Farma)",
-      batchNo: "PCT24K09",
-      qty: 1,
-      unit: "STRIP",
-      refundAmount: 6500,
-      stockDisposition: "KARANTINA",
-      compensationType: "TUKAR_BARANG",
-      reason: "Kemasan blister sedikit sobek saat dibuka di rumah",
-      status: "APPROVED",
-      cashier: "Nida Farida"
-    },
-    {
-      id: "ret-cust-002",
-      returnNumber: "RET-JL-2025-002",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      originalTrx: "PJ-1025-0279",
-      customerName: "Ibu Dewi Lestari",
-      date: "2025-10-26 15:40",
-      productName: "Salbutamol Inhaler 100mcg",
-      batchNo: "SLB25A02",
-      qty: 1,
-      unit: "BOX",
-      refundAmount: 135000,
-      stockDisposition: "LAYAK_JUAL",
-      compensationType: "REFUND_TUNAI",
-      reason: "Revisi resep dokter ke dosis 200mcg (segel utuh)",
-      status: "APPROVED",
-      cashier: "Cantika Nur Gustiani"
-    },
-    {
-      id: "ret-cust-003",
-      returnNumber: "RET-JL-2025-003",
-      branchId: "2",
-      branchName: "Apotek Hafidz Farma 2",
-      originalTrx: "PJ-1025-0310",
-      customerName: "Ny. Lilis (Member)",
-      date: "2025-10-28 09:15",
-      productName: "Amoxicillin 500mg (Errata)",
-      batchNo: "AMX24H01",
-      qty: 2,
-      unit: "STRIP",
-      refundAmount: 17000,
-      stockDisposition: "LAYAK_JUAL",
-      compensationType: "REFUND_TUNAI",
-      reason: "Pasien alergi penisilin, diganti antibiotik golongan makrolida",
-      status: "PENDING",
-      cashier: "Nida Farida"
-    }
-  ]);
-
-  // Mock Retur Pembelian (Ke PBF)
-  let supplierReturns = $state<SupplierReturnRecord[]>([
-    {
-      id: "ret-sup-001",
-      returnNumber: "RET-BL-2025-001",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      invoiceRef: "FP-KF-2025-0891",
-      supplierName: "PT. Kimia Farma Trading & Distribution",
-      date: "2025-10-24 14:00",
-      productName: "Amoxicillin 500mg (Errata)",
-      batchNo: "AMX24A01",
-      qty: 5,
-      unit: "BOX",
-      totalValue: 410000,
-      settlementType: "NOTA_KREDIT",
-      reason: "ED < 6 bulan saat diterima dari kurir PBF",
-      status: "SENT_TO_SUPPLIER",
-      pic: "apt. Hafidz Nurul"
-    },
-    {
-      id: "ret-sup-002",
-      returnNumber: "RET-BL-2025-002",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      invoiceRef: "FP-MBS-2025-1042",
-      supplierName: "PT. Mensa Binasukses (MBS)",
-      date: "2025-10-22 10:30",
-      productName: "Cetirizine 10mg Tablet",
-      batchNo: "CTZ24B11",
-      qty: 3,
-      unit: "BOX",
-      totalValue: 195000,
-      settlementType: "TUKAR_BATCH",
-      creditNoteNo: "CN-MBS-2025-091",
-      reason: "Tukar guling batch mendekati ED (Near-ED 4 bulan)",
-      status: "RESOLVED",
-      pic: "apt. Hafidz Nurul"
-    }
-  ]);
+  let customerReturns = $state<CustomerReturnRecord[]>([]);
+  let supplierReturns = $state<SupplierReturnRecord[]>([]);
 
   // Form Input Retur Baru State
   let newReturForm = $state({
     returCategory: "PENJUALAN" as "PENJUALAN" | "PEMBELIAN",
-    branchId: "1",
+    branchId: authStore.user?.branchId || "1",
     referenceNo: "PJ-1025-0319",
     customerName: "Pelanggan Umum (Walk-in)",
     supplierName: "PT. Kimia Farma Trading & Distribution",
@@ -217,7 +115,10 @@
   });
 
   onMount(async () => {
-    selectedBranchId = "ALL";
+    if (authStore.user?.branchId) {
+      selectedBranchId = authStore.user.branchId;
+      newReturForm.branchId = authStore.user.branchId;
+    }
     try {
       await mockApi.ensureDataLoaded();
       const [prods, custs, branchList, suppRes, custRetRes, suppRetRes] =
@@ -234,7 +135,10 @@
       if (custs.length > 0) customers = custs;
       if (branchList.length > 0) {
         branches = branchList;
-        newReturForm.branchId = branchList[0]?.id || "1";
+        if (!authStore.user?.branchId && branchList[0]?.id) {
+          selectedBranchId = branchList[0].id;
+          newReturForm.branchId = branchList[0].id;
+        }
       }
       if (suppRes?.success && Array.isArray(suppRes.data) && suppRes.data.length > 0) {
         suppliers = suppRes.data;
@@ -504,17 +408,24 @@
     breadcrumbs={[{ label: "Retur" }]}
   >
     {#snippet actions()}
-      <!-- Branch Selector -->
-      <div class="w-56">
-        <Select
-          value={selectedBranchId}
-          onchange={(val) => (selectedBranchId = val)}
-          options={[
-            { value: "ALL", label: "Semua Cabang Apotek" },
-            ...branches.map((b) => ({ value: b.id, label: b.name }))
-          ]}
-        />
-      </div>
+      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
+      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+        <div class="w-56">
+          <Select
+            value={selectedBranchId}
+            onchange={(val) => (selectedBranchId = val)}
+            options={[
+              { value: "ALL", label: "Semua Cabang Apotek" },
+              ...branches.map((b) => ({ value: b.id, label: b.name }))
+            ]}
+          />
+        </div>
+      {:else}
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
+          <Store class="w-3.5 h-3.5 text-brand-blue" />
+          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+        </div>
+      {/if}
 
       <button
         type="button"
@@ -634,69 +545,79 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredCustomerReturns as r}
-          <tr class="hover:bg-blue-50/40 transition-colors">
-            <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
-              {r.returnNumber}
-              <div class="text-[10px] text-slate-400 font-normal">{r.date}</div>
-            </td>
-            <td class="py-3.5 px-4 font-mono text-brand-blue font-semibold">
-              {r.originalTrx}
-              <div class="text-[10px] text-slate-400 font-sans font-normal">{r.branchName}</div>
-            </td>
-            <td class="py-3.5 px-4 font-bold text-slate-800">{r.customerName}</td>
-            <td class="py-3.5 px-4">
-              <div class="font-bold text-slate-800">{r.productName} ({r.qty} {r.unit})</div>
-              <div class="flex items-center gap-1.5 mt-0.5">
-                <span class="font-mono text-[10px] text-slate-500">Batch: {r.batchNo}</span>
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold {r.stockDisposition === 'LAYAK_JUAL' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">
-                  {r.stockDisposition === "LAYAK_JUAL" ? "Stok Layak Jual" : "Rak Karantina"}
-                </span>
-              </div>
-            </td>
-            <td class="py-3.5 px-4 text-slate-500 text-[11px] max-w-xs">{r.reason}</td>
-            <td class="py-3.5 px-4 text-right">
-              <div class="font-mono font-black text-brand-red-600">{formatRupiah(r.refundAmount)}</div>
-              <div class="text-[10px] text-slate-400 font-semibold">
-                {r.compensationType === "REFUND_TUNAI" ? "Refund Tunai" : "Tukar Barang"}
-              </div>
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              {#if r.status === "APPROVED"}
-                <Badge type="SUCCESS" label="DISETUJUI" />
-              {:else}
-                <Badge type="WARNING" label="MENUNGGU" />
-              {/if}
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              <div class="flex items-center justify-center gap-1.5">
-                {#if r.status === "PENDING"}
-                  <button
-                    type="button"
-                    onclick={() => approveCustomerReturn(r.id)}
-                    class="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold inline-flex items-center gap-1"
-                    title="Setujui Retur Pelanggan"
-                  >
-                    <Check class="w-3 h-3" />
-                    <span>Setujui</span>
-                  </button>
-                {/if}
-                <button
-                  type="button"
-                  onclick={() => {
-                    selectedDetailType = "PENJUALAN";
-                    selectedCustomerReturn = r;
-                    isDetailModalOpen = true;
-                  }}
-                  class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-brand-blue"
-                  title="Detail & Cetak Bukti Retur"
-                >
-                  <Eye class="w-3.5 h-3.5" />
-                </button>
-              </div>
+        {#if filteredCustomerReturns.length === 0}
+          <tr>
+            <td colspan="8" class="text-center py-12 text-slate-400">
+              <ShoppingBag class="w-10 h-10 mx-auto mb-2 opacity-30" />
+              <p class="font-medium text-sm">Belum ada riwayat retur penjualan</p>
+              <p class="text-xs text-slate-400">Retur dari pelanggan akan otomatis tercatat dan dapat diproses di sini.</p>
             </td>
           </tr>
-        {/each}
+        {:else}
+          {#each filteredCustomerReturns as r}
+            <tr class="hover:bg-blue-50/40 transition-colors">
+              <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
+                {r.returnNumber}
+                <div class="text-[10px] text-slate-400 font-normal">{r.date}</div>
+              </td>
+              <td class="py-3.5 px-4 font-mono text-brand-blue font-semibold">
+                {r.originalTrx}
+                <div class="text-[10px] text-slate-400 font-sans font-normal">{r.branchName}</div>
+              </td>
+              <td class="py-3.5 px-4 font-bold text-slate-800">{r.customerName}</td>
+              <td class="py-3.5 px-4">
+                <div class="font-bold text-slate-800">{r.productName} ({r.qty} {r.unit})</div>
+                <div class="flex items-center gap-1.5 mt-0.5">
+                  <span class="font-mono text-[10px] text-slate-500">Batch: {r.batchNo}</span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold {r.stockDisposition === 'LAYAK_JUAL' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">
+                    {r.stockDisposition === "LAYAK_JUAL" ? "Stok Layak Jual" : "Rak Karantina"}
+                  </span>
+                </div>
+              </td>
+              <td class="py-3.5 px-4 text-slate-500 text-[11px] max-w-xs">{r.reason}</td>
+              <td class="py-3.5 px-4 text-right">
+                <div class="font-mono font-black text-brand-red-600">{formatRupiah(r.refundAmount)}</div>
+                <div class="text-[10px] text-slate-400 font-semibold">
+                  {r.compensationType === "REFUND_TUNAI" ? "Refund Tunai" : "Tukar Barang"}
+                </div>
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                {#if r.status === "APPROVED"}
+                  <Badge type="SUCCESS" label="DISETUJUI" />
+                {:else}
+                  <Badge type="WARNING" label="MENUNGGU" />
+                {/if}
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                <div class="flex items-center justify-center gap-1.5">
+                  {#if r.status === "PENDING"}
+                    <button
+                      type="button"
+                      onclick={() => approveCustomerReturn(r.id)}
+                      class="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold inline-flex items-center gap-1"
+                      title="Setujui Retur Pelanggan"
+                    >
+                      <Check class="w-3 h-3" />
+                      <span>Setujui</span>
+                    </button>
+                  {/if}
+                  <button
+                    type="button"
+                    onclick={() => {
+                      selectedDetailType = "PENJUALAN";
+                      selectedCustomerReturn = r;
+                      isDetailModalOpen = true;
+                    }}
+                    class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-brand-blue"
+                    title="Detail & Cetak Bukti Retur"
+                  >
+                    <Eye class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          {/each}
+        {/if}
       {/snippet}
     </DataTable>
 
@@ -736,67 +657,77 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredSupplierReturns as r}
-          <tr class="hover:bg-blue-50/40 transition-colors">
-            <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
-              {r.returnNumber}
-              <div class="text-[10px] text-slate-400 font-normal">{r.date}</div>
-            </td>
-            <td class="py-3.5 px-4 font-mono text-brand-blue font-semibold">
-              {r.invoiceRef}
-              {#if r.creditNoteNo}
-                <div class="text-[10px] text-emerald-700 font-bold">CN: {r.creditNoteNo}</div>
-              {/if}
-            </td>
-            <td class="py-3.5 px-4 font-bold text-slate-800">{r.supplierName}</td>
-            <td class="py-3.5 px-4">
-              <div class="font-bold text-slate-800">{r.productName} ({r.qty} {r.unit})</div>
-              <div class="text-[10px] font-mono text-slate-500">Batch: {r.batchNo}</div>
-            </td>
-            <td class="py-3.5 px-4 text-slate-500 text-[11px] max-w-xs">{r.reason}</td>
-            <td class="py-3.5 px-4 text-right">
-              <div class="font-mono font-black text-brand-blue">{formatRupiah(r.totalValue)}</div>
-              <div class="text-[10px] text-slate-400 font-semibold">
-                {r.settlementType === "NOTA_KREDIT" ? "Potong Hutang (CN)" : "Tukar Batch Baru"}
-              </div>
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              {#if r.status === "RESOLVED"}
-                <Badge type="SUCCESS" label="SELESAI (CN)" />
-              {:else if r.status === "SENT_TO_SUPPLIER"}
-                <Badge type="WARNING" label="DIKIRIM KE PBF" />
-              {:else}
-                <Badge type="INFO" label="KARANTINA" />
-              {/if}
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              <div class="flex items-center justify-center gap-1.5">
-                {#if r.status !== "RESOLVED"}
-                  <button
-                    type="button"
-                    onclick={() => openResolveSupplierReturn(r)}
-                    class="px-2.5 py-1 rounded-lg bg-brand-blue-50 hover:bg-brand-blue-100 text-brand-blue-700 text-[11px] font-bold transition-colors"
-                    title="Terima Nota Kredit / Penggantian Batch dari PBF"
-                  >
-                    Terima CN
-                  </button>
-                {/if}
-                <button
-                  type="button"
-                  onclick={() => {
-                    selectedDetailType = "PEMBELIAN";
-                    selectedSupplierReturn = r;
-                    isDetailModalOpen = true;
-                  }}
-                  class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-brand-blue"
-                  title="Detail & Cetak Nota Retur PBF"
-                >
-                  <Eye class="w-3.5 h-3.5" />
-                </button>
-              </div>
+        {#if filteredSupplierReturns.length === 0}
+          <tr>
+            <td colspan="8" class="text-center py-12 text-slate-400">
+              <RotateCcw class="w-10 h-10 mx-auto mb-2 opacity-30" />
+              <p class="font-medium text-sm">Belum ada klaim retur pembelian ke PBF</p>
+              <p class="text-xs text-slate-400">Klaim barang rusak atau near-ED ke distributor dapat dicatat menggunakan tombol "Buat Retur Baru".</p>
             </td>
           </tr>
-        {/each}
+        {:else}
+          {#each filteredSupplierReturns as r}
+            <tr class="hover:bg-blue-50/40 transition-colors">
+              <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
+                {r.returnNumber}
+                <div class="text-[10px] text-slate-400 font-normal">{r.date}</div>
+              </td>
+              <td class="py-3.5 px-4 font-mono text-brand-blue font-semibold">
+                {r.invoiceRef}
+                {#if r.creditNoteNo}
+                  <div class="text-[10px] text-emerald-700 font-bold">CN: {r.creditNoteNo}</div>
+                {/if}
+              </td>
+              <td class="py-3.5 px-4 font-bold text-slate-800">{r.supplierName}</td>
+              <td class="py-3.5 px-4">
+                <div class="font-bold text-slate-800">{r.productName} ({r.qty} {r.unit})</div>
+                <div class="text-[10px] font-mono text-slate-500">Batch: {r.batchNo}</div>
+              </td>
+              <td class="py-3.5 px-4 text-slate-500 text-[11px] max-w-xs">{r.reason}</td>
+              <td class="py-3.5 px-4 text-right">
+                <div class="font-mono font-black text-brand-blue">{formatRupiah(r.totalValue)}</div>
+                <div class="text-[10px] text-slate-400 font-semibold">
+                  {r.settlementType === "NOTA_KREDIT" ? "Potong Hutang (CN)" : "Tukar Batch Baru"}
+                </div>
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                {#if r.status === "RESOLVED"}
+                  <Badge type="SUCCESS" label="SELESAI (CN)" />
+                {:else if r.status === "SENT_TO_SUPPLIER"}
+                  <Badge type="WARNING" label="DIKIRIM KE PBF" />
+                {:else}
+                  <Badge type="INFO" label="KARANTINA" />
+                {/if}
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                <div class="flex items-center justify-center gap-1.5">
+                  {#if r.status !== "RESOLVED"}
+                    <button
+                      type="button"
+                      onclick={() => openResolveSupplierReturn(r)}
+                      class="px-2.5 py-1 rounded-lg bg-brand-blue-50 hover:bg-brand-blue-100 text-brand-blue-700 text-[11px] font-bold transition-colors"
+                      title="Terima Nota Kredit / Penggantian Batch dari PBF"
+                    >
+                      Terima CN
+                    </button>
+                  {/if}
+                  <button
+                    type="button"
+                    onclick={() => {
+                      selectedDetailType = "PEMBELIAN";
+                      selectedSupplierReturn = r;
+                      isDetailModalOpen = true;
+                    }}
+                    class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-brand-blue"
+                    title="Detail & Cetak Nota Retur PBF"
+                  >
+                    <Eye class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          {/each}
+        {/if}
       {/snippet}
     </DataTable>
   {/if}
@@ -848,13 +779,21 @@
         </div>
 
         <div>
-          <label for="ret-branch" class="font-bold text-slate-700 block mb-1">Cabang Apotek</label>
-          <Select
-            id="ret-branch"
-            value={newReturForm.branchId}
-            onchange={(val) => (newReturForm.branchId = val)}
-            options={branches.map((b) => ({ value: b.id, label: b.name }))}
-          />
+          {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+            <label for="ret-branch" class="font-bold text-slate-700 block mb-1">Cabang Apotek</label>
+            <Select
+              id="ret-branch"
+              value={newReturForm.branchId}
+              onchange={(val) => (newReturForm.branchId = val)}
+              options={branches.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          {:else}
+            <span class="font-bold text-slate-700 block mb-1">Cabang Apotek</span>
+            <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 flex items-center gap-2">
+              <Store class="w-4 h-4 text-brand-blue" />
+              <span>{authStore.user?.branchName || branches.find((b) => b.id === newReturForm.branchId)?.name || "Cabang Utama"}</span>
+            </div>
+          {/if}
         </div>
 
         {#if newReturForm.returCategory === "PENJUALAN"}

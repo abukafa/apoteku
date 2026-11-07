@@ -97,6 +97,8 @@
         return "Kasir Farmasi";
       case "INVENTORY_STAFF":
         return "Staf Gudang";
+      case "GUEST":
+        return "Tamu (Menunggu Akses)";
       default:
         return role || "Staff";
     }
@@ -259,6 +261,7 @@
               src={authStore.user.avatarUrl}
               alt={authStore.user?.fullName || "User Avatar"}
               class="w-full h-full object-cover"
+              onerror={(e) => ((e.currentTarget as HTMLElement).style.display = 'none')}
             />
           {:else}
             <span>{initials}</span>
@@ -292,21 +295,23 @@
             </div>
           </div>
           <a
-            href="#profil"
+            href="/pengaturan?tab=profil"
             onclick={() => (showProfileMenu = false)}
             class="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
           >
             <User class="w-4 h-4 text-slate-400" />
-            <span>Profil Saya</span>
+            <span>Profil & PIN Saya</span>
           </a>
-          <a
-            href="#pengaturan"
-            onclick={() => (showProfileMenu = false)}
-            class="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
-          >
-            <Settings class="w-4 h-4 text-slate-400" />
-            <span>Pengaturan Akun</span>
-          </a>
+          {#if authStore.user?.role !== "GUEST"}
+            <a
+              href="/pengaturan"
+              onclick={() => (showProfileMenu = false)}
+              class="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
+            >
+              <Settings class="w-4 h-4 text-slate-400" />
+              <span>Pengaturan Apotek</span>
+            </a>
+          {/if}
           <div class="border-t border-slate-100 my-1"></div>
           <a
             href="/login"

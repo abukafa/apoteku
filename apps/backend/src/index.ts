@@ -11,6 +11,8 @@ import { prescriptionRoutes } from "./modules/prescription/prescription.routes.j
 import { transferRoutes } from "./modules/inventory/transfer.routes.js";
 import { financeRoutes } from "./modules/finance/finance.routes.js";
 import { returnsRoutes } from "./modules/returns/returns.routes.js";
+import { authRoutes } from "./modules/auth/auth.routes.js";
+import { reportsRoutes } from "./modules/reports/reports.routes.js";
 
 const PORT = Number(process.env.PORT || 3001);
 
@@ -67,6 +69,8 @@ export const app = new Elysia()
   .use(transferRoutes)
   .use(financeRoutes)
   .use(returnsRoutes)
+  .use(authRoutes)
+  .use(reportsRoutes)
   .listen(PORT, ({ hostname, port }) => {
     console.log(`🚀 [Apoteku Backend] Server running at http://${hostname}:${port}`);
     console.log(`📚 [Swagger Docs] Available at http://${hostname}:${port}/swagger`);

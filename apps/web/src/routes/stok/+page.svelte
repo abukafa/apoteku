@@ -27,9 +27,6 @@
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
   import Badge from "$lib/components/ui/Badge.svelte";
-  import productsData from "$lib/mocks/products.json";
-  import categoriesData from "$lib/mocks/categories.json";
-  import branchesData from "$lib/mocks/branches.json";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { portal } from "$lib/actions/portal";
   import { mockApi } from "$lib/services/mock-api";
@@ -72,37 +69,16 @@
     operator: string;
   }
 
-  // Deep clone initial products per branch so in-memory mutations & branch filter work cleanly
-  const branchMultipliers: Record<string, number> = {
-    "1": 1,
-    "2": 0.65,
-    "3": 0.45,
-    "4": 0.35,
-    "5": 0.8
-  };
-
-  function createBranchProducts(branchId: string) {
-    const mult = branchMultipliers[branchId] ?? 0.5;
-    return structuredClone(productsData).map((p, idx) => ({
-      ...p,
-      batches: p.batches.map((b) => ({
-        ...b,
-        branchId,
-        stock:
-          branchId === "1"
-            ? b.stock
-            : Math.max(5, Math.round((b.stock * mult) + ((idx % 3) * 4)))
-      }))
-    }));
-  }
-
-  let branchProductsMap: Record<string, typeof productsData> = {
-    "1": createBranchProducts("1")
-  };
-
-  let products = $state(branchProductsMap["1"]);
-  let categories = $state(categoriesData);
-  let branches = $state(branchesData);
+  let products = $state<any[]>([]);
+  let categories = $state<any[]>([
+    { id: "ALL", name: "Semua Kategori" },
+    { id: "cat-1", name: "Obat Bebas & Alkes" },
+    { id: "cat-2", name: "Obat Bebas Terbatas" },
+    { id: "cat-3", name: "Obat Keras" },
+    { id: "cat-4", name: "Narkotika & Psikotropika" },
+    { id: "cat-5", name: "Herbal & Suplemen" }
+  ]);
+  let branches = $state<any[]>([]);
 
   // Active Tab: 4 comprehensive tabs
   let activeTab = $state<"katalog" | "kartu_stok" | "riwayat_opname" | "ed_defekta">("katalog");
@@ -111,42 +87,33 @@
   let searchQuery = $state("");
   let selectedCategory = $state("ALL");
   let selectedBranchId = $state(authStore.user?.branchId || "1");
+  let selectedProductIdForCard = $state<string>("");
 
-  function fetchProducts() {
-    if (!branchProductsMap[selectedBranchId]) {
-      branchProductsMap[selectedBranchId] = createBranchProducts(selectedBranchId);
-    }
-    products = branchProductsMap[selectedBranchId];
-    if (
-      !products.some((p) => p.id === selectedProductIdForCard) &&
-      products[0]
-    ) {
-      selectedProductIdForCard = products[0].id;
-    }
-  }
-
-  onMount(async () => {
-    if (authStore.user?.branchId) {
-      selectedBranchId = authStore.user.branchId;
-    }
-    fetchProducts();
+  async function fetchProducts() {
     try {
+      await mockApi.ensureDataLoaded(selectedBranchId);
       const [liveProds, liveBranches] = await Promise.all([
         mockApi.searchProducts({ branchId: selectedBranchId }),
         mockApi.getBranches()
       ]);
       if (liveProds && liveProds.length > 0) {
         products = liveProds as any;
-        if (products[0]) selectedProductIdForCard = products[0].id;
+        if (!selectedProductIdForCard && products[0]) {
+          selectedProductIdForCard = products[0].id;
+        }
       }
       if (liveBranches && liveBranches.length > 0) {
         branches = liveBranches as any;
       }
     } catch (_) {}
-  });
+  }
 
-  // Selection for Stock Card (Tab 2)
-  let selectedProductIdForCard = $state(productsData[0]?.id || "");
+  onMount(async () => {
+    if (authStore.user?.branchId) {
+      selectedBranchId = authStore.user.branchId;
+    }
+    await fetchProducts();
+  });
   let selectedLedgerTypeFilter = $state("ALL");
 
   // Filter for Opname History (Tab 3)
@@ -196,80 +163,85 @@
     }
   }
 
+  function getProductTotalStock(p: any): number {
+    if (!p || !Array.isArray(p.batches)) return 0;
+    return p.batches.reduce((acc: number, b: any) => acc + (Number(b.stock) || 0), 0);
+  }
+
   // Initial Synthetic Stock Movement Ledger (`stock_ledger`)
   let ledgerEntries = $state<LedgerEntry[]>([
     {
       id: "led-01",
-      productId: productsData[0]?.id || "prod-amox-500",
-      productName: productsData[0]?.name || "Amoxicillin 500mg (Errata)",
+      productId: "prod-amox-500",
+      productName: "Amoxicillin 500mg (Errata)",
       date: "2025-10-27 14:20",
       refNumber: "RJK-202510-0018",
       type: "OPNAME",
-      batch: productsData[0]?.batches[0]?.batchNumber || "AMX24H01",
+      batch: "AMX24H01",
       qtyIn: 0,
       qtyOut: 8,
       balance: 150,
-      unit: productsData[0]?.baseUnit || "TABLET",
+      unit: "TABLET",
       notes: "Opname Rutin: Selisih hitung fisik rak Obat Keras",
       operator: "apt. Hafidz Nurul"
     },
     {
       id: "led-ovs-01",
-      productId: productsData[0]?.id || "prod-amox-500",
-      productName: productsData[0]?.name || "Amoxicillin 500mg (Errata)",
+      productId: "prod-amox-500",
+      productName: "Amoxicillin 500mg (Errata)",
       date: "2025-10-27 12:40",
       refNumber: "PJ-CB01-20261027-009",
       type: "DEFICIT_OVERSELL",
-      batch: productsData[0]?.batches[0]?.batchNumber || "AMX24H01",
+      batch: "AMX24H01",
       qtyIn: 0,
       qtyOut: 5,
       balance: -5,
-      unit: productsData[0]?.baseUnit || "TABLET",
+      unit: "TABLET",
       notes: "Sinkronisasi Offline: Kasir offline menjual melebihi sisa batch. Tercatat unbatched.",
       operator: "Kasir 01 (Terminal Offline)"
     },
     {
       id: "led-02",
-      productId: productsData[0]?.id || "prod-amox-500",
-      productName: productsData[0]?.name || "Amoxicillin 500mg (Errata)",
+      productId: "prod-amox-500",
+      productName: "Amoxicillin 500mg (Errata)",
       date: "2025-10-27 10:12",
       refNumber: "PJ-1025-0287",
       type: "PENJUALAN",
-      batch: productsData[0]?.batches[0]?.batchNumber || "AMX24H01",
+      batch: "AMX24H01",
       qtyIn: 0,
       qtyOut: 12,
       balance: 158,
-      unit: productsData[0]?.baseUnit || "TABLET",
+      unit: "TABLET",
       notes: "Penjualan Kasir Resep & Umum",
       operator: "Nida Farida"
     },
     {
       id: "led-03",
-      productId: productsData[0]?.id || "prod-amox-500",
-      productName: productsData[0]?.name || "Amoxicillin 500mg (Errata)",
+      productId: "prod-amox-500",
+      productName: "Amoxicillin 500mg (Errata)",
       date: "2025-10-25 14:30",
       refNumber: "MUT-2025-1025-001",
       type: "TRANSFER_OUT",
-      batch: productsData[0]?.batches[0]?.batchNumber || "AMX24H01",
+      batch: "AMX24H01",
       qtyIn: 0,
       qtyOut: 30,
       balance: 170,
-      unit: productsData[0]?.baseUnit || "TABLET",
+      unit: "TABLET",
       notes: "Mutasi keluar ke Cabang 2",
       operator: "Erwin Noval Mufid"
     },
     {
       id: "led-04",
-      productId: productsData[0]?.id || "prod-amox-500",
-      productName: productsData[0]?.name || "Amoxicillin 500mg (Errata)",
+      productId: "prod-amox-500",
+      productName: "Amoxicillin 500mg (Errata)",
       date: "2025-10-20 09:15",
       refNumber: "FP-KF-2025-0891",
       type: "PEMBELIAN",
-      batch: productsData[0]?.batches[0]?.batchNumber || "AMX24H01",
+      batch: "AMX24H01",
       qtyIn: 200,
       qtyOut: 0,
       balance: 200,
-      unit: productsData[0]?.baseUnit || "TABLET",
+      unit: "TABLET",
       notes: "Penerimaan Faktur PBF PT. Errita Pharma",
       operator: "apt. Hafidz Nurul"
     }
@@ -282,17 +254,17 @@
       docNumber: "RJK-202510-0018",
       date: "2025-10-27 14:20",
       branchId: "1",
-      productId: productsData[0]?.id || "prod-amox-500",
-      productName: productsData[0]?.name || "Amoxicillin 500mg (Errata)",
-      sku: productsData[0]?.sku || "900000092",
-      batchId: productsData[0]?.batches[0]?.id || "batch-amox-01",
-      batchNumber: productsData[0]?.batches[0]?.batchNumber || "AMX24H01",
-      unit: productsData[0]?.baseUnit || "TABLET",
+      productId: "prod-amox-500",
+      productName: "Amoxicillin 500mg (Errata)",
+      sku: "900000092",
+      batchId: "batch-amox-01",
+      batchNumber: "AMX24H01",
+      unit: "TABLET",
       systemQty: 158,
       actualQty: 150,
       differenceQty: -8,
-      costPerUnit: productsData[0]?.batches[0]?.buyPrice || 520,
-      valueDifference: -8 * (productsData[0]?.batches[0]?.buyPrice || 520),
+      costPerUnit: 520,
+      valueDifference: -4160,
       reasonType: "STOCK_OPNAME",
       notes: "Selisih hitung fisik bulanan di rak Obat Keras",
       operator: "apt. Hafidz Nurul"
@@ -302,17 +274,17 @@
       docNumber: "RJK-202510-0018",
       date: "2025-10-27 14:20",
       branchId: "1",
-      productId: productsData[1]?.id || "prod-amlo-10",
-      productName: productsData[1]?.name || "Amlodipine Besylate 10mg (Hexpharm Jaya)",
-      sku: productsData[1]?.sku || "000055",
-      batchId: productsData[1]?.batches[0]?.id || "batch-amlo-01",
-      batchNumber: productsData[1]?.batches[0]?.batchNumber || "AML24B10",
-      unit: productsData[1]?.baseUnit || "TABLET",
+      productId: "prod-amlo-10",
+      productName: "Amlodipine Besylate 10mg (Hexpharm Jaya)",
+      sku: "000055",
+      batchId: "batch-amlo-01",
+      batchNumber: "AML24B10",
+      unit: "TABLET",
       systemQty: 195,
       actualQty: 200,
       differenceQty: 5,
-      costPerUnit: productsData[1]?.batches[0]?.buyPrice || 410,
-      valueDifference: 5 * (productsData[1]?.batches[0]?.buyPrice || 410),
+      costPerUnit: 410,
+      valueDifference: 2050,
       reasonType: "DISCREPANCY",
       notes: "Koreksi kasir salah pilih varian Amlodipine 5mg vs 10mg",
       operator: "apt. Hafidz Nurul"
@@ -322,17 +294,17 @@
       docNumber: "RJK-202510-0015",
       date: "2025-10-24 16:05",
       branchId: "1",
-      productId: productsData[2]?.id || "prod-pct-500",
-      productName: productsData[2]?.name || "Paracetamol 500mg (Mersifarma)",
-      sku: productsData[2]?.sku || "000102",
-      batchId: productsData[2]?.batches[0]?.id || "batch-pct-01",
-      batchNumber: productsData[2]?.batches[0]?.batchNumber || "PCT24D01",
-      unit: productsData[2]?.baseUnit || "TABLET",
+      productId: "prod-pct-500",
+      productName: "Paracetamol 500mg (Mersifarma)",
+      sku: "000102",
+      batchId: "batch-pct-01",
+      batchNumber: "PCT24D01",
+      unit: "TABLET",
       systemQty: 250,
       actualQty: 240,
       differenceQty: -10,
-      costPerUnit: productsData[2]?.batches[0]?.buyPrice || 220,
-      valueDifference: -10 * (productsData[2]?.batches[0]?.buyPrice || 220),
+      costPerUnit: 220,
+      valueDifference: -2200,
       reasonType: "DAMAGED",
       notes: "1 strip kemasan blister robek terkena lembab",
       operator: "Erwin Noval Mufid"
@@ -342,16 +314,16 @@
       docNumber: "RJK-202510-0015",
       date: "2025-10-24 16:05",
       branchId: "1",
-      productId: productsData[3]?.id || "prod-sanmol-syr",
-      productName: productsData[3]?.name || "Sanmol Sirup 60ml",
-      sku: productsData[3]?.sku || "000215",
-      batchId: productsData[3]?.batches[0]?.id || "batch-san-01",
-      batchNumber: productsData[3]?.batches[0]?.batchNumber || "SNM24F09",
-      unit: productsData[3]?.baseUnit || "BOTOL",
+      productId: "prod-sanmol-syr",
+      productName: "Sanmol Sirup 60ml",
+      sku: "000215",
+      batchId: "batch-san-01",
+      batchNumber: "SNM24F09",
+      unit: "BOTOL",
       systemQty: 45,
       actualQty: 45,
       differenceQty: 0,
-      costPerUnit: productsData[3]?.batches[0]?.buyPrice || 14500,
+      costPerUnit: 14500,
       valueDifference: 0,
       reasonType: "STOCK_OPNAME",
       notes: "Stok fisik cocok 100% dengan sistem",
@@ -400,9 +372,9 @@
               refNumber: `FP-PBF-2025-${prod.sku.slice(-4)}`,
               type: "PEMBELIAN" as const,
               batch: prod.batches[0]?.batchNumber || "BATCH-01",
-              qtyIn: prod.batches.reduce((a, b) => a + b.stock, 0),
+              qtyIn: getProductTotalStock(prod),
               qtyOut: 0,
-              balance: prod.batches.reduce((a, b) => a + b.stock, 0),
+              balance: getProductTotalStock(prod),
               unit: prod.baseUnit,
               notes: `Saldo awal penerimaan PBF (${prod.manufacturer})`,
               operator: "apt. Hafidz Nurul"
@@ -466,9 +438,9 @@
   // Compute Top KPI Metrics (Accurate Per-Batch Valuation)
   let totalItemsCount = $derived(products.length);
   let totalInventoryValue = $derived(
-    products.reduce((acc, p) => {
-      const productBatchValue = p.batches.reduce(
-        (bAcc, b) => bAcc + b.stock * (b.buyPrice || 500),
+    products.reduce((acc: number, p: any) => {
+      const productBatchValue = (p.batches || []).reduce(
+        (bAcc: number, b: any) => bAcc + (Number(b.stock) || 0) * (Number(b.buyPrice) || 500),
         0
       );
       return acc + productBatchValue;
@@ -478,8 +450,8 @@
   // Defekta & Expiring batches
   let expiringBatches = $derived(
     products
-      .flatMap((p) =>
-        p.batches.map((b) => ({
+      .flatMap((p: any) =>
+        (p.batches || []).map((b: any) => ({
           ...b,
           productId: p.id,
           productName: p.name,
@@ -498,7 +470,7 @@
 
   let lowStockProducts = $derived(
     products.filter((p) => {
-      const totalStock = p.batches.reduce((acc, b) => acc + b.stock, 0);
+      const totalStock = getProductTotalStock(p);
       return totalStock < 50;
     })
   );
@@ -512,16 +484,16 @@
   let opnameNotes = $state("");
 
   // Single Mode State
-  let opnameProductId = $state(productsData[0]?.id || "");
-  let opnameBatchId = $state(productsData[0]?.batches[0]?.id || "");
-  let opnameActualQty = $state<number>(productsData[0]?.batches[0]?.stock ?? 0);
+  let opnameProductId = $state("");
+  let opnameBatchId = $state("");
+  let opnameActualQty = $state<number>(0);
 
   let selectedOpnameProduct = $derived(
     products.find((p) => p.id === opnameProductId) || products[0]
   );
   let selectedOpnameBatch = $derived(
-    selectedOpnameProduct?.batches.find((b) => b.id === opnameBatchId) ||
-      selectedOpnameProduct?.batches[0]
+    selectedOpnameProduct?.batches?.find((b: any) => b.id === opnameBatchId) ||
+      selectedOpnameProduct?.batches?.[0]
   );
   let singleSystemQty = $derived(selectedOpnameBatch?.stock ?? 0);
   let singleDiffQty = $derived((opnameActualQty ?? 0) - singleSystemQty);
@@ -537,8 +509,8 @@
       .filter(
         (p) => worksheetCategoryFilter === "ALL" || p.categoryId === worksheetCategoryFilter
       )
-      .flatMap((p) =>
-        p.batches.map((b) => {
+      .flatMap((p: any) =>
+        (p.batches || []).map((b: any) => {
           const actual =
             worksheetCounts[b.id] !== undefined ? worksheetCounts[b.id] : b.stock;
           const diff = actual - b.stock;
@@ -595,7 +567,7 @@
 
   function handleOpnameBatchChange(newBatchId: string) {
     opnameBatchId = newBatchId;
-    const batch = selectedOpnameProduct?.batches.find((b) => b.id === newBatchId);
+    const batch = selectedOpnameProduct?.batches?.find((b: any) => b.id === newBatchId);
     if (batch) {
       opnameActualQty = batch.stock;
     }
@@ -620,10 +592,7 @@
 
       // 1. Update Saldo Batch Fisik di Katalog (`branch_batch_stocks`)
       selectedOpnameBatch.stock = actQty;
-      const newTotalProductStock = selectedOpnameProduct.batches.reduce(
-        (acc, b) => acc + b.stock,
-        0
-      );
+      const newTotalProductStock = getProductTotalStock(selectedOpnameProduct);
 
       // 2. Catat ke Riwayat Stok Opname (`stock_adjustment_items`)
       opnameHistory = [
@@ -702,7 +671,7 @@
 
       for (const row of rowsToProcess) {
         const prod = products.find((p) => p.id === row.productId);
-        const batch = prod?.batches.find((b) => b.id === row.batchId);
+        const batch = prod?.batches?.find((b: any) => b.id === row.batchId);
         if (!prod || !batch) continue;
 
         const sysQty = batch.stock;
@@ -710,7 +679,7 @@
         const diffQty = actQty - sysQty;
         batch.stock = actQty;
 
-        const totalProdStock = prod.batches.reduce((a, b) => a + b.stock, 0);
+        const totalProdStock = getProductTotalStock(prod);
         const reasonText =
           opnameNotes.trim() ||
           `Opname Massal (${getReasonLabel(opnameReasonType)})`;
@@ -821,7 +790,7 @@
     formProdPriceWholesale = prod.units[0]?.prices.wholesale || 900;
     formProdInitialBatch = prod.batches[0]?.batchNumber || "BATCH-01";
     formProdInitialExpiry = prod.batches[0]?.expiryDate || "2027-12-31";
-    formProdInitialStock = prod.batches.reduce((a, b) => a + b.stock, 0);
+    formProdInitialStock = getProductTotalStock(prod);
     formProdBuyPrice = prod.batches[0]?.buyPrice || 500;
     isProductModalOpen = true;
   }
@@ -907,7 +876,6 @@
       };
 
       products = [newProduct as any, ...products];
-      branchProductsMap[selectedBranchId] = products;
 
       if (initStock > 0) {
         ledgerEntries = [
@@ -973,20 +941,27 @@
           </button>
         </div>
         
-        <!-- Branch Selector -->
-        <Select
-          bind:value={selectedBranchId}
-          icon={Store}
-          variant="soft"
-          size="sm"
-          align="right"
-          onchange={() => fetchProducts()}
-          options={branches.map((b) => ({
-            value: b.id,
-            label: `${b.name} (${b.code})`,
-            sublabel: b.address
-          }))}
-        />
+        <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
+        {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+          <Select
+            bind:value={selectedBranchId}
+            icon={Store}
+            variant="soft"
+            size="sm"
+            align="right"
+            onchange={() => fetchProducts()}
+            options={branches.map((b) => ({
+              value: b.id,
+              label: `${b.name}`,
+              sublabel: b.address
+            }))}
+          />
+        {:else}
+          <div class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
+            <Store class="w-3.5 h-3.5 text-brand-blue" />
+            <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+          </div>
+        {/if}
       </div>
     {/snippet}
   </PageHeader>
@@ -1173,7 +1148,7 @@
 
       {#snippet rows()}
         {#each filteredProducts as p}
-          {@const totalStock = p.batches.reduce((acc, b) => acc + b.stock, 0)}
+          {@const totalStock = getProductTotalStock(p)}
           {@const generalPrice = p.units[0]?.prices.general || 0}
           {@const prescriptionPrice = p.units[0]?.prices.prescription || 0}
           <tr class="hover:bg-blue-50/40 transition-colors group">
@@ -1284,7 +1259,7 @@
             <span>
               Saldo Sistem Saat Ini:
               <strong class="text-emerald-700 font-mono">
-                {selectedProductForCard?.batches.reduce((a, b) => a + b.stock, 0)} {selectedProductForCard?.baseUnit}
+                {getProductTotalStock(selectedProductForCard)} {selectedProductForCard?.baseUnit}
               </strong>
             </span>
           </div>
@@ -1333,7 +1308,7 @@
               options={products.map((p) => ({
                 value: p.id,
                 label: p.name,
-                sublabel: `SKU: ${p.sku} • Stok: ${p.batches.reduce((a, b) => a + b.stock, 0)} ${p.baseUnit}`
+                sublabel: `SKU: ${p.sku} • Stok: ${getProductTotalStock(p)} ${p.baseUnit}`
               }))}
             />
           </div>
@@ -1600,7 +1575,7 @@
 
         <div class="space-y-3">
           {#each lowStockProducts as lp}
-            {@const stock = lp.batches.reduce((a, b) => a + b.stock, 0)}
+            {@const stock = getProductTotalStock(lp)}
             <div class="p-3 rounded-xl border border-red-100 bg-red-50/20 flex items-center justify-between">
               <div>
                 <div class="font-bold text-xs text-slate-900">{lp.name}</div>
@@ -1728,7 +1703,7 @@
                 searchPlaceholder="Cari nama obat, SKU, atau kandungan..."
                 onchange={(val) => handleOpnameProductChange(val)}
                 options={products.map((p) => {
-                  const tot = p.batches.reduce((a, b) => a + b.stock, 0);
+                  const tot = getProductTotalStock(p);
                   return {
                     value: p.id,
                     label: p.name,
@@ -1745,7 +1720,7 @@
                 id="opname-batch"
                 bind:value={opnameBatchId}
                 onchange={(val) => handleOpnameBatchChange(val)}
-                options={(selectedOpnameProduct?.batches || []).map((b) => ({
+                options={(selectedOpnameProduct?.batches || []).map((b: any) => ({
                   value: b.id,
                   label: b.batchNumber,
                   sublabel: `ED: ${b.expiryDate}`,

@@ -14,6 +14,7 @@
     CreditCard,
     Eye,
     ArrowRightLeft,
+    Store,
     X
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
@@ -22,12 +23,10 @@
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
-  import procurementData from "$lib/mocks/procurement.json";
-  import suppliersData from "$lib/mocks/suppliers.json";
-  import productsData from "$lib/mocks/products.json";
-  import branchesData from "$lib/mocks/branches.json";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
+  import { mockApi } from "$lib/services/mock-api";
+  import { authStore } from "$lib/stores/authStore.svelte";
 
   interface InvoiceItemRow {
     productId: string;
@@ -107,17 +106,15 @@
   }
 
   // Master Data & State
-  let invoices = $state<PurchaseInvoiceRecord[]>(procurementData.purchaseInvoices);
-  let purchaseOrders = $state<PurchaseOrderRecord[]>(procurementData.purchaseOrders);
-  let consignments = $state<ConsignmentRecord[]>(
-    procurementData.consignments.map((c) => ({ ...c, branchId: "1" }))
-  );
-  let suppliers = $state(suppliersData);
-  let products = $state(productsData);
-  let branches = $state(branchesData);
+  let invoices = $state<PurchaseInvoiceRecord[]>([]);
+  let purchaseOrders = $state<PurchaseOrderRecord[]>([]);
+  let consignments = $state<ConsignmentRecord[]>([]);
+  let suppliers = $state<any[]>([]);
+  let products = $state<any[]>([]);
+  let branches = $state<any[]>([]);
 
   // Navigation & Filters
-  let selectedBranchId = $state("ALL");
+  let selectedBranchId = $state(authStore.user?.branchId || "1");
   let activeTab = $state<"faktur" | "sp" | "konsinyasi">("faktur");
   let invoiceStatusFilter = $state<"ALL" | "UNPAID" | "PARTIAL" | "OVERDUE" | "PAID">("ALL");
   let searchQuery = $state("");
@@ -125,10 +122,40 @@
   let ksnSearchQuery = $state("");
 
   onMount(async () => {
+    if (authStore.user?.branchId) {
+      selectedBranchId = authStore.user.branchId;
+      newInvoiceBranchId = authStore.user.branchId;
+      newSpForm.branchId = authStore.user.branchId;
+      newKsnForm.branchId = authStore.user.branchId;
+    }
     try {
-      const res = await api.erp.getPurchases(100);
-      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
-        invoices = res.data.map((p: any) => ({
+      await mockApi.ensureDataLoaded();
+      const [purRes, poRes, suppRes, prodList, branchList] = await Promise.all([
+        api.erp.getPurchases(100),
+        api.erp.getPurchaseOrders(100),
+        api.erp.getSuppliers(),
+        mockApi.getProducts(),
+        mockApi.getBranches()
+      ]);
+
+      if (prodList.length > 0) products = prodList;
+      if (branchList.length > 0) {
+        branches = branchList;
+        if (!authStore.user?.branchId && branchList[0]?.id) {
+          selectedBranchId = branchList[0].id;
+          newInvoiceBranchId = branchList[0].id;
+          newSpForm.branchId = branchList[0].id;
+          newKsnForm.branchId = branchList[0].id;
+        }
+      }
+      if (suppRes?.success && Array.isArray(suppRes.data) && suppRes.data.length > 0) {
+        suppliers = suppRes.data;
+      }
+      if (poRes?.success && Array.isArray(poRes.data) && poRes.data.length > 0) {
+        purchaseOrders = poRes.data;
+      }
+      if (purRes?.success && Array.isArray(purRes.data) && purRes.data.length > 0) {
+        invoices = purRes.data.map((p: any) => ({
           id: p.id,
           invoiceNumber: p.invoiceNumber,
           poNumber: `PO-${p.invoiceNumber.slice(0, 8)}`,
@@ -169,7 +196,7 @@
 
   let isAddKsnModalOpen = $state(false);
   let newKsnForm = $state({
-    branchId: "1",
+    branchId: authStore.user?.branchId || "1",
     supplierName: "PT. Herbal Alam Sehat (Titipan)",
     productName: "Madu Habbatussauda Extra Propolis 250ml",
     receivedQty: 30,
@@ -178,7 +205,7 @@
   });
 
   // New Invoice Form State (Multi-Item Grid)
-  let newInvoiceBranchId = $state("1");
+  let newInvoiceBranchId = $state(authStore.user?.branchId || "1");
   let newInvoicePoNumber = $state("NONE");
   let newInvoiceSupplier = $state("PT. Kimia Farma Trading & Distribution");
   let newInvoiceNumber = $state("");
@@ -202,7 +229,7 @@
 
   // New SP Form State
   let newSpForm = $state({
-    branchId: "1",
+    branchId: authStore.user?.branchId || "1",
     orderType: "REGULER",
     supplierName: "PT. Kimia Farma Trading & Distribution",
     pharmacistName: "apt. Hafidz Nurul, S.Farm.",
@@ -222,10 +249,6 @@
   let draftSpQty = $state(5);
   let draftSpUnit = $state("BOX");
   let draftSpHna = $state(68000);
-
-  onMount(() => {
-    selectedBranchId = "ALL";
-  });
 
   function updateDueDateFromSupplier(supplierName: string, invDate: string) {
     const sup = suppliers.find((s) => s.name === supplierName);
@@ -635,17 +658,24 @@
     breadcrumbs={[{ label: "Pembelian" }]}
   >
     {#snippet actions()}
-      <!-- Branch Selector -->
-      <div class="w-56">
-        <Select
-          value={selectedBranchId}
-          onchange={(val) => (selectedBranchId = val)}
-          options={[
-            { value: "ALL", label: "Semua Cabang Apotek" },
-            ...branches.map((b) => ({ value: b.id, label: b.name }))
-          ]}
-        />
-      </div>
+      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
+      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+        <div class="w-56">
+          <Select
+            value={selectedBranchId}
+            onchange={(val) => (selectedBranchId = val)}
+            options={[
+              { value: "ALL", label: "Semua Cabang Apotek" },
+              ...branches.map((b) => ({ value: b.id, label: b.name }))
+            ]}
+          />
+        </div>
+      {:else}
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
+          <Store class="w-3.5 h-3.5 text-brand-blue" />
+          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+        </div>
+      {/if}
 
       <button
         type="button"
@@ -793,7 +823,17 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredInvoices as inv}
+        {#if filteredInvoices.length === 0}
+          <tr>
+            <td colspan="7" class="py-12 text-center text-xs text-slate-400">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <ShoppingBag class="w-8 h-8 text-slate-300" />
+                <span>Tidak ada faktur pembelian yang cocok dengan filter pencarian.</span>
+              </div>
+            </td>
+          </tr>
+        {:else}
+          {#each filteredInvoices as inv}
           {@const remainingDebt = inv.totalAmount - inv.paidAmount}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
@@ -858,6 +898,7 @@
             </td>
           </tr>
         {/each}
+      {/if}
       {/snippet}
     </DataTable>
 
@@ -881,7 +922,17 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredPurchaseOrders as sp}
+        {#if filteredPurchaseOrders.length === 0}
+          <tr>
+            <td colspan="7" class="py-12 text-center text-xs text-slate-400">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <FileText class="w-8 h-8 text-slate-300" />
+                <span>Tidak ada Surat Pesanan (SP) yang ditemukan.</span>
+              </div>
+            </td>
+          </tr>
+        {:else}
+          {#each filteredPurchaseOrders as sp}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
               {sp.orderNumber}
@@ -934,6 +985,7 @@
             </td>
           </tr>
         {/each}
+      {/if}
       {/snippet}
     </DataTable>
 
@@ -970,7 +1022,17 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredConsignments as ksn}
+        {#if filteredConsignments.length === 0}
+          <tr>
+            <td colspan="8" class="py-12 text-center text-xs text-slate-400">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <Truck class="w-8 h-8 text-slate-300" />
+                <span>Belum ada titipan barang konsinyasi aktif.</span>
+              </div>
+            </td>
+          </tr>
+        {:else}
+          {#each filteredConsignments as ksn}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
               {ksn.receiptNumber}
@@ -1001,6 +1063,7 @@
             </td>
           </tr>
         {/each}
+      {/if}
       {/snippet}
     </DataTable>
   {/if}
@@ -1078,13 +1141,21 @@
             />
           </div>
           <div>
-            <label for="inv-branch" class="font-bold text-slate-700 block mb-1">Cabang Penerima</label>
-            <Select
-              id="inv-branch"
-              value={newInvoiceBranchId}
-              onchange={(val) => (newInvoiceBranchId = val)}
-              options={branches.map((b) => ({ value: b.id, label: b.name }))}
-            />
+            {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+              <label for="inv-branch" class="font-bold text-slate-700 block mb-1">Cabang Penerima</label>
+              <Select
+                id="inv-branch"
+                value={newInvoiceBranchId}
+                onchange={(val) => (newInvoiceBranchId = val)}
+                options={branches.map((b) => ({ value: b.id, label: b.name }))}
+              />
+            {:else}
+              <span class="font-bold text-slate-700 block mb-1">Cabang Penerima</span>
+              <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 flex items-center gap-2">
+                <Store class="w-4 h-4 text-brand-blue" />
+                <span>{authStore.user?.branchName || branches.find((b) => b.id === newInvoiceBranchId)?.name || "Cabang Utama"}</span>
+              </div>
+            {/if}
           </div>
           <div>
             <label for="inv-date" class="font-bold text-slate-700 block mb-1">Tanggal Faktur</label>
@@ -1474,13 +1545,21 @@
           />
         </div>
         <div>
-          <label for="sp-branch" class="font-bold text-slate-700 block mb-1">Cabang Pemesan</label>
-          <Select
-            id="sp-branch"
-            value={newSpForm.branchId}
-            onchange={(val) => (newSpForm.branchId = val)}
-            options={branches.map((b) => ({ value: b.id, label: b.name }))}
-          />
+          {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+            <label for="sp-branch" class="font-bold text-slate-700 block mb-1">Cabang Pemesan</label>
+            <Select
+              id="sp-branch"
+              value={newSpForm.branchId}
+              onchange={(val) => (newSpForm.branchId = val)}
+              options={branches.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          {:else}
+            <span class="font-bold text-slate-700 block mb-1">Cabang Pemesan</span>
+            <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 flex items-center gap-2">
+              <Store class="w-4 h-4 text-brand-blue" />
+              <span>{authStore.user?.branchName || branches.find((b) => b.id === newSpForm.branchId)?.name || "Cabang Utama"}</span>
+            </div>
+          {/if}
         </div>
         <div class="col-span-2">
           <label for="sp-target" class="font-bold text-slate-700 block mb-1">Distributor PBF Dituju</label>

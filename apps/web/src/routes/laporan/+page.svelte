@@ -9,6 +9,7 @@
     PieChart,
     Eye,
     CheckCircle2,
+    Store,
     X
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
@@ -16,8 +17,10 @@
   import DataTable from "$lib/components/ui/DataTable.svelte";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
-  import branchesData from "$lib/mocks/branches.json";
   import { portal } from "$lib/actions/portal";
+  import { api } from "$lib/services/api";
+  import { mockApi } from "$lib/services/mock-api";
+  import { authStore } from "$lib/stores/authStore.svelte";
 
   interface SalesShiftReportRow {
     id: string;
@@ -69,8 +72,8 @@
   }
 
   // Master Data & Filters
-  let branches = $state(branchesData);
-  let selectedBranchId = $state("ALL");
+  let branches = $state<any[]>([]);
+  let selectedBranchId = $state(authStore.user?.branchId || "1");
   let selectedPeriod = $state("2025-10");
   let activeTab = $state<"penjualan" | "sipnap" | "pareto">("penjualan");
 
@@ -298,8 +301,43 @@
     }
   ]);
 
-  onMount(() => {
-    selectedBranchId = "ALL";
+  onMount(async () => {
+    if (authStore.user?.branchId) {
+      selectedBranchId = authStore.user.branchId;
+    }
+    try {
+      await mockApi.ensureDataLoaded();
+      const [bList, sipRes] = await Promise.all([
+        mockApi.getBranches(),
+        api.reports.getSipnap()
+      ]);
+      if (bList.length > 0) {
+        branches = bList;
+        if (!authStore.user?.branchId && bList[0]?.id) {
+          selectedBranchId = bList[0].id;
+        }
+      }
+      if (sipRes?.success && Array.isArray(sipRes.data) && sipRes.data.length > 0) {
+        sipnapRecords = sipRes.data.map((s: any) => ({
+          id: s.id,
+          branchId: "1",
+          period: "2026-11",
+          drugName: s.name,
+          group: s.category as any,
+          initialStock: s.initialStock,
+          receivedQty: s.stockIn,
+          supplier: s.pbfSupplier,
+          spRef: `SP-${s.code}`,
+          dispensedQty: s.stockOut,
+          recipeCount: Math.ceil(s.stockOut / 2),
+          expiredOrDestroyedQty: 0,
+          finalStock: s.finalStock,
+          physicalStock: s.finalStock,
+          unit: s.unit,
+          verifiedBy: "apt. Ghina Nadhifah, S.Farm."
+        }));
+      }
+    } catch (_) {}
   });
 
   function formatRupiah(num: number): string {
@@ -474,17 +512,24 @@
         />
       </div>
 
-      <!-- Branch Selector -->
-      <div class="w-52">
-        <Select
-          value={selectedBranchId}
-          onchange={(val) => (selectedBranchId = val)}
-          options={[
-            { value: "ALL", label: "Semua Cabang Apotek" },
-            ...branches.map((b) => ({ value: b.id, label: b.name }))
-          ]}
-        />
-      </div>
+      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
+      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+        <div class="w-52">
+          <Select
+            value={selectedBranchId}
+            onchange={(val) => (selectedBranchId = val)}
+            options={[
+              { value: "ALL", label: "Semua Cabang Apotek" },
+              ...branches.map((b) => ({ value: b.id, label: b.name }))
+            ]}
+          />
+        </div>
+      {:else}
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
+          <Store class="w-3.5 h-3.5 text-brand-blue" />
+          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+        </div>
+      {/if}
 
       <button
         type="button"

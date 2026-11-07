@@ -47,7 +47,7 @@
 
   // Reactive state using Svelte 5 Runes
   let branches = $state<Branch[]>([]);
-  let selectedBranchId = $state("1");
+  let selectedBranchId = $state(authStore.user?.branchId || "1");
   let categories = $state<Category[]>([]);
   let selectedCategoryId = $state("cat-all");
   let customers = $state<Customer[]>([]);
@@ -646,22 +646,29 @@
       </div>
     </div>
 
-    <!-- Controls: Branch Selector, Shift info, Offline/Online Sync, Lock Terminal -->
+    <!-- Controls: Branch Indicator, Shift info, Offline/Online Sync, Lock Terminal -->
     <div class="flex items-center gap-2 text-xs">
-      <!-- Branch selector -->
-      <Select
-        bind:value={selectedBranchId}
-        icon={Store}
-        variant="soft"
-        size="sm"
-        align="right"
-        onchange={() => fetchProducts()}
-        options={branches.map((b) => ({
-          value: b.id,
-          label: `${b.name} (${b.code})`,
-          sublabel: b.address
-        }))}
-      />
+      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Cashier/Staff) -->
+      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+        <Select
+          bind:value={selectedBranchId}
+          icon={Store}
+          variant="soft"
+          size="sm"
+          align="right"
+          onchange={() => fetchProducts()}
+          options={branches.map((b) => ({
+            value: b.id,
+            label: `${b.name}`,
+            sublabel: b.address
+          }))}
+        />
+      {:else}
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50/80 border border-blue-200/60 text-[#0c2e7a] font-bold text-xs" title="Cabang Penugasan">
+          <Store class="w-3.5 h-3.5 text-[#1d63d8]" />
+          <span>{authStore.user?.branchName || selectedBranch?.name || "Apotek Hafidz Farma Pusat"}</span>
+        </div>
+      {/if}
 
       <!-- Shift Info (Clickable for Shift Close / Reconciliation) -->
       <button

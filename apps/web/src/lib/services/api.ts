@@ -98,6 +98,85 @@ export const api = {
     },
     async getPurchases(limit = 100) {
       return await apiFetch<any>(`/api/purchases?limit=${limit}`);
+    },
+    async getPurchaseOrders(limit = 100) {
+      return await apiFetch<any>(`/api/purchase-orders?limit=${limit}`);
+    },
+    async createPurchaseOrder(payload: any) {
+      return await apiFetch<any>("/api/purchase-orders", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    }
+  },
+  auth: {
+    async login(payload: { identifier: string; pin: string }) {
+      return await apiFetch<any>("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async register(payload: {
+      fullName: string;
+      username: string;
+      pin: string;
+      email?: string;
+      phone?: string;
+      password?: string;
+      branchId?: string;
+      role?: string;
+    }) {
+      return await apiFetch<any>("/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async getStatus() {
+      return await apiFetch<any>("/api/auth/status");
+    },
+    async getGoogleConfig() {
+      return await apiFetch<{ success: boolean; data: { clientId: string; isConfigured: boolean } }>(
+        "/api/auth/google/config"
+      );
+    },
+    async google(payload: { credential?: string; idToken?: string; accessToken?: string; branchId?: string }) {
+      return await apiFetch<any>("/api/auth/google", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    }
+  },
+  users: {
+    async list() {
+      return await apiFetch<any>("/api/users");
+    },
+    async create(payload: any) {
+      return await apiFetch<any>("/api/users", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async update(id: string, payload: any) {
+      return await apiFetch<any>(`/api/users/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+    },
+    async delete(id: string) {
+      return await apiFetch<any>(`/api/users/${id}`, {
+        method: "DELETE"
+      });
+    }
+  },
+  branches: {
+    async list() {
+      return await apiFetch<any>("/api/branches");
+    },
+    async update(id: string, payload: any) {
+      return await apiFetch<any>(`/api/branches/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
     }
   },
   shift: {
@@ -195,6 +274,18 @@ export const api = {
         method: "POST",
         body: JSON.stringify(payload)
       });
+    },
+    async getCashflow() {
+      return await apiFetch<any>("/api/finance/cashflow");
+    }
+  },
+  reports: {
+    async getFinancialSummary() {
+      return await apiFetch<any>("/api/reports/financial");
+    },
+    async getSipnap(category = "ALL") {
+      const q = category ? `?category=${encodeURIComponent(category)}` : "";
+      return await apiFetch<any>(`/api/reports/sipnap${q}`);
     }
   },
   returns: {

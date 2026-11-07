@@ -9,22 +9,38 @@
   let { children } = $props();
   let isMobileOpen = $state(false);
 
-  // Standalone routes without sidebar and top navbar: /login, /register, and /pos (if not GUEST)
+  // Standalone routes without sidebar and top navbar: /login, /register, unauthenticated state, and /pos (if not GUEST)
   let isStandaloneRoute = $derived(
+    !authStore.user ||
     $page.url.pathname.startsWith("/login") ||
     $page.url.pathname.startsWith("/register") ||
     ($page.url.pathname.startsWith("/pos") && authStore.user?.role !== "GUEST")
   );
 
-  // ACCESS CONTROL GUARD: GUEST user cannot access company data or POS, only /pengaturan?tab=profil
+  // ACCESS CONTROL GUARD:
+  // - Authenticated users cannot access /login -> redirect to /
+  // - Unauthenticated users on protected routes -> redirect to /login
+  // - GUEST user can only access /pengaturan?tab=profil
   $effect(() => {
     if (typeof window !== "undefined") {
       const pathname = $page.url.pathname;
-      if (pathname.startsWith("/login") || pathname.startsWith("/register")) return;
+      const isGoogleCallback = $page.url.searchParams.get("google_success") === "true";
 
-      if (authStore.user?.role === "GUEST") {
+      if (pathname.startsWith("/login") || pathname.startsWith("/register")) {
+        if (authStore.user && !isGoogleCallback) {
+          goto(authStore.user.role === "GUEST" ? "/pengaturan?tab=profil" : "/", { replaceState: true });
+        }
+        return;
+      }
+
+      if (!authStore.user) {
+        goto("/login", { replaceState: true });
+        return;
+      }
+
+      if (authStore.user.role === "GUEST") {
         if (!pathname.startsWith("/pengaturan")) {
-          goto("/pengaturan?tab=profil");
+          goto("/pengaturan?tab=profil", { replaceState: true });
         }
       }
     }

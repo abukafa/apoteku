@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import {
     Search,
     Bell,
@@ -107,6 +108,7 @@
   function handleLogout() {
     showProfileMenu = false;
     authStore.clearSession();
+    goto("/login", { replaceState: true });
   }
 
   onMount(() => {
@@ -313,14 +315,14 @@
             </a>
           {/if}
           <div class="border-t border-slate-100 my-1"></div>
-          <a
-            href="/login"
+          <button
+            type="button"
             onclick={handleLogout}
-            class="flex items-center gap-2 px-3 py-2 hover:bg-red-50 text-[#df1c2d] transition-colors"
+            class="w-full flex items-center gap-2 px-3 py-2 hover:bg-red-50 text-[#df1c2d] transition-colors cursor-pointer"
           >
             <LogOut class="w-4 h-4 text-[#df1c2d]" />
             <span>Keluar / Ganti Akun</span>
-          </a>
+          </button>
         </div>
       {/if}
     </div>

@@ -28,6 +28,7 @@ export interface ActiveUser {
 
 const STORAGE_KEY_USER = "apoteku_session_user";
 const STORAGE_KEY_TOKEN = "apoteku_session_token";
+const STORAGE_KEY_LOCKED = "apoteku_pos_terminal_locked";
 
 const DEFAULT_SUPERADMIN: ActiveUser = {
   id: "usr-superadmin",
@@ -57,6 +58,7 @@ export class AuthState {
       try {
         const storedUser = localStorage.getItem(STORAGE_KEY_USER);
         const storedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
+        const storedLocked = localStorage.getItem(STORAGE_KEY_LOCKED);
         if (storedUser) {
           const parsed = JSON.parse(storedUser);
           if (parsed.avatarUrl && parsed.avatarUrl.includes("unsplash.com")) {
@@ -66,17 +68,17 @@ export class AuthState {
           this.user = parsed;
           this.accessToken = storedToken || "jwt-session-access";
           this.refreshToken = "jwt-session-refresh";
+          this.isLockedOffline = storedLocked === "true";
         } else {
-          this.setUserSession(DEFAULT_SUPERADMIN, {
-            access: "jwt-token-access-superadmin",
-            refresh: "jwt-token-refresh-superadmin"
-          });
+          this.user = null;
+          this.isLockedOffline = false;
         }
       } catch (err) {
         console.error("Failed to restore auth session:", err);
+        this.user = null;
       }
     } else {
-      this.user = DEFAULT_SUPERADMIN;
+      this.user = null;
     }
   }
 
@@ -95,13 +97,14 @@ export class AuthState {
     if (browser) {
       localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
       localStorage.setItem(STORAGE_KEY_TOKEN, tokens.access);
+      localStorage.removeItem(STORAGE_KEY_LOCKED);
     }
   }
 
   // Live Database Login via API
   async loginWithApi(identifier: string, pin: string, branchId?: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const res = await api.auth.login({ identifier, pin });
+      const res = await api.auth.login({ identifier, pin, branchId });
       if (res?.success && res.data?.user) {
         const u = res.data.user;
         const activeUser: ActiveUser = {
@@ -111,7 +114,7 @@ export class AuthState {
           email: u.email || `${u.username}@hafidzfarma.com`,
           role: u.role as UserRole,
           tenantId: u.tenantId || "tenant-hafidz-farma",
-          branchId: branchId || u.branchId || "1",
+          branchId: u.branchId || branchId || "1",
           branchName: u.branchName || "Apotek Hafidz Farma Pusat",
           pin,
           avatarUrl: u.avatarUrl,
@@ -128,8 +131,25 @@ export class AuthState {
       }
       return { success: false, error: res?.error || "Gagal masuk" };
     } catch (err: any) {
-      console.warn("API login failed, checking offline credentials", err);
-      // Fallback offline authentication
+      const rawMsg = String(err?.message || "");
+      // Jika error berasal dari respons HTTP 4xx server (PIN salah / user tidak aktif), jangan fallback ke mode offline
+      if (rawMsg.startsWith("API 4")) {
+        const jsonStart = rawMsg.indexOf("{");
+        if (jsonStart !== -1) {
+          try {
+            const parsedErr = JSON.parse(rawMsg.slice(jsonStart));
+            if (parsedErr?.error) {
+              return { success: false, error: parsedErr.error };
+            }
+          } catch {
+            // Gunakan pesan fallback di bawah
+          }
+        }
+        return { success: false, error: "Kredensial atau PIN yang dimasukkan tidak valid" };
+      }
+
+      console.warn("API login unreachable, checking offline credentials", err);
+      // Fallback offline authentication hanya saat server tidak terjangkau (network error)
       const isSuccess = this.loginWithCredentials(identifier, pin, branchId);
       if (isSuccess) return { success: true };
       return { success: false, error: err.message || "Terjadi kesalahan saat masuk" };
@@ -293,11 +313,18 @@ export class AuthState {
 
   lockScreen() {
     this.isLockedOffline = true;
+    if (browser) {
+      localStorage.setItem(STORAGE_KEY_LOCKED, "true");
+    }
   }
 
   unlockWithPin(pin: string): boolean {
-    if (this.user && this.user.pin === pin.trim()) {
+    const expectedPin = (this.user?.pin || "123456").trim();
+    if (this.user && expectedPin === pin.trim()) {
       this.isLockedOffline = false;
+      if (browser) {
+        localStorage.removeItem(STORAGE_KEY_LOCKED);
+      }
       return true;
     }
     return false;
@@ -312,6 +339,7 @@ export class AuthState {
     if (browser) {
       localStorage.removeItem(STORAGE_KEY_USER);
       localStorage.removeItem(STORAGE_KEY_TOKEN);
+      localStorage.removeItem(STORAGE_KEY_LOCKED);
     }
   }
 }

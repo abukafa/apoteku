@@ -807,7 +807,7 @@
                         <option value="INVENTORY">INVENTORY (Gudang & Logistik)</option>
                         <option value="FINANCE">FINANCE (Keuangan & Kas)</option>
                         <option value="OWNER">OWNER (Pemilik Apotek)</option>
-                        <option value="SUPERADMIN">SUPERADMIN (Level Teratas)</option>
+                        <option value="SUPERADMIN">SUPERADMIN (Programmer)</option>
                       </select>
                     {:else}
                       <span class="px-2 py-0.5 rounded text-[10px] font-bold {u.role === 'SUPERADMIN' ? 'bg-blue-100 text-blue-800' : u.role === 'GUEST' ? 'bg-amber-100 text-amber-900 border border-amber-300' : u.role === 'PHARMACIST' ? 'bg-purple-100 text-purple-800' : u.role === 'CASHIER' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}">
@@ -1140,7 +1140,7 @@
               bind:value={newUserForm.role}
               class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold cursor-pointer"
             >
-              <option value="SUPERADMIN">SUPERADMIN (Level Teratas)</option>
+              <option value="SUPERADMIN">SUPERADMIN (Programmer)</option>
               <option value="OWNER">OWNER (Pemilik Apotek)</option>
               <option value="PHARMACIST">PHARMACIST (Apoteker APA)</option>
               <option value="CASHIER">CASHIER (Kasir POS)</option>

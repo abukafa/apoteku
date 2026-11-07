@@ -48,10 +48,47 @@ export const authRoutes = new Elysia({ prefix: "/api" })
           return { success: false, error: "Pengguna tidak ditemukan atau tidak aktif" };
         }
 
-        // Check PIN
-        if (user.pin && user.pin !== pin) {
+        // Check PIN (gunakan default "123456" jika kolom pin di DB masih null/kosong)
+        const expectedPin = (user.pin || "123456").trim();
+        if (expectedPin !== pin) {
           set.status = 401;
           return { success: false, error: "PIN yang dimasukkan salah" };
+        }
+
+        // Resolve active branch (gunakan branchId pilihan saat login jika valid, atau default user/cabang pertama)
+        let activeBranchId = user.branchId;
+        let activeBranchName = user.branchName || "Apotek Hafidz Farma";
+        let activeBranchCode = user.branchCode || "PUSAT";
+
+        if (body.branchId && body.branchId !== "1" && body.branchId !== user.branchId) {
+          const [selectedBranch] = await db
+            .select({
+              id: schema.branches.id,
+              name: schema.branches.name,
+              code: schema.branches.code
+            })
+            .from(schema.branches)
+            .where(eq(schema.branches.id, body.branchId))
+            .limit(1);
+          if (selectedBranch) {
+            activeBranchId = selectedBranch.id;
+            activeBranchName = selectedBranch.name;
+            activeBranchCode = selectedBranch.code;
+          }
+        } else if (!activeBranchId) {
+          const [firstBranch] = await db
+            .select({
+              id: schema.branches.id,
+              name: schema.branches.name,
+              code: schema.branches.code
+            })
+            .from(schema.branches)
+            .limit(1);
+          if (firstBranch) {
+            activeBranchId = firstBranch.id;
+            activeBranchName = firstBranch.name;
+            activeBranchCode = firstBranch.code;
+          }
         }
 
         // Determine permissions based on role
@@ -75,9 +112,9 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             user: {
               id: user.id,
               tenantId: user.tenantId,
-              branchId: user.branchId,
-              branchName: user.branchName || "Apotek Hafidz Farma",
-              branchCode: user.branchCode || "PUSAT",
+              branchId: activeBranchId,
+              branchName: activeBranchName,
+              branchCode: activeBranchCode,
               username: user.username,
               fullName: user.fullName,
               email: user.email,
@@ -97,7 +134,8 @@ export const authRoutes = new Elysia({ prefix: "/api" })
     {
       body: t.Object({
         identifier: t.String(),
-        pin: t.String()
+        pin: t.String(),
+        branchId: t.Optional(t.String())
       }),
       detail: {
         tags: ["Auth & Users"],
@@ -799,6 +837,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
         const usersList = await db
           .select({
             id: schema.users.id,
+            tenantId: schema.users.tenantId,
             username: schema.users.username,
             fullName: schema.users.fullName,
             email: schema.users.email,
@@ -818,6 +857,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
           success: true,
           data: usersList.map((u) => ({
             id: u.id,
+            tenantId: u.tenantId,
             username: u.username,
             fullName: u.fullName,
             email: u.email || `${u.username}@hafidzfarma.com`,
@@ -825,7 +865,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             role: u.role,
             branchId: u.branchId,
             branchName: u.branchName || "Apotek Hafidz Farma Pusat",
-            pin: u.pin || "123456",
+            hasPin: Boolean(u.pin),
             avatarUrl: u.avatarUrl || undefined,
             isActive: u.isActive
           }))

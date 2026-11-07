@@ -157,16 +157,34 @@
     }, 2000);
   }
 
-  // Quick PIN Lock State
-  let isTerminalLocked = $state(false);
+  // Quick PIN Lock State (dipersist ke localStorage agar tetap terkunci saat halaman di-refresh/restart)
+  const POS_LOCK_STORAGE_KEY = "apoteku_pos_terminal_locked";
+  let isTerminalLocked = $state(
+    authStore.isLockedOffline ||
+      (typeof window !== "undefined" && localStorage.getItem(POS_LOCK_STORAGE_KEY) === "true")
+  );
   let pinInput = $state("");
   let pinError = $state(false);
 
+  function lockTerminal() {
+    isTerminalLocked = true;
+    pinInput = "";
+    pinError = false;
+    authStore.lockScreen();
+    if (typeof window !== "undefined") {
+      localStorage.setItem(POS_LOCK_STORAGE_KEY, "true");
+    }
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  }
+
   function enterPinDigit(digit: string) {
+    const expectedLen = Math.max(4, Math.min(6, (authStore.user?.pin || "123456").trim().length));
     if (pinInput.length < 6) {
       pinInput += digit;
       pinError = false;
-      if (pinInput.length === 6) {
+      if (pinInput.length === expectedLen || pinInput.length === 6) {
         verifyPin();
       }
     }
@@ -185,14 +203,42 @@
   }
 
   function verifyPin() {
-    // Default PIN is 123456 or any 6 digits for testing
-    if (pinInput === "123456" || pinInput.length === 6) {
+    const expectedPin = (authStore.user?.pin || "123456").trim();
+    if (pinInput.trim() === expectedPin) {
       isTerminalLocked = false;
       pinInput = "";
       pinError = false;
+      authStore.unlockWithPin(expectedPin);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(POS_LOCK_STORAGE_KEY);
+      }
     } else {
       pinError = true;
       pinInput = "";
+    }
+  }
+
+  function handlePosKeydown(e: KeyboardEvent) {
+    if (!isTerminalLocked) return;
+
+    if (e.key >= "0" && e.key <= "9") {
+      e.preventDefault();
+      e.stopPropagation();
+      enterPinDigit(e.key);
+    } else if (e.key === "Backspace") {
+      e.preventDefault();
+      e.stopPropagation();
+      deletePinLast();
+    } else if (e.key === "Escape" || e.key === "Delete") {
+      e.preventDefault();
+      e.stopPropagation();
+      clearPin();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (pinInput.length > 0) {
+        verifyPin();
+      }
     }
   }
 
@@ -614,6 +660,8 @@
   <title>Kasir POS &bull; Hafidz Farma</title>
 </svelte:head>
 
+<svelte:window onkeydown={handlePosKeydown} />
+
 <div class="h-screen w-screen p-3 sm:p-4 bg-[#f0f4f9] flex flex-col overflow-hidden space-y-3">
   <!-- POS DEDICATED FULLSCREEN TOPBAR -->
   <header class="bg-white rounded-2xl px-4 py-2.5 border border-slate-100 shadow-sm flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
@@ -714,8 +762,8 @@
       <!-- Terminal Lock Screen Button -->
       <button
         type="button"
-        onclick={() => (isTerminalLocked = true)}
-        class="p-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-colors"
+        onclick={lockTerminal}
+        class="p-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
         title="Kunci Layar Terminal Kasir (PIN Quick Lock)"
       >
         <Lock class="w-3.5 h-3.5" />
@@ -1581,15 +1629,15 @@
         <button
           type="button"
           onclick={deletePinLast}
-          class="h-12 rounded-2xl bg-white/5 hover:bg-white/15 text-slate-300 text-xs font-bold transition-all"
+          class="h-12 rounded-2xl bg-white/5 hover:bg-white/15 text-slate-300 text-xs font-bold transition-all cursor-pointer"
         >
           Hapus
         </button>
       </div>
 
-      <div class="text-[11px] text-slate-400 pt-2 border-t border-white/10">
-        Default PIN demo: <code class="font-mono text-white bg-white/10 px-1.5 py-0.5 rounded">123456</code>
-      </div>
+      <p class="text-[11px] text-slate-400">
+        Bisa diketik via <span class="text-slate-200 font-semibold">Keyboard / Numpad (0–9)</span>, <span class="text-slate-200 font-semibold">Backspace</span> (Hapus), atau <span class="text-slate-200 font-semibold">Esc</span> (Reset)
+      </p>
     </div>
   </div>
 {/if}

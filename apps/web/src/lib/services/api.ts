@@ -12,6 +12,27 @@ export interface ApiFetchOptions extends RequestInit {
   userId?: string;
 }
 
+function getStoredAuthHeaders(): Record<string, string> {
+  if (!browser) return {};
+  const authHeaders: Record<string, string> = {};
+  try {
+    const rawToken = localStorage.getItem("apoteku_session_token");
+    if (rawToken) {
+      authHeaders["Authorization"] = `Bearer ${rawToken}`;
+    }
+    const rawUser = localStorage.getItem("apoteku_session_user");
+    if (rawUser) {
+      const parsed = JSON.parse(rawUser);
+      if (parsed?.tenantId) authHeaders["x-tenant-id"] = String(parsed.tenantId);
+      if (parsed?.branchId) authHeaders["x-branch-id"] = String(parsed.branchId);
+      if (parsed?.id) authHeaders["x-user-id"] = String(parsed.id);
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return authHeaders;
+}
+
 export async function apiFetch<T>(
   path: string,
   options: ApiFetchOptions = {}
@@ -20,6 +41,7 @@ export async function apiFetch<T>(
 
   const reqHeaders: Record<string, string> = {
     "Content-Type": "application/json",
+    ...getStoredAuthHeaders(),
     ...(headers as Record<string, string>)
   };
 
@@ -69,6 +91,7 @@ export const api = {
 
       const res = await fetch(`${API_BASE_URL}/api/uploads`, {
         method: "POST",
+        headers: getStoredAuthHeaders(),
         body: formData
       });
 
@@ -112,7 +135,7 @@ export const api = {
     }
   },
   auth: {
-    async login(payload: { identifier: string; pin: string }) {
+    async login(payload: { identifier: string; pin: string; branchId?: string }) {
       return await apiFetch<any>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify(payload)

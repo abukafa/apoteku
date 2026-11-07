@@ -225,16 +225,14 @@
   }
 
   function handleAccountCardClick(acc: SavedAccount) {
-    if (isOffline) {
-      // Saat offline, langsung alihkan ke tab PIN dengan akun terpilih!
-      selectedUserId = acc.id;
-      inputPin = "";
-      pinError = "";
-      activeTab = "PIN";
-      return;
+    // Wajib verifikasi PIN baik saat online maupun offline sebelum mengaktifkan sesi akun
+    selectedUserId = acc.id;
+    if (acc.branchId) {
+      selectedBranchId = acc.branchId;
     }
-
-    handleSelectSavedAccount(acc);
+    inputPin = "";
+    pinError = "";
+    activeTab = "PIN";
   }
 
   function handleWindowKeydown(e: KeyboardEvent) {
@@ -290,11 +288,9 @@
 
             setTimeout(() => {
               if (user.role === "GUEST") {
-                goto("/pengaturan?tab=profil");
-              } else if (user.role === "CASHIER") {
-                goto("/pos");
+                goto("/pengaturan?tab=profil", { replaceState: true });
               } else {
-                goto("/");
+                goto("/", { replaceState: true });
               }
             }, 400);
             return;
@@ -305,6 +301,12 @@
       } else if (urlParams.get("error")) {
         pinError = decodeURIComponent(urlParams.get("error") || "Gagal masuk menggunakan Google");
         window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      // Jika sudah login, langsung lempar ke root (/)
+      if (authStore.user) {
+        goto(authStore.user.role === "GUEST" ? "/pengaturan?tab=profil" : "/", { replaceState: true });
+        return;
       }
     }
 

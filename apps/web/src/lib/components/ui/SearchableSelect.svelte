@@ -16,6 +16,7 @@
     size?: "sm" | "md";
     align?: "left" | "right";
     minMenuWidth?: number;
+    maxRenderedOptions?: number;
     disabled?: boolean;
     class?: string;
     onchange?: (value: any) => void;
@@ -33,6 +34,7 @@
     size = "md",
     align = "left",
     minMenuWidth = 280,
+    maxRenderedOptions = 50,
     disabled = false,
     class: className = "",
     onchange
@@ -72,6 +74,8 @@
         (opt.badge && opt.badge.toLowerCase().includes(q))
     );
   });
+
+  let visibleOptions = $derived(filteredOptions.slice(0, maxRenderedOptions));
 
   function updatePosition() {
     if (!triggerEl) return;
@@ -148,18 +152,18 @@
       triggerEl?.focus();
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      if (filteredOptions.length > 0) {
-        highlightedIndex = (highlightedIndex + 1) % filteredOptions.length;
+      if (visibleOptions.length > 0) {
+        highlightedIndex = (highlightedIndex + 1) % visibleOptions.length;
       }
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      if (filteredOptions.length > 0) {
-        highlightedIndex = (highlightedIndex - 1 + filteredOptions.length) % filteredOptions.length;
+      if (visibleOptions.length > 0) {
+        highlightedIndex = (highlightedIndex - 1 + visibleOptions.length) % visibleOptions.length;
       }
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (filteredOptions[highlightedIndex]) {
-        selectOption(filteredOptions[highlightedIndex]);
+      if (visibleOptions[highlightedIndex]) {
+        selectOption(visibleOptions[highlightedIndex]);
       }
     }
   }
@@ -272,20 +276,25 @@
           {/if}
         </div>
         <div class="flex items-center justify-between px-1 pt-1.5 text-[10px] text-slate-400 font-medium">
-          <span>Menampilkan {filteredOptions.length} dari {normalizedOptions.length} data</span>
+          <span>
+            Menampilkan {visibleOptions.length} dari {filteredOptions.length} hasil
+            {#if filteredOptions.length !== normalizedOptions.length}
+              (total {normalizedOptions.length})
+            {/if}
+          </span>
           <span class="font-mono text-[9px]">↑↓ Pilih • Enter</span>
         </div>
       </div>
 
       <!-- Filtered Option List -->
       <div class="max-h-60 overflow-y-auto p-1.5 space-y-0.5 scrollbar-minimalist">
-        {#if filteredOptions.length === 0}
+        {#if visibleOptions.length === 0}
           <div class="px-3 py-6 text-center text-xs text-slate-400">
             <p class="font-semibold text-slate-500">{emptyText}</p>
             <p class="text-[11px] mt-0.5">Tidak ada kecocokan untuk "{searchQuery}"</p>
           </div>
         {:else}
-          {#each filteredOptions as opt, idx}
+          {#each visibleOptions as opt, idx}
             {@const isSelected = opt.value === value}
             {@const isHighlighted = idx === highlightedIndex}
             <button
@@ -323,6 +332,11 @@
               {/if}
             </button>
           {/each}
+          {#if filteredOptions.length > maxRenderedOptions}
+            <div class="px-3 py-2 text-center text-[10px] text-slate-400 bg-slate-50 rounded-lg border border-slate-100 mt-1">
+              Menampilkan {maxRenderedOptions} teratas dari {filteredOptions.length} hasil — ketik kata kunci untuk mencari lebih spesifik.
+            </div>
+          {/if}
         {/if}
       </div>
     </div>

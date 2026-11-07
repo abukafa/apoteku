@@ -20,17 +20,62 @@
   import { portal } from "$lib/actions/portal";
   import { onMount } from "svelte";
   import { mockApi } from "$lib/services/mock-api";
+  import { api } from "$lib/services/api";
 
   let suppliers = $state<any[]>([]);
   let activeTab = $state<"semua" | "hutang">("semua");
   let searchQuery = $state("");
 
+  const PAGE_SIZE = 25;
+  let supplierPage = $state(1);
+  let debtPage = $state(1);
+
+  let pbfDebts = $state<
+    Array<{
+      id: string;
+      supplierName: string;
+      code: string;
+      invoiceRef: string;
+      totalDebt: number;
+      dueDate: string;
+      status: "OVERDUE" | "DUE_SOON" | "CURRENT" | "PAID";
+      daysLeft: number;
+    }>
+  >([]);
+
   onMount(async () => {
     try {
       await mockApi.ensureDataLoaded();
-      const live = await mockApi.getSuppliers();
+      const [live, purchasesRes] = await Promise.all([
+        mockApi.getSuppliers(),
+        api.erp.getPurchases(200).catch(() => null)
+      ]);
       if (live && live.length > 0) {
         suppliers = live as any;
+      }
+      if (purchasesRes?.success && Array.isArray(purchasesRes.data)) {
+        const now = Date.now();
+        pbfDebts = purchasesRes.data
+          .filter((inv: any) => !inv.isPaidOff && Number(inv.grandTotal || 0) > 0)
+          .map((inv: any) => {
+            const dueStr = inv.dueDate
+              ? String(inv.dueDate).slice(0, 10)
+              : String(inv.invoiceDate || "").slice(0, 10);
+            const dueMs = dueStr ? new Date(dueStr).getTime() : now;
+            const daysLeft = Math.ceil((dueMs - now) / (1000 * 60 * 60 * 24));
+            const status =
+              daysLeft < 0 ? "OVERDUE" : daysLeft <= 7 ? "DUE_SOON" : "CURRENT";
+            return {
+              id: inv.id,
+              supplierName: inv.supplierName || "PBF Terdaftar",
+              code: inv.supplierId || "-",
+              invoiceRef: inv.invoiceNo,
+              totalDebt: Number(inv.grandTotal || 0),
+              dueDate: dueStr || "-",
+              status,
+              daysLeft
+            };
+          });
       }
     } catch (_) {}
   });
@@ -66,50 +111,42 @@
     }).format(num);
   }
 
-  // Filtered
+  // Filtered (searches across all 241 suppliers before pagination)
   let filteredSuppliers = $derived(
-    suppliers.filter((s) =>
-      s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.phone.includes(searchQuery)
+    suppliers.filter(
+      (s) =>
+        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.phone.includes(searchQuery)
     )
   );
 
-  // Mock Hutang Dagang PBF
-  let pbfDebts = $state([
-    {
-      id: "deb-pbf-01",
-      supplierName: "PT. Mensa Binasukses (MBS)",
-      code: "SUP-002",
-      invoiceRef: "FP-MBS-2025-1042",
-      totalDebt: 8750000,
-      dueDate: "2025-11-04",
-      status: "DUE_SOON",
-      daysLeft: 2
-    },
-    {
-      id: "deb-pbf-02",
-      supplierName: "PT. Anugrah Argon Medica (AAM)",
-      code: "SUP-003",
-      invoiceRef: "FP-AAM-2025-3312",
-      totalDebt: 5400000,
-      dueDate: "2025-10-15",
-      status: "OVERDUE",
-      daysLeft: -12
-    },
-    {
-      id: "deb-pbf-03",
-      supplierName: "PT. Enseval Putera Megatrading",
-      code: "SUP-004",
-      invoiceRef: "FP-ENS-2025-0455",
-      totalDebt: 3200000,
-      dueDate: "2025-11-28",
-      status: "CURRENT",
-      daysLeft: 26
-    }
-  ]);
+  let supplierTotalPages = $derived(
+    Math.max(1, Math.ceil(filteredSuppliers.length / PAGE_SIZE))
+  );
+  let paginatedSuppliers = $derived(
+    filteredSuppliers.slice((supplierPage - 1) * PAGE_SIZE, supplierPage * PAGE_SIZE)
+  );
+
+  let filteredPbfDebts = $derived(
+    pbfDebts.filter(
+      (d) =>
+        d.supplierName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        d.invoiceRef.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  );
+
+  let debtTotalPages = $derived(
+    Math.max(1, Math.ceil(filteredPbfDebts.length / PAGE_SIZE))
+  );
+  let paginatedPbfDebts = $derived(
+    filteredPbfDebts.slice((debtPage - 1) * PAGE_SIZE, debtPage * PAGE_SIZE)
+  );
 
   let totalPayables = $derived(pbfDebts.reduce((a, b) => a + b.totalDebt, 0));
+  let overdueOrDueSoonDebts = $derived(
+    pbfDebts.filter((d) => d.status === "OVERDUE" || d.status === "DUE_SOON")
+  );
 </script>
 
 <svelte:head>
@@ -148,21 +185,21 @@
     <MetricCard
       title="Hutang Dagang"
       value={formatRupiah(totalPayables)}
-      subtext="3 Faktur belum lunas"
+      subtext="{pbfDebts.length} Faktur belum lunas"
       icon={Clock}
       variant="warning"
     />
     <MetricCard
       title="Jatuh Tempo"
-      value="2 Hari Lagi"
-      subtext="PT. Mensa Binasukses"
+      value="{overdueOrDueSoonDebts.length} Faktur"
+      subtext={overdueOrDueSoonDebts[0]?.supplierName || "Tidak ada faktur lewat tempo"}
       icon={AlertCircle}
       variant="danger"
     />
     <MetricCard
-      title="Kepatuhan Bayar"
-      value="96% Ontime"
-      subtext="Menjaga reputasi kredit apotek"
+      title="Status Faktur"
+      value={pbfDebts.length === 0 ? "100% Lunas" : `${pbfDebts.length} Aktif`}
+      subtext="Monitoring kewajiban PBF"
       icon={CheckCircle2}
       variant="success"
     />
@@ -200,6 +237,10 @@
       searchPlaceholder="Cari nama distributor, kode PBF, atau kontak..."
       bind:searchValue={searchQuery}
       totalCount={filteredSuppliers.length}
+      currentPage={supplierPage}
+      totalPages={supplierTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (supplierPage = p)}
     >
       {#snippet header()}
         <th class="py-3 px-4">Kode</th>
@@ -211,7 +252,7 @@
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredSuppliers.length === 0}
+        {#if paginatedSuppliers.length === 0}
           <tr>
             <td colspan="6" class="py-12 text-center text-xs text-slate-400">
               <div class="flex flex-col items-center justify-center gap-2">
@@ -221,7 +262,7 @@
             </td>
           </tr>
         {:else}
-          {#each filteredSuppliers as s}
+          {#each paginatedSuppliers as s}
             <tr class="hover:bg-blue-50/40 transition-colors">
               <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{s.code}</td>
               <td class="py-3.5 px-4">
@@ -252,7 +293,11 @@
       title="Buku Hutang Faktur Distributor PBF"
       searchPlaceholder="Cari nama PBF atau nomor faktur..."
       bind:searchValue={searchQuery}
-      totalCount={pbfDebts.length}
+      totalCount={filteredPbfDebts.length}
+      currentPage={debtPage}
+      totalPages={debtTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (debtPage = p)}
     >
       {#snippet header()}
         <th class="py-3 px-4">No. Faktur PBF</th>
@@ -264,7 +309,7 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each pbfDebts as d}
+        {#each paginatedPbfDebts as d}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{d.invoiceRef}</td>
             <td class="py-3.5 px-4 font-bold text-slate-800">{d.supplierName}</td>

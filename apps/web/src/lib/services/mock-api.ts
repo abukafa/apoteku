@@ -189,11 +189,12 @@ class MockApiService {
   private users: ActiveUser[] = [];
 
   private isLoadedFromApi = false;
+  private loadedBranchId: string | undefined = undefined;
   private isSuppliersLoaded = false;
   private loadPromise: Promise<void> | null = null;
 
   async ensureDataLoaded(branchId?: string): Promise<void> {
-    if (this.isLoadedFromApi) return;
+    if (this.isLoadedFromApi && (!branchId || this.loadedBranchId === branchId)) return;
     if (this.loadPromise) return this.loadPromise;
 
     this.loadPromise = (async () => {
@@ -201,24 +202,43 @@ class MockApiService {
         const res = await api.pos.getBootstrap(branchId);
         if (res?.success && res?.data) {
           const d = res.data;
+          const activeBranchId = branchId || d.branch?.id || "1";
+
+          const batchesByProductId = new Map<string, any[]>();
+          for (const b of d.branchBatches || []) {
+            const list = batchesByProductId.get(b.productId) || [];
+            list.push(b);
+            batchesByProductId.set(b.productId, list);
+          }
+
+          const stocksByProductId = new Map<string, any[]>();
+          for (const s of d.branchStocks || []) {
+            const list = stocksByProductId.get(s.productId) || [];
+            list.push(s);
+            stocksByProductId.set(s.productId, list);
+          }
+
           if (Array.isArray(d.products) && d.products.length > 0) {
-            this.products = d.products.map((p: any) => ({
-              id: p.id,
-              sku: p.sku || "",
-              barcode: p.barcode || "",
-              name: p.name,
-              genericName: p.activeSubstance || undefined,
-              categoryId: "cat-1",
-              categoryName: "Obat Bebas & Alkes",
-              drugClass: (p.drugClass === "KERAS" ? "ETHICAL" : p.drugClass === "NARKOTIKA" ? "NARCOTICS" : p.drugClass === "PSIKOTROPIKA" ? "PSYCHOTROPIC" : p.drugClass === "BEBAS_TERBATAS" ? "LIMITED_OTC" : "OTC") as any,
-              requiresPrescription: p.drugClass === "KERAS" || p.drugClass === "NARKOTIKA" || p.drugClass === "PSIKOTROPIKA",
-              isConsignment: false,
-              manufacturer: "PBF Terdaftar",
-              description: p.activeSubstance || p.name,
-              indication: p.indication || "Sesuai anjuran medis",
-              dosage: p.defaultDosage || "3x1 Sehari",
-              baseUnit: p.baseUnit || "PCS",
-              units: (p.units || []).map((u: any) => ({
+            this.products = d.products.map((p: any) => {
+              const rawClass = String(p.drugClass || "BEBAS").toUpperCase();
+              const categoryId =
+                rawClass === "KERAS"
+                  ? "cat-3"
+                  : rawClass === "NARKOTIKA" || rawClass === "PSIKOTROPIKA"
+                    ? "cat-4"
+                    : rawClass === "BEBAS_TERBATAS"
+                      ? "cat-2"
+                      : "cat-1";
+              const categoryName =
+                rawClass === "KERAS"
+                  ? "Obat Keras"
+                  : rawClass === "NARKOTIKA" || rawClass === "PSIKOTROPIKA"
+                    ? "Narkotika & Psikotropika"
+                    : rawClass === "BEBAS_TERBATAS"
+                      ? "Obat Bebas Terbatas"
+                      : "Obat Bebas & Alkes";
+
+              const mappedUnits: ProductUnit[] = (p.units || []).map((u: any) => ({
                 unit: u.unitName,
                 multiplier: Number(u.conversionFactor) || 1,
                 prices: {
@@ -228,18 +248,81 @@ class MockApiService {
                   delivery: Number(u.salePriceDelivery || u.salePriceGeneral || 0),
                   member: Number(u.salePriceMember || u.salePriceGeneral || 0)
                 }
-              })),
-              batches: (d.branchBatches || [])
-                .filter((b: any) => b.productId === p.id)
-                .map((b: any) => ({
-                  id: b.batchId || b.id || "batch-default",
-                  batchNumber: b.batchNo || "BATCH-REG",
-                  branchId: branchId || d.branch?.id || "1",
-                  expiryDate: b.expiredDate || "2027-12-31",
-                  stock: Number(b.qtyBase || 100),
-                  buyPrice: Number(b.buyPrice || 0)
-                }))
-            }));
+              }));
+
+              if (mappedUnits.length === 0) {
+                mappedUnits.push({
+                  unit: p.baseUnit || "PCS",
+                  multiplier: 1,
+                  prices: {
+                    general: 0,
+                    prescription: 0,
+                    wholesale: 0,
+                    delivery: 0,
+                    member: 0
+                  }
+                });
+              }
+
+              const prodBatches = batchesByProductId.get(p.id) || [];
+              let mappedBatches: ProductBatch[] = prodBatches.map((b: any) => ({
+                id: b.batchId || b.id || `batch-${p.id}`,
+                batchNumber: b.batchNo || "BATCH-REG",
+                branchId: activeBranchId,
+                expiryDate: b.expiredDate || "2027-12-31",
+                stock: Number(b.qtyBase ?? 0),
+                buyPrice: Number(b.buyPrice || 0)
+              }));
+
+              if (mappedBatches.length === 0) {
+                const prodStocks = stocksByProductId.get(p.id) || [];
+                const totalStock = prodStocks.reduce(
+                  (acc: number, s: any) => acc + Number(s.totalQtyBase || s.unbatchedQtyBase || 0),
+                  0
+                );
+                if (totalStock > 0) {
+                  mappedBatches = [
+                    {
+                      id: `stock-${p.id}`,
+                      batchNumber: "STOK-AKTIF",
+                      branchId: activeBranchId,
+                      expiryDate: "2027-12-31",
+                      stock: totalStock,
+                      buyPrice: 0
+                    }
+                  ];
+                }
+              }
+
+              return {
+                id: p.id,
+                sku: p.sku || "",
+                barcode: p.barcode || "",
+                name: p.name,
+                genericName: p.activeSubstance || undefined,
+                categoryId,
+                categoryName,
+                drugClass: (rawClass === "KERAS"
+                  ? "ETHICAL"
+                  : rawClass === "NARKOTIKA"
+                    ? "NARCOTICS"
+                    : rawClass === "PSIKOTROPIKA"
+                      ? "PSYCHOTROPIC"
+                      : rawClass === "BEBAS_TERBATAS"
+                        ? "LIMITED_OTC"
+                        : "OTC") as DrugClass,
+                requiresPrescription:
+                  rawClass === "KERAS" || rawClass === "NARKOTIKA" || rawClass === "PSIKOTROPIKA",
+                isConsignment: false,
+                manufacturer: "PBF Terdaftar",
+                description: p.activeSubstance || p.name,
+                indication: p.indication || "Sesuai anjuran medis",
+                dosage: p.defaultDosage || "3x1 Sehari",
+                baseUnit: p.baseUnit || "PCS",
+                units: mappedUnits,
+                batches: mappedBatches
+              };
+            });
           }
           if (Array.isArray(d.branches) && d.branches.length > 0) {
             this.branches = d.branches;
@@ -248,6 +331,7 @@ class MockApiService {
             this.customers = d.customers;
           }
           this.isLoadedFromApi = true;
+          this.loadedBranchId = activeBranchId;
         }
       } catch (err) {
         console.warn("[MockApi] Backend unavailable, continuing with offline/local fallback:", err);
@@ -426,8 +510,7 @@ class MockApiService {
     branchId?: string;
   }): Promise<Product[]> {
     await this.ensureDataLoaded(options?.branchId);
-    await delay(50);
-    const branchId = options?.branchId || '1';
+    const branchId = options?.branchId;
     let result = this.products;
 
     if (options?.categoryId && options.categoryId !== 'cat-all') {
@@ -446,39 +529,40 @@ class MockApiService {
     }
 
     return result.map((p) => {
-      // Filter batches to the requested branch
-      const branchBatches = p.batches.filter((b) => b.branchId === branchId);
+      const branchBatches = branchId
+        ? p.batches.filter((b) => b.branchId === branchId)
+        : p.batches;
       return {
         ...p,
-        batches: branchBatches
+        batches: branchBatches.length > 0 ? branchBatches : p.batches
       };
     });
   }
 
   async getProductByBarcode(barcode: string, branchId = '1'): Promise<Product | null> {
     await this.ensureDataLoaded(branchId);
-    await delay(30);
     const trimmed = barcode.trim();
     const product = this.products.find(
       (p) => p.barcode === trimmed || p.sku === trimmed
     );
     if (!product) return null;
 
+    const branchBatches = product.batches.filter((b) => b.branchId === branchId);
     return {
       ...product,
-      batches: product.batches.filter((b) => b.branchId === branchId)
+      batches: branchBatches.length > 0 ? branchBatches : product.batches
     };
   }
 
   async getProductById(id: string, branchId = '1'): Promise<Product | null> {
     await this.ensureDataLoaded(branchId);
-    await delay(30);
     const product = this.products.find((p) => p.id === id);
     if (!product) return null;
 
+    const branchBatches = product.batches.filter((b) => b.branchId === branchId);
     return {
       ...product,
-      batches: product.batches.filter((b) => b.branchId === branchId)
+      batches: branchBatches.length > 0 ? branchBatches : product.batches
     };
   }
 

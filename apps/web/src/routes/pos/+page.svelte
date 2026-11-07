@@ -42,7 +42,9 @@
     WifiOff,
     RefreshCw,
     Lock,
-    KeyRound
+    KeyRound,
+    ChevronLeft,
+    ChevronRight
   } from "lucide-svelte";
 
   // Reactive state using Svelte 5 Runes
@@ -58,6 +60,14 @@
   let products = $state<Product[]>([]);
   let productMap = $state(new Map<string, Product>());
   let isLoading = $state(false);
+
+  // Paginasi katalog POS (24 produk per halaman; pencarian bekerja di seluruh 5.749 obat)
+  const POS_PAGE_SIZE = 24;
+  let posCatalogPage = $state(1);
+  let posTotalPages = $derived(Math.max(1, Math.ceil(products.length / POS_PAGE_SIZE)));
+  let paginatedPosProducts = $derived(
+    products.slice((posCatalogPage - 1) * POS_PAGE_SIZE, posCatalogPage * POS_PAGE_SIZE)
+  );
 
   // Cart state
   let cart = $state<CartItem[]>([]);
@@ -118,10 +128,10 @@
 
   // Shift Register State
   let isShiftModalOpen = $state(false);
-  let shiftInitialCash = $state(200000);
-  let shiftCashSales = $state(1450000);
-  let shiftQrisSales = $state(820000);
-  let shiftActualCash = $state(1650000);
+  let shiftInitialCash = $state(0);
+  let shiftCashSales = $state(0);
+  let shiftQrisSales = $state(0);
+  let shiftActualCash = $state(0);
   let shiftExpectedCash = $derived(shiftInitialCash + shiftCashSales);
   let shiftDiscrepancy = $derived(shiftActualCash - shiftExpectedCash);
   let shiftNotes = $state("");
@@ -291,6 +301,10 @@
       categories = catList;
       customers = custList;
       activeShift = shift;
+      if (shift) {
+        shiftInitialCash = shift.startingCash || 0;
+        shiftActualCash = shift.startingCash || 0;
+      }
       for (const p of allProds) {
         productMap.set(p.id, p);
       }
@@ -419,10 +433,12 @@
 
   function handleCategoryChange(catId: string) {
     selectedCategoryId = catId;
+    posCatalogPage = 1;
     fetchProducts();
   }
 
   function handleSearchInput() {
+    posCatalogPage = 1;
     fetchProducts();
   }
 
@@ -861,7 +877,7 @@
           </div>
         {:else}
           <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {#each products as prod}
+            {#each paginatedPosProducts as prod}
               {@const badge = getDrugClassBadge(prod.drugClass)}
               {@const stock = getAvailableStock(prod)}
               {@const primaryUnit = prod.units[0]}
@@ -921,6 +937,37 @@
               </div>
             {/each}
           </div>
+
+          {#if posTotalPages > 1}
+            <div class="mt-3 pt-2.5 border-t border-slate-200/70 flex items-center justify-between text-xs text-slate-500">
+              <span>
+                Menampilkan <strong class="text-slate-700">{(posCatalogPage - 1) * POS_PAGE_SIZE + 1}–{Math.min(posCatalogPage * POS_PAGE_SIZE, products.length)}</strong> dari <strong class="text-slate-700">{products.length}</strong> obat
+              </span>
+              <div class="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={posCatalogPage <= 1}
+                  onclick={() => (posCatalogPage = Math.max(1, posCatalogPage - 1))}
+                  class="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Halaman Sebelumnya"
+                >
+                  <ChevronLeft class="w-3.5 h-3.5" />
+                </button>
+                <span class="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-bold text-slate-700 text-[11px]">
+                  Hal. {posCatalogPage} / {posTotalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={posCatalogPage >= posTotalPages}
+                  onclick={() => (posCatalogPage = Math.min(posTotalPages, posCatalogPage + 1))}
+                  class="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Halaman Selanjutnya"
+                >
+                  <ChevronRight class="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          {/if}
         {/if}
       </div>
     </div>

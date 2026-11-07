@@ -68,41 +68,68 @@
     }).format(num);
   }
 
-  // Filtered
+  // Filtered (searches across all 366 customers before pagination)
+  const PAGE_SIZE = 25;
+  let customerPage = $state(1);
+  let debtPage = $state(1);
+
   let filteredCustomers = $derived(
-    customers.filter((c) =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.phone.includes(searchQuery)
+    customers.filter(
+      (c) =>
+        c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.phone.includes(searchQuery)
     )
   );
 
-  // Mock Piutang Customers
-  let debtCustomers = $state([
-    {
-      id: "deb-01",
-      customerName: "Klinik Pratama Sehat (Bidan Lilis)",
-      code: "CUST-004",
-      phone: "081322334455",
-      invoiceRef: "BON-2025-1020-01",
-      totalDebt: 3200000,
-      dueDate: "2025-11-20",
-      status: "CURRENT"
-    },
-    {
-      id: "deb-02",
-      customerName: "Bapak Rudi Hartono (Pasien Kronis)",
-      code: "CUST-002",
-      phone: "081298765432",
-      invoiceRef: "BON-2025-1015-08",
-      totalDebt: 450000,
-      dueDate: "2025-10-30",
-      status: "DUE_SOON"
-    }
-  ]);
+  let customerTotalPages = $derived(
+    Math.max(1, Math.ceil(filteredCustomers.length / PAGE_SIZE))
+  );
+  let paginatedCustomers = $derived(
+    filteredCustomers.slice((customerPage - 1) * PAGE_SIZE, customerPage * PAGE_SIZE)
+  );
+
+  let debtCustomers = $state<
+    Array<{
+      id: string;
+      customerName: string;
+      code: string;
+      phone: string;
+      invoiceRef: string;
+      totalDebt: number;
+      dueDate: string;
+      status: string;
+    }>
+  >([]);
+
+  let filteredDebtCustomers = $derived(
+    debtCustomers.filter(
+      (d) =>
+        d.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        d.invoiceRef.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        d.code.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  );
+
+  let debtTotalPages = $derived(
+    Math.max(1, Math.ceil(filteredDebtCustomers.length / PAGE_SIZE))
+  );
+  let paginatedDebtCustomers = $derived(
+    filteredDebtCustomers.slice((debtPage - 1) * PAGE_SIZE, debtPage * PAGE_SIZE)
+  );
+
+  let activeMembersCount = $derived(
+    customers.filter((c) => c.priceTier === "member").length
+  );
 
   let totalReceivables = $derived(
     debtCustomers.reduce((a, b) => a + b.totalDebt, 0)
+  );
+
+  let dueSoonReceivables = $derived(
+    debtCustomers
+      .filter((d) => d.status === "DUE_SOON")
+      .reduce((a, b) => a + b.totalDebt, 0)
   );
 </script>
 
@@ -141,7 +168,7 @@
     />
     <MetricCard
       title="Member Aktif"
-      value="2 Pasien"
+      value="{activeMembersCount} Pasien"
       subtext="Pemegang kartu loyalitas"
       icon={UserCheck}
       variant="default"
@@ -149,14 +176,14 @@
     <MetricCard
       title="Piutang Berjalan"
       value={formatRupiah(totalReceivables)}
-      subtext="2 Akun bon tempo"
+      subtext="{debtCustomers.length} Akun bon tempo"
       icon={CreditCard}
       variant="warning"
     />
     <MetricCard
       title="Jatuh Tempo"
-      value="Rp 450.000"
-      subtext="Jatuh tempo 3 hari lagi"
+      value={formatRupiah(dueSoonReceivables)}
+      subtext={dueSoonReceivables > 0 ? "Segera jatuh tempo" : "Tidak ada piutang jatuh tempo"}
       icon={AlertCircle}
       variant="danger"
     />
@@ -194,6 +221,10 @@
       searchPlaceholder="Cari nama pelanggan, kode member, atau nomor telepon..."
       bind:searchValue={searchQuery}
       totalCount={filteredCustomers.length}
+      currentPage={customerPage}
+      totalPages={customerTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (customerPage = p)}
     >
       {#snippet header()}
         <th class="py-3 px-4">Kode</th>
@@ -206,7 +237,7 @@
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredCustomers.length === 0}
+        {#if paginatedCustomers.length === 0}
           <tr>
             <td colspan="7" class="py-12 text-center text-xs text-slate-400">
               <div class="flex flex-col items-center justify-center gap-2">
@@ -216,7 +247,7 @@
             </td>
           </tr>
         {:else}
-          {#each filteredCustomers as c}
+          {#each paginatedCustomers as c}
             <tr class="hover:bg-blue-50/40 transition-colors">
               <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{c.code}</td>
               <td class="py-3.5 px-4">
@@ -257,7 +288,11 @@
       title="Buku Piutang & Kartu Bon Pelanggan"
       searchPlaceholder="Cari nama debitur atau nomor bon..."
       bind:searchValue={searchQuery}
-      totalCount={debtCustomers.length}
+      totalCount={filteredDebtCustomers.length}
+      currentPage={debtPage}
+      totalPages={debtTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (debtPage = p)}
     >
       {#snippet header()}
         <th class="py-3 px-4">No. Bon / Tagihan</th>
@@ -270,7 +305,7 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each debtCustomers as d}
+        {#each paginatedDebtCustomers as d}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{d.invoiceRef}</td>
             <td class="py-3.5 px-4 font-bold text-slate-800">{d.customerName}</td>

@@ -3,220 +3,6 @@ import { eq, and, gt, sql } from "drizzle-orm";
 import type { Static } from "elysia";
 import type { SyncSalesBodySchema } from "./pos.schema.js";
 
-// Mock seed data fallback if database is empty on first boot
-const DEFAULT_PRODUCTS = [
-  {
-    id: "01931818-0001-7000-8000-000000000001",
-    sku: "MED-001",
-    barcode: "899999900101",
-    name: "Paracetamol 500mg Tablet",
-    activeSubstance: "Paracetamol 500mg",
-    dosageForm: "Tablet",
-    defaultDosage: "3x1 Sehari Sesudah Makan",
-    rackLocation: "RAK-A1",
-    drugClass: "BEBAS",
-    baseUnit: "Tablet",
-    minStock: 20,
-    isActive: true,
-    units: [
-      {
-        unitName: "Box",
-        conversionFactor: 100,
-        salePriceGeneral: 45000,
-        salePriceResep: 48000,
-        salePriceGrosir: 42000,
-        salePriceDelivery: 46000,
-        salePriceMember: 43000,
-        isBaseUnit: false
-      },
-      {
-        unitName: "Strip",
-        conversionFactor: 10,
-        salePriceGeneral: 5000,
-        salePriceResep: 5500,
-        salePriceGrosir: 4500,
-        salePriceDelivery: 5000,
-        salePriceMember: 4800,
-        isBaseUnit: false
-      },
-      {
-        unitName: "Tablet",
-        conversionFactor: 1,
-        salePriceGeneral: 600,
-        salePriceResep: 650,
-        salePriceGrosir: 500,
-        salePriceDelivery: 600,
-        salePriceMember: 550,
-        isBaseUnit: true
-      }
-    ]
-  },
-  {
-    id: "01931818-0002-7000-8000-000000000002",
-    sku: "MED-002",
-    barcode: "899999900102",
-    name: "Amoxicillin 500mg Kaplet",
-    activeSubstance: "Amoxicillin Trihydrate 500mg",
-    dosageForm: "Kaplet",
-    defaultDosage: "3x1 Sehari Dihabiskan",
-    rackLocation: "RAK-B2",
-    drugClass: "KERAS",
-    baseUnit: "Kaplet",
-    minStock: 30,
-    isActive: true,
-    units: [
-      {
-        unitName: "Box",
-        conversionFactor: 100,
-        salePriceGeneral: 75000,
-        salePriceResep: 80000,
-        salePriceGrosir: 70000,
-        salePriceDelivery: 76000,
-        salePriceMember: 72000,
-        isBaseUnit: false
-      },
-      {
-        unitName: "Strip",
-        conversionFactor: 10,
-        salePriceGeneral: 8000,
-        salePriceResep: 8500,
-        salePriceGrosir: 7500,
-        salePriceDelivery: 8000,
-        salePriceMember: 7800,
-        isBaseUnit: false
-      },
-      {
-        unitName: "Kaplet",
-        conversionFactor: 1,
-        salePriceGeneral: 900,
-        salePriceResep: 950,
-        salePriceGrosir: 800,
-        salePriceDelivery: 900,
-        salePriceMember: 850,
-        isBaseUnit: true
-      }
-    ]
-  },
-  {
-    id: "01931818-0003-7000-8000-000000000003",
-    sku: "MED-003",
-    barcode: "899999900103",
-    name: "Cefixime 100mg Kapsul",
-    activeSubstance: "Cefixime 100mg",
-    dosageForm: "Kapsul",
-    defaultDosage: "2x1 Sehari Dihabiskan",
-    rackLocation: "RAK-B3",
-    drugClass: "KERAS",
-    baseUnit: "Kapsul",
-    minStock: 15,
-    isActive: true,
-    units: [
-      {
-        unitName: "Box",
-        conversionFactor: 50,
-        salePriceGeneral: 120000,
-        salePriceResep: 125000,
-        salePriceGrosir: 115000,
-        salePriceDelivery: 122000,
-        salePriceMember: 118000,
-        isBaseUnit: false
-      },
-      {
-        unitName: "Kapsul",
-        conversionFactor: 1,
-        salePriceGeneral: 2600,
-        salePriceResep: 2800,
-        salePriceGrosir: 2400,
-        salePriceDelivery: 2600,
-        salePriceMember: 2500,
-        isBaseUnit: true
-      }
-    ]
-  },
-  {
-    id: "01931818-0004-7000-8000-000000000004",
-    sku: "MED-004",
-    barcode: "899999900104",
-    name: "Cetirizine 10mg Tablet",
-    activeSubstance: "Cetirizine HCl 10mg",
-    dosageForm: "Tablet",
-    defaultDosage: "1x1 Sehari Malam",
-    rackLocation: "RAK-A3",
-    drugClass: "BEBAS_TERBATAS",
-    baseUnit: "Tablet",
-    minStock: 25,
-    isActive: true,
-    units: [
-      {
-        unitName: "Strip",
-        conversionFactor: 10,
-        salePriceGeneral: 7000,
-        salePriceResep: 7500,
-        salePriceGrosir: 6500,
-        salePriceDelivery: 7000,
-        salePriceMember: 6800,
-        isBaseUnit: false
-      },
-      {
-        unitName: "Tablet",
-        conversionFactor: 1,
-        salePriceGeneral: 800,
-        salePriceResep: 850,
-        salePriceGrosir: 700,
-        salePriceDelivery: 800,
-        salePriceMember: 750,
-        isBaseUnit: true
-      }
-    ]
-  },
-  {
-    id: "01931818-0005-7000-8000-000000000005",
-    sku: "MED-005",
-    barcode: "899999900105",
-    name: "Antasida Doen Tablet Kunyah",
-    activeSubstance: "Aluminium Hydroxide + Magnesium Hydroxide",
-    dosageForm: "Tablet Kunyah",
-    defaultDosage: "3x1 Sehari Sebelum Makan (Dikunyah)",
-    rackLocation: "RAK-A2",
-    drugClass: "BEBAS",
-    baseUnit: "Tablet",
-    minStock: 50,
-    isActive: true,
-    units: [
-      {
-        unitName: "Box",
-        conversionFactor: 100,
-        salePriceGeneral: 28000,
-        salePriceResep: 30000,
-        salePriceGrosir: 25000,
-        salePriceDelivery: 29000,
-        salePriceMember: 27000,
-        isBaseUnit: false
-      },
-      {
-        unitName: "Strip",
-        conversionFactor: 10,
-        salePriceGeneral: 3500,
-        salePriceResep: 4000,
-        salePriceGrosir: 3000,
-        salePriceDelivery: 3500,
-        salePriceMember: 3200,
-        isBaseUnit: false
-      },
-      {
-        unitName: "Tablet",
-        conversionFactor: 1,
-        salePriceGeneral: 400,
-        salePriceResep: 450,
-        salePriceGrosir: 350,
-        salePriceDelivery: 400,
-        salePriceMember: 380,
-        isBaseUnit: true
-      }
-    ]
-  }
-];
-
 export class PosService {
   /**
    * Initial Bootstrap POS: Mengambil seluruh data awal untuk IndexedDB kasir
@@ -298,7 +84,7 @@ export class PosService {
               }
             : null;
 
-        // Fetch Products with Units
+        // Fetch Products with Units (indexed O(N + M) via Map)
         const productsList = await db
           .select()
           .from(schema.products)
@@ -309,36 +95,50 @@ export class PosService {
           .from(schema.productUnits)
           .where(eq(schema.productUnits.tenantId, tenantId));
 
-        const formattedProducts = productsList.map((p) => {
-          const productUnits = unitsList
-            .filter((u) => u.productId === p.id)
-            .map((u) => ({
-              unitName: u.unitName,
-              conversionFactor: Number(u.conversionFactor),
-              salePriceGeneral: Number(u.salePriceGeneral || 0),
-              salePriceResep: Number(u.salePriceResep || 0),
-              salePriceGrosir: Number(u.salePriceGrosir || 0),
-              salePriceDelivery: Number(u.salePriceDelivery || 0),
-              salePriceMember: Number(u.salePriceMember || 0),
-              isBaseUnit: u.isBaseUnit
-            }));
+        const unitsByProductId = new Map<
+          string,
+          Array<{
+            unitName: string;
+            conversionFactor: number;
+            salePriceGeneral: number;
+            salePriceResep: number;
+            salePriceGrosir: number;
+            salePriceDelivery: number;
+            salePriceMember: number;
+            isBaseUnit: boolean;
+          }>
+        >();
 
-          return {
-            id: p.id,
-            sku: p.sku,
-            barcode: p.barcode,
-            name: p.name,
-            activeSubstance: p.activeSubstance,
-            dosageForm: p.dosageForm,
-            defaultDosage: p.defaultDosage,
-            rackLocation: p.rackLocation,
-            drugClass: p.drugClass,
-            baseUnit: p.baseUnit,
-            minStock: Number(p.minStock || 0),
-            isActive: p.isActive,
-            units: productUnits
-          };
-        });
+        for (const u of unitsList) {
+          const existing = unitsByProductId.get(u.productId) || [];
+          existing.push({
+            unitName: u.unitName,
+            conversionFactor: Number(u.conversionFactor),
+            salePriceGeneral: Number(u.salePriceGeneral || 0),
+            salePriceResep: Number(u.salePriceResep || 0),
+            salePriceGrosir: Number(u.salePriceGrosir || 0),
+            salePriceDelivery: Number(u.salePriceDelivery || 0),
+            salePriceMember: Number(u.salePriceMember || 0),
+            isBaseUnit: u.isBaseUnit
+          });
+          unitsByProductId.set(u.productId, existing);
+        }
+
+        const formattedProducts = productsList.map((p) => ({
+          id: p.id,
+          sku: p.sku,
+          barcode: p.barcode,
+          name: p.name,
+          activeSubstance: p.activeSubstance,
+          dosageForm: p.dosageForm,
+          defaultDosage: p.defaultDosage,
+          rackLocation: p.rackLocation,
+          drugClass: p.drugClass,
+          baseUnit: p.baseUnit,
+          minStock: Number(p.minStock || 0),
+          isActive: p.isActive,
+          units: unitsByProductId.get(p.id) || []
+        }));
 
         // Fetch Branches & Customers
         const branchesList = await db
@@ -349,14 +149,13 @@ export class PosService {
         const customersList = await db
           .select()
           .from(schema.customers)
-          .where(eq(schema.customers.tenantId, tenantId))
-          .limit(500);
+          .where(eq(schema.customers.tenantId, tenantId));
 
         const formattedBranches = branchesList.map((b) => ({
           id: b.id,
           code: b.code,
           name: b.name,
-          isCenter: b.code === "1",
+          isCenter: b.code === "1" || b.code === "GUDANG",
           phone: b.phone || "",
           address: b.address || "",
           sia: "SIA/440/123/DISKES",
@@ -374,11 +173,18 @@ export class PosService {
           loyaltyPoints: c.pointBalance || 0
         }));
 
-        // Fetch Branch Stocks & Batches
-        const branchStocksData = await db
+        // Fetch Branch Stocks & Batches (fallback to tenant-wide stocks if specific branch has none)
+        let branchStocksData = await db
           .select()
           .from(schema.branchStocks)
           .where(eq(schema.branchStocks.branchId, branchId));
+
+        if (branchStocksData.length === 0) {
+          branchStocksData = await db
+            .select()
+            .from(schema.branchStocks)
+            .where(eq(schema.branchStocks.tenantId, tenantId));
+        }
 
         const branchBatchesData = await db
           .select({
@@ -426,52 +232,33 @@ export class PosService {
         };
       }
     } catch (err) {
-      console.warn("[PosService] Falling back to structured bootstrap:", err);
+      console.error("[PosService] Failed to fetch bootstrap from DB:", err);
     }
 
-    // Default bootstrap fallback for immediate offline & dev readiness
-    const fallbackLocationId = "01931818-8000-7000-8000-000000000004";
     return {
-      success: true,
+      success: false,
       timestamp,
       data: {
         tenant: {
           id: tenantId,
-          name: "Apotek Farmasi Modern",
+          name: "Apotek",
           taxPercent: 11
         },
         branch: {
           id: branchId,
-          code: "CB-01",
-          name: "Cabang Utama",
-          address: "Jl. Kesehatan Sejahtera No. 88, Jakarta",
-          phone: "021-77889900",
-          receiptHeader: "APOTEK FARMASI MODERN\nJl. Kesehatan Sejahtera No. 88\nTelp: 021-77889900",
-          receiptFooter: "Terima kasih atas kunjungan Anda.\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan."
+          code: "-",
+          name: "-",
+          address: "",
+          phone: "",
+          receiptHeader: "",
+          receiptFooter: ""
         },
-        cashierShifts: {
-          id: "01931818-8000-7000-8000-000000000005",
-          shiftNumber: 1,
-          startTime: new Date().toISOString(),
-          initialCash: 500000,
-          isOpen: true
-        },
-        products: DEFAULT_PRODUCTS,
-        branchStocks: DEFAULT_PRODUCTS.map((p) => ({
-          productId: p.id,
-          locationId: fallbackLocationId,
-          totalQtyBase: 250,
-          unbatchedQtyBase: 0
-        })),
-        branchBatches: DEFAULT_PRODUCTS.map((p, idx) => ({
-          productId: p.id,
-          locationId: fallbackLocationId,
-          batchId: `01931818-9000-7000-8000-00000000000${idx + 1}`,
-          batchNo: `BTC-2026-${100 + idx}`,
-          expiredDate: "2027-12-31",
-          qtyBase: 250,
-          buyPrice: 350
-        }))
+        branches: [],
+        customers: [],
+        cashierShifts: null,
+        products: [],
+        branchStocks: [],
+        branchBatches: []
       }
     };
   }

@@ -19,7 +19,10 @@
     Scale,
     Check,
     Info,
-    ArrowRight
+    ArrowRight,
+    ChevronLeft,
+    ChevronRight,
+    Search
   } from "lucide-svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
@@ -168,175 +171,26 @@
     return p.batches.reduce((acc: number, b: any) => acc + (Number(b.stock) || 0), 0);
   }
 
-  // Initial Synthetic Stock Movement Ledger (`stock_ledger`)
-  let ledgerEntries = $state<LedgerEntry[]>([
-    {
-      id: "led-01",
-      productId: "prod-amox-500",
-      productName: "Amoxicillin 500mg (Errata)",
-      date: "2025-10-27 14:20",
-      refNumber: "RJK-202510-0018",
-      type: "OPNAME",
-      batch: "AMX24H01",
-      qtyIn: 0,
-      qtyOut: 8,
-      balance: 150,
-      unit: "TABLET",
-      notes: "Opname Rutin: Selisih hitung fisik rak Obat Keras",
-      operator: "apt. Hafidz Nurul"
-    },
-    {
-      id: "led-ovs-01",
-      productId: "prod-amox-500",
-      productName: "Amoxicillin 500mg (Errata)",
-      date: "2025-10-27 12:40",
-      refNumber: "PJ-CB01-20261027-009",
-      type: "DEFICIT_OVERSELL",
-      batch: "AMX24H01",
-      qtyIn: 0,
-      qtyOut: 5,
-      balance: -5,
-      unit: "TABLET",
-      notes: "Sinkronisasi Offline: Kasir offline menjual melebihi sisa batch. Tercatat unbatched.",
-      operator: "Kasir 01 (Terminal Offline)"
-    },
-    {
-      id: "led-02",
-      productId: "prod-amox-500",
-      productName: "Amoxicillin 500mg (Errata)",
-      date: "2025-10-27 10:12",
-      refNumber: "PJ-1025-0287",
-      type: "PENJUALAN",
-      batch: "AMX24H01",
-      qtyIn: 0,
-      qtyOut: 12,
-      balance: 158,
-      unit: "TABLET",
-      notes: "Penjualan Kasir Resep & Umum",
-      operator: "Nida Farida"
-    },
-    {
-      id: "led-03",
-      productId: "prod-amox-500",
-      productName: "Amoxicillin 500mg (Errata)",
-      date: "2025-10-25 14:30",
-      refNumber: "MUT-2025-1025-001",
-      type: "TRANSFER_OUT",
-      batch: "AMX24H01",
-      qtyIn: 0,
-      qtyOut: 30,
-      balance: 170,
-      unit: "TABLET",
-      notes: "Mutasi keluar ke Cabang 2",
-      operator: "Erwin Noval Mufid"
-    },
-    {
-      id: "led-04",
-      productId: "prod-amox-500",
-      productName: "Amoxicillin 500mg (Errata)",
-      date: "2025-10-20 09:15",
-      refNumber: "FP-KF-2025-0891",
-      type: "PEMBELIAN",
-      batch: "AMX24H01",
-      qtyIn: 200,
-      qtyOut: 0,
-      balance: 200,
-      unit: "TABLET",
-      notes: "Penerimaan Faktur PBF PT. Errita Pharma",
-      operator: "apt. Hafidz Nurul"
-    }
-  ]);
+  // Stock Movement Ledger (`stock_ledger`) — populated from real transactions / adjustments
+  let ledgerEntries = $state<LedgerEntry[]>([]);
 
-  // Initial Stock Opname & Adjustment History (`stock_adjustments` + `stock_adjustment_items`)
-  let opnameHistory = $state<OpnameAdjustmentRecord[]>([
-    {
-      id: "adj-01",
-      docNumber: "RJK-202510-0018",
-      date: "2025-10-27 14:20",
-      branchId: "1",
-      productId: "prod-amox-500",
-      productName: "Amoxicillin 500mg (Errata)",
-      sku: "900000092",
-      batchId: "batch-amox-01",
-      batchNumber: "AMX24H01",
-      unit: "TABLET",
-      systemQty: 158,
-      actualQty: 150,
-      differenceQty: -8,
-      costPerUnit: 520,
-      valueDifference: -4160,
-      reasonType: "STOCK_OPNAME",
-      notes: "Selisih hitung fisik bulanan di rak Obat Keras",
-      operator: "apt. Hafidz Nurul"
-    },
-    {
-      id: "adj-02",
-      docNumber: "RJK-202510-0018",
-      date: "2025-10-27 14:20",
-      branchId: "1",
-      productId: "prod-amlo-10",
-      productName: "Amlodipine Besylate 10mg (Hexpharm Jaya)",
-      sku: "000055",
-      batchId: "batch-amlo-01",
-      batchNumber: "AML24B10",
-      unit: "TABLET",
-      systemQty: 195,
-      actualQty: 200,
-      differenceQty: 5,
-      costPerUnit: 410,
-      valueDifference: 2050,
-      reasonType: "DISCREPANCY",
-      notes: "Koreksi kasir salah pilih varian Amlodipine 5mg vs 10mg",
-      operator: "apt. Hafidz Nurul"
-    },
-    {
-      id: "adj-03",
-      docNumber: "RJK-202510-0015",
-      date: "2025-10-24 16:05",
-      branchId: "1",
-      productId: "prod-pct-500",
-      productName: "Paracetamol 500mg (Mersifarma)",
-      sku: "000102",
-      batchId: "batch-pct-01",
-      batchNumber: "PCT24D01",
-      unit: "TABLET",
-      systemQty: 250,
-      actualQty: 240,
-      differenceQty: -10,
-      costPerUnit: 220,
-      valueDifference: -2200,
-      reasonType: "DAMAGED",
-      notes: "1 strip kemasan blister robek terkena lembab",
-      operator: "Erwin Noval Mufid"
-    },
-    {
-      id: "adj-04",
-      docNumber: "RJK-202510-0015",
-      date: "2025-10-24 16:05",
-      branchId: "1",
-      productId: "prod-sanmol-syr",
-      productName: "Sanmol Sirup 60ml",
-      sku: "000215",
-      batchId: "batch-san-01",
-      batchNumber: "SNM24F09",
-      unit: "BOTOL",
-      systemQty: 45,
-      actualQty: 45,
-      differenceQty: 0,
-      costPerUnit: 14500,
-      valueDifference: 0,
-      reasonType: "STOCK_OPNAME",
-      notes: "Stok fisik cocok 100% dengan sistem",
-      operator: "Nida Farida"
-    }
-  ]);
+  // Stock Opname & Adjustment History (`stock_adjustments` + `stock_adjustment_items`)
+  let opnameHistory = $state<OpnameAdjustmentRecord[]>([]);
+
+  // Pagination state (25 rows per page for master tables, 15 for defekta card)
+  const PAGE_SIZE = 25;
+  const DEFEKTA_PAGE_SIZE = 15;
+  let catalogPage = $state(1);
+  let opnamePage = $state(1);
+  let defektaPage = $state(1);
+  let defektaSearchQuery = $state("");
 
   // Derived: Selected Product Object for Stock Card
   let selectedProductForCard = $derived(
     products.find((p) => p.id === selectedProductIdForCard) || products[0]
   );
 
-  // Derived: Filtered Products for Catalog Tab
+  // Derived: Filtered Products for Catalog Tab (searches full dataset before pagination)
   let filteredProducts = $derived(
     products.filter((p) => {
       const q = searchQuery.toLowerCase().trim();
@@ -354,32 +208,40 @@
     })
   );
 
+  let catalogTotalPages = $derived(Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE)));
+  let paginatedProducts = $derived(
+    filteredProducts.slice((catalogPage - 1) * PAGE_SIZE, catalogPage * PAGE_SIZE)
+  );
+
   // Derived: Filtered Ledger Entries for Selected Product
   let productLedgerEntries = $derived.by(() => {
     const prod = selectedProductForCard;
     if (!prod) return [];
 
     const existing = ledgerEntries.filter((e) => e.productId === prod.id);
+    const totalStock = getProductTotalStock(prod);
     const list =
       existing.length > 0
         ? existing
-        : [
-            {
-              id: `led-init-${prod.id}`,
-              productId: prod.id,
-              productName: prod.name,
-              date: "2025-10-18 09:00",
-              refNumber: `FP-PBF-2025-${prod.sku.slice(-4)}`,
-              type: "PEMBELIAN" as const,
-              batch: prod.batches[0]?.batchNumber || "BATCH-01",
-              qtyIn: getProductTotalStock(prod),
-              qtyOut: 0,
-              balance: getProductTotalStock(prod),
-              unit: prod.baseUnit,
-              notes: `Saldo awal penerimaan PBF (${prod.manufacturer})`,
-              operator: "apt. Hafidz Nurul"
-            }
-          ];
+        : totalStock > 0
+          ? [
+              {
+                id: `led-init-${prod.id}`,
+                productId: prod.id,
+                productName: prod.name,
+                date: "-",
+                refNumber: `SALDO-${prod.sku}`,
+                type: "PEMBELIAN" as const,
+                batch: prod.batches[0]?.batchNumber || "STOK-AKTIF",
+                qtyIn: totalStock,
+                qtyOut: 0,
+                balance: totalStock,
+                unit: prod.baseUnit,
+                notes: "Saldo stok aktif tercatat di database",
+                operator: "Sistem"
+              }
+            ]
+          : [];
 
     if (selectedLedgerTypeFilter === "ALL") return list;
     return list.filter((e) => e.type === selectedLedgerTypeFilter);
@@ -414,6 +276,11 @@
 
       return matchSearch && matchDiff;
     })
+  );
+
+  let opnameTotalPages = $derived(Math.max(1, Math.ceil(filteredOpnameHistory.length / PAGE_SIZE)));
+  let paginatedOpnameHistory = $derived(
+    filteredOpnameHistory.slice((opnamePage - 1) * PAGE_SIZE, opnamePage * PAGE_SIZE)
   );
 
   // Summary Stats for Opname Discrepancy
@@ -460,8 +327,9 @@
         }))
       )
       .filter((b) => {
+        if (b.batchNumber === "STOK-AKTIF") return false;
         const exp = new Date(b.expiryDate).getTime();
-        const now = new Date("2025-10-27").getTime();
+        const now = Date.now();
         const diffDays = Math.ceil((exp - now) / (1000 * 60 * 60 * 24));
         return diffDays <= 730 && b.stock > 0;
       })
@@ -473,6 +341,28 @@
       const totalStock = getProductTotalStock(p);
       return totalStock < 50;
     })
+  );
+
+  let filteredDefektaProducts = $derived(
+    lowStockProducts.filter((p) => {
+      const q = defektaSearchQuery.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q) ||
+        (p.genericName && p.genericName.toLowerCase().includes(q))
+      );
+    })
+  );
+
+  let defektaTotalPages = $derived(
+    Math.max(1, Math.ceil(filteredDefektaProducts.length / DEFEKTA_PAGE_SIZE))
+  );
+  let paginatedDefektaProducts = $derived(
+    filteredDefektaProducts.slice(
+      (defektaPage - 1) * DEFEKTA_PAGE_SIZE,
+      defektaPage * DEFEKTA_PAGE_SIZE
+    )
   );
 
   // =========================================================================
@@ -1031,7 +921,7 @@
     />
     <MetricCard
       title="Defekta & ED"
-      value="{lowStockProducts.length} Defekta / {expiringBatches.slice(0, 5).length} ED"
+      value="{lowStockProducts.length} &bull; {expiringBatches.slice(0, 5).length} ED"
       subtext="Monitoring FEFO"
       icon={AlertTriangle}
       variant="warning"
@@ -1117,10 +1007,15 @@
       searchPlaceholder="Cari nama obat, kandungan aktif, SKU, atau scan barcode..."
       bind:searchValue={searchQuery}
       totalCount={filteredProducts.length}
+      currentPage={catalogPage}
+      totalPages={catalogTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (catalogPage = p)}
     >
       {#snippet filters()}
         <Select
           bind:value={selectedCategory}
+          onchange={() => (catalogPage = 1)}
           size="sm"
           align="right"
           options={[
@@ -1147,7 +1042,7 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredProducts as p}
+        {#each paginatedProducts as p}
           {@const totalStock = getProductTotalStock(p)}
           {@const generalPrice = p.units[0]?.prices.general || 0}
           {@const prescriptionPrice = p.units[0]?.prices.prescription || 0}
@@ -1465,11 +1360,16 @@
         searchPlaceholder="Cari nama obat, No. Dokumen RJK, atau nomor batch..."
         bind:searchValue={opnameSearchQuery}
         totalCount={filteredOpnameHistory.length}
+        currentPage={opnamePage}
+        totalPages={opnameTotalPages}
+        pageSize={PAGE_SIZE}
+        onPageChange={(p) => (opnamePage = p)}
         emptyText="Tidak ada data pemeriksaan stok opname yang sesuai filter."
       >
         {#snippet filters()}
           <Select
             bind:value={opnameDiffFilter}
+            onchange={() => (opnamePage = 1)}
             size="sm"
             align="right"
             options={[
@@ -1494,7 +1394,7 @@
         {/snippet}
 
         {#snippet rows()}
-          {#each filteredOpnameHistory as item}
+          {#each paginatedOpnameHistory as item}
             <tr class="hover:bg-slate-50/70 transition-colors">
               <td class="py-3.5 px-4 whitespace-nowrap">
                 <div class="font-mono font-bold text-brand-blue">{item.docNumber}</div>
@@ -1563,23 +1463,33 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <!-- DEFEKTA CARD -->
       <div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 space-y-4">
-        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <div class="flex items-center gap-2">
             <AlertTriangle class="w-4 h-4 text-brand-red-600" />
             <h3 class="text-sm font-bold text-slate-800">Daftar Defekta (Stok di Bawah Batas Minimum)</h3>
+            <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-brand-red-700">
+              {filteredDefektaProducts.length} Obat
+            </span>
           </div>
-          <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-brand-red-700">
-            {lowStockProducts.length} Obat
-          </span>
+          <div class="relative w-full sm:w-56">
+            <Search class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              bind:value={defektaSearchQuery}
+              oninput={() => (defektaPage = 1)}
+              placeholder="Cari obat defekta..."
+              class="w-full bg-slate-50 pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 focus:bg-white focus:border-brand-blue-500 focus:outline-none text-slate-700"
+            />
+          </div>
         </div>
 
-        <div class="space-y-3">
-          {#each lowStockProducts as lp}
+        <div class="space-y-2.5">
+          {#each paginatedDefektaProducts as lp}
             {@const stock = getProductTotalStock(lp)}
             <div class="p-3 rounded-xl border border-red-100 bg-red-50/20 flex items-center justify-between">
               <div>
                 <div class="font-bold text-xs text-slate-900">{lp.name}</div>
-                <div class="text-[11px] text-slate-400 mt-0.5">Produsen: {lp.manufacturer}</div>
+                <div class="text-[11px] text-slate-400 mt-0.5">SKU: {lp.sku} • {lp.genericName || lp.manufacturer}</div>
               </div>
               <div class="text-right">
                 <div class="text-xs font-black text-brand-red-600">Sisa Sistem: {stock} {lp.baseUnit}</div>
@@ -1593,6 +1503,35 @@
             </div>
           {/each}
         </div>
+
+        {#if defektaTotalPages > 1}
+          <div class="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>
+              Hal. <strong class="text-slate-700">{defektaPage}</strong> / <strong class="text-slate-700">{defektaTotalPages}</strong>
+              ({filteredDefektaProducts.length} obat)
+            </span>
+            <div class="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={defektaPage <= 1}
+                onclick={() => (defektaPage = Math.max(1, defektaPage - 1))}
+                class="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Halaman Defekta Sebelumnya"
+              >
+                <ChevronLeft class="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                disabled={defektaPage >= defektaTotalPages}
+                onclick={() => (defektaPage = Math.min(defektaTotalPages, defektaPage + 1))}
+                class="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Halaman Defekta Selanjutnya"
+              >
+                <ChevronRight class="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        {/if}
       </div>
 
       <!-- ED ALERT CARD -->

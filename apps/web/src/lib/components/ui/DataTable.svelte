@@ -15,6 +15,7 @@
     totalCount?: number;
     currentPage?: number;
     totalPages?: number;
+    pageSize?: number;
     onPageChange?: (page: number) => void;
   }
 
@@ -31,12 +32,19 @@
     totalCount = 0,
     currentPage = 1,
     totalPages = 1,
+    pageSize = 25,
     onPageChange
   }: Props = $props();
+
+  let startItem = $derived(totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1);
+  let endItem = $derived(Math.min(currentPage * pageSize, totalCount));
 
   function handleInput(e: Event) {
     const val = (e.target as HTMLInputElement).value;
     searchValue = val;
+    if (currentPage !== 1) {
+      onPageChange?.(1);
+    }
     onSearchChange?.(val);
   }
 </script>
@@ -107,11 +115,20 @@
 
   <!-- PAGINATION FOOTER -->
   {#if totalPages > 1}
-    <div class="p-3.5 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between text-xs text-slate-500">
+    <div class="p-3.5 border-t border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-500">
       <div>
-        Menampilkan halaman <span class="font-bold text-slate-700">{currentPage}</span> dari <span class="font-bold text-slate-700">{totalPages}</span>
+        Menampilkan <span class="font-bold text-slate-700">{startItem}–{endItem}</span> dari <span class="font-bold text-slate-700">{totalCount}</span> data
+        <span class="text-slate-400 ml-1">(Hal. {currentPage} / {totalPages})</span>
       </div>
       <div class="flex items-center gap-1.5">
+        <button
+          type="button"
+          disabled={currentPage <= 1}
+          onclick={() => onPageChange?.(1)}
+          class="px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-semibold text-[11px] transition-colors"
+        >
+          Awal
+        </button>
         <button
           type="button"
           disabled={currentPage <= 1}
@@ -121,6 +138,9 @@
         >
           <ChevronLeft class="w-4 h-4" />
         </button>
+        <span class="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-bold text-slate-700 text-[11px]">
+          {currentPage} / {totalPages}
+        </span>
         <button
           type="button"
           disabled={currentPage >= totalPages}
@@ -129,6 +149,14 @@
           aria-label="Halaman Selanjutnya"
         >
           <ChevronRight class="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          disabled={currentPage >= totalPages}
+          onclick={() => onPageChange?.(totalPages)}
+          class="px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-semibold text-[11px] transition-colors"
+        >
+          Akhir
         </button>
       </div>
     </div>

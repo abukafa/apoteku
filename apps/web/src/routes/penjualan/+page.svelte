@@ -31,6 +31,7 @@
   import { portal } from "$lib/actions/portal";
   import { onMount } from "svelte";
   import { api } from "$lib/services/api";
+  import { formatRupiah } from "@apoteku/core";
 
   // Reactive state
   let sales = $state<any[]>([]);
@@ -77,15 +78,6 @@
   // Modal Detail State
   let selectedTransaction = $state<any | null>(null);
   let isDetailModalOpen = $state(false);
-
-  // Formatter
-  function formatRupiah(num: number): string {
-    return new Intl.NumberFormat("id-ID", {
-      style: "currency",
-      currency: "IDR",
-      maximumFractionDigits: 0
-    }).format(num);
-  }
 
   // Filtered sales derived
   let filteredSales = $derived(

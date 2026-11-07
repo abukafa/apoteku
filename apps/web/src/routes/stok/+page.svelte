@@ -35,6 +35,11 @@
   import { portal } from "$lib/actions/portal";
   import { mockApi } from "$lib/services/mock-api";
   import { api } from "$lib/services/api";
+  import {
+    formatRupiah,
+    calculateStockDifference,
+    generateAdjustmentNumber
+  } from "@apoteku/core";
 
   // Types for Ledger & Adjustment History
   interface LedgerEntry {
@@ -172,18 +177,6 @@
   } | null>(null);
 
   // Helpers
-  function formatRupiah(num: number): string {
-    const prefix = num < 0 ? "-" : "";
-    return (
-      prefix +
-      new Intl.NumberFormat("id-ID", {
-        style: "currency",
-        currency: "IDR",
-        maximumFractionDigits: 0
-      }).format(Math.abs(num))
-    );
-  }
-
   function formatNowTimestamp(): string {
     const now = new Date();
     const yyyy = now.getFullYear();
@@ -508,8 +501,7 @@
 
   async function submitStockOpname() {
     const nowStr = formatNowTimestamp();
-    const docSeq = String(Math.floor(1000 + Math.random() * 9000));
-    const docNumber = `RJK-202510-${docSeq}`;
+    const docNumber = generateAdjustmentNumber();
     const operatorName = authStore.user?.fullName || "apt. Hafidz Nurul";
 
     isSavingOpname = true;
@@ -519,8 +511,9 @@
 
         const sysQty = selectedOpnameBatch.stock;
         const actQty = Math.max(0, Number(opnameActualQty) || 0);
-        const diffQty = actQty - sysQty;
         const cost = selectedOpnameBatch.buyPrice || 500;
+        const discrepancy = calculateStockDifference(sysQty, actQty, cost);
+        const diffQty = discrepancy.differenceQty;
         const reasonText =
           opnameNotes.trim() ||
           `Fisik: ${actQty}, Sistem: ${sysQty}`;
@@ -651,7 +644,8 @@
 
           const sysQty = batch.stock;
           const actQty = Math.max(0, Number(row.actualQty) || 0);
-          const diffQty = actQty - sysQty;
+          const discrepancy = calculateStockDifference(sysQty, actQty, row.buyPrice);
+          const diffQty = discrepancy.differenceQty;
           batch.stock = actQty;
 
           const totalProdStock = getProductTotalStock(prod);

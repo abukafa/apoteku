@@ -23,6 +23,7 @@
   import { api } from "$lib/services/api";
   import { mockApi } from "$lib/services/mock-api";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { formatRupiah } from "@apoteku/core";
 
   interface CustomerReturnRecord {
     id: string;
@@ -153,14 +154,6 @@
       console.warn("Retur onMount API error:", e);
     }
   });
-
-  function formatRupiah(num: number): string {
-    return new Intl.NumberFormat("id-ID", {
-      style: "currency",
-      currency: "IDR",
-      maximumFractionDigits: 0
-    }).format(num);
-  }
 
   // Branch-filtered arrays
   let branchCustomerReturns = $derived(

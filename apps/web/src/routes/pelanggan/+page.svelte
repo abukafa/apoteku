@@ -24,6 +24,7 @@
   import { onMount } from "svelte";
   import { mockApi } from "$lib/services/mock-api";
   import { api } from "$lib/services/api";
+  import { formatRupiah } from "@apoteku/core";
 
   let customers = $state<any[]>([]);
   let activeTab = $state<"semua" | "piutang">("semua");
@@ -198,14 +199,6 @@
     }
     isReceiveDebtPaymentOpen = false;
     selectedDebtCustomer = null;
-  }
-
-  function formatRupiah(num: number): string {
-    return new Intl.NumberFormat("id-ID", {
-      style: "currency",
-      currency: "IDR",
-      maximumFractionDigits: 0
-    }).format(num);
   }
 
   // Filtered (searches across all customers before pagination)

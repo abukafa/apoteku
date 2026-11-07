@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { db, schema } from "@apoteku/db";
 import { desc, count, sql, eq, and } from "drizzle-orm";
+import { generateOrderNumber } from "@apoteku/core";
 
 export const erpRoutes = new Elysia({ prefix: "/api" })
   // 1. STATISTIK SISTEM & DASHBOARD
@@ -538,7 +539,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           tenantId: tenant.id,
           branchId: body.branchId || crypto.randomUUID(),
           supplierId: body.supplierId || crypto.randomUUID(),
-          poNumber: body.poNumber || `SP-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+          poNumber: body.poNumber || generateOrderNumber(body.orderType || "REGULER"),
           orderDate: body.orderDate || new Date().toISOString().slice(0, 10),
           status: "ORDERED",
           totalAmount: String(body.totalAmount || 0),

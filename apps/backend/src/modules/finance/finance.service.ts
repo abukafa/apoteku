@@ -1,5 +1,11 @@
 import { db, schema } from "@apoteku/db";
 import { eq, and, or, desc, sql } from "drizzle-orm";
+import {
+  calculateDebtSettlement,
+  calculateDebtVoidReversal,
+  generateDebtPaymentNumber,
+  formatRupiah
+} from "@apoteku/core";
 
 export interface RecordDebtPaymentPayload {
   tenantId?: string;
@@ -65,13 +71,9 @@ class FinanceService {
       throw new Error("Nominal pembayaran harus lebih besar dari 0");
     }
 
-    const newPaidAmount = currentPaid + paymentAmount;
-    const isPaidOff = newPaidAmount >= grandTotal;
-
+    const settlement = calculateDebtSettlement(grandTotal, currentPaid, paymentAmount);
     const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
-    const randomSeq = Math.floor(100 + Math.random() * 900);
-    const paymentNumber = payload.paymentNumber || `RLH-${dateStr}-${randomSeq}`;
+    const paymentNumber = payload.paymentNumber || generateDebtPaymentNumber(undefined, now);
     const paymentId = crypto.randomUUID();
     const paymentDateStr = payload.paymentDate || now.toISOString().slice(0, 10);
 
@@ -109,14 +111,14 @@ class FinanceService {
     await db
       .update(schema.purchaseInvoices)
       .set({
-        paidAmount: String(newPaidAmount),
-        isPaidOff
+        paidAmount: String(settlement.newPaidAmount),
+        isPaidOff: settlement.isPaidOff
       })
       .where(eq(schema.purchaseInvoices.id, invoice.id));
 
     return {
       success: true,
-      message: `Pelunasan hutang ${paymentNumber} berhasil dicatat. Status Faktur: ${isPaidOff ? "LUNAS (PAID)" : "SEBAGIAN (PARTIAL)"}`,
+      message: `Pelunasan hutang ${paymentNumber} berhasil dicatat. Status Faktur: ${settlement.isPaidOff ? "LUNAS (PAID)" : "SEBAGIAN (PARTIAL)"}`,
       data: {
         payment: {
           id: createdPayment.id,
@@ -132,9 +134,9 @@ class FinanceService {
           supplierName: invoice.supplierName,
           grandTotal,
           previousPaid: currentPaid,
-          newPaidAmount,
-          remainingDebt: Math.max(0, grandTotal - newPaidAmount),
-          isPaidOff
+          newPaidAmount: settlement.newPaidAmount,
+          remainingDebt: settlement.remainingDebt,
+          isPaidOff: settlement.isPaidOff
         }
       }
     };
@@ -258,14 +260,13 @@ class FinanceService {
       if (invoice) {
         const currentPaid = Number(invoice.paidAmount || 0);
         const grandTotal = Number(invoice.grandTotal || 0);
-        const newPaidAmount = Math.max(0, currentPaid - paymentAmount);
-        const isPaidOff = newPaidAmount >= grandTotal;
+        const reversal = calculateDebtVoidReversal(grandTotal, currentPaid, paymentAmount);
 
         await tx
           .update(schema.purchaseInvoices)
           .set({
-            paidAmount: String(newPaidAmount),
-            isPaidOff
+            paidAmount: String(reversal.newPaidAmount),
+            isPaidOff: reversal.isPaidOff
           })
           .where(eq(schema.purchaseInvoices.id, invoice.id));
 
@@ -274,9 +275,9 @@ class FinanceService {
           invoiceNumber: invoice.invoiceNumber,
           grandTotal,
           previousPaid: currentPaid,
-          newPaidAmount,
-          remainingDebt: Math.max(0, grandTotal - newPaidAmount),
-          isPaidOff
+          newPaidAmount: reversal.newPaidAmount,
+          remainingDebt: reversal.remainingDebt,
+          isPaidOff: reversal.isPaidOff
         };
       }
 
@@ -286,7 +287,7 @@ class FinanceService {
 
       return {
         success: true,
-        message: `Bukti pembayaran ${payment.paymentNumber} sebesar Rp ${paymentAmount.toLocaleString("id-ID")} berhasil dibatalkan. Saldo tagihan faktur telah dipulihkan.`,
+        message: `Bukti pembayaran ${payment.paymentNumber} sebesar ${formatRupiah(paymentAmount)} berhasil dibatalkan. Saldo tagihan faktur telah dipulihkan.`,
         data: {
           deletedPaymentId: payment.id,
           paymentNumber: payment.paymentNumber,

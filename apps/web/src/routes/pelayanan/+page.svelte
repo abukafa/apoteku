@@ -31,6 +31,7 @@
   import { api } from "$lib/services/api";
   import { mockApi } from "$lib/services/mock-api";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { formatRupiah } from "@apoteku/core";
 
   const DEFAULT_DOCTORS = [
     { id: "doc-1", name: "dr. Hendra Setiawan, Sp.PD", sip: "SIP.503/441/Dinkes/2024", specialization: "Spesialis Penyakit Dalam", hospital: "RSUD Garut" },
@@ -376,14 +377,6 @@
       }
     } catch (_) {}
   });
-
-  function formatRupiah(num: number): string {
-    return new Intl.NumberFormat("id-ID", {
-      style: "currency",
-      currency: "IDR",
-      maximumFractionDigits: 0
-    }).format(num);
-  }
 
   // Reactive Derived Data
   let branchFilteredPrescriptions = $derived(

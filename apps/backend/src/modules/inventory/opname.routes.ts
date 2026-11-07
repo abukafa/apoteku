@@ -1,6 +1,7 @@
 import { Elysia, t } from "elysia";
 import { db, schema } from "@apoteku/db";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
+import { generateAdjustmentNumber, calculateStockDifference } from "@apoteku/core";
 
 export const opnameRoutes = new Elysia({ prefix: "/api/inventory" })
   .derive(({ headers }) => {
@@ -168,9 +169,7 @@ export const opnameRoutes = new Elysia({ prefix: "/api/inventory" })
 
       const adjustmentId = crypto.randomUUID();
       const now = new Date();
-      const yyyymm = now.toISOString().slice(0, 7).replace("-", "");
-      const randomSeq = Math.floor(1000 + Math.random() * 9000);
-      const adjustmentNumber = body.adjustmentNumber || `RJK-${yyyymm}-${randomSeq}`;
+      const adjustmentNumber = body.adjustmentNumber || generateAdjustmentNumber(undefined, now);
       const adjustmentDate = body.adjustmentDate || now.toISOString().slice(0, 10);
       const reason = body.reason || "Stok Opname & Rekonsiliasi Fisik Rutin";
 
@@ -242,9 +241,10 @@ export const opnameRoutes = new Elysia({ prefix: "/api/inventory" })
 
           const systemQty = Number(item.systemQty || 0);
           const actualQty = Math.max(0, Number(item.actualQty || 0));
-          const diffQty = actualQty - systemQty;
           const costPerUnit = Number(item.costPerUnit || 0);
-          const notes = item.notes || `Fisik: ${actualQty}, Sistem: ${systemQty}`;
+          const discrepancy = calculateStockDifference(systemQty, actualQty, costPerUnit);
+          const diffQty = discrepancy.differenceQty;
+          const notes = item.notes || `Fisik: ${actualQty}, Sistem: ${systemQty} (Status: ${discrepancy.status})`;
 
           // B. Insert ke stock_adjustment_items
           await tx.insert(schema.stockAdjustmentItems).values({

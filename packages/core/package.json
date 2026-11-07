@@ -10,7 +10,9 @@
     "./hardware/escpos": "./src/hardware/escpos.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "bun test"
   },
   "devDependencies": {
     "typescript": "^5.7.0"

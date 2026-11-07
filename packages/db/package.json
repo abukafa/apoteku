@@ -13,9 +13,14 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "migrate:master": "bun src/scripts/migrate-master-data.ts",
-    "migrate:purchases": "bun src/scripts/migrate-purchases.ts",
-    "migrate:sales": "bun src/scripts/migrate-sales.ts"
+    "lint": "tsc --noEmit",
+    "db:generate": "bun --env-file=../../.env x drizzle-kit generate",
+    "db:push": "bun --env-file=../../.env x drizzle-kit push",
+    "db:migrate": "bun --env-file=../../.env x drizzle-kit migrate",
+    "db:studio": "bun --env-file=../../.env x drizzle-kit studio",
+    "migrate:master": "bun --env-file=../../.env src/scripts/migrate-master-data.ts",
+    "migrate:purchases": "bun --env-file=../../.env src/scripts/migrate-purchases.ts",
+    "migrate:sales": "bun --env-file=../../.env src/scripts/migrate-sales.ts"
   },
   "dependencies": {
     "dexie": "^4.0.10",

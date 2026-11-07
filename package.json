@@ -12,7 +12,12 @@
     "dev:bun": "bun --filter @apoteku/backend --filter @apoteku/web --parallel run dev",
     "build": "turbo run build && node -e \"const fs=require('fs');if(fs.existsSync('apps/web/.vercel/output')){fs.rmSync('.vercel/output',{recursive:true,force:true});fs.mkdirSync('.vercel',{recursive:true});fs.cpSync('apps/web/.vercel/output','.vercel/output',{recursive:true,verbatimSymlinks:true});}\"",
     "check": "turbo run check",
-    "lint": "turbo run lint"
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:generate": "bun --filter @apoteku/db run db:generate",
+    "db:push": "bun --filter @apoteku/db run db:push",
+    "db:migrate": "bun --filter @apoteku/db run db:migrate",
+    "db:studio": "bun --filter @apoteku/db run db:studio"
   },
   "devDependencies": {
     "turbo": "^2.4.0",

@@ -3,8 +3,9 @@ import { cors } from "@elysiajs/cors";
 import { swagger } from "@elysiajs/swagger";
 import { staticPlugin } from "@elysiajs/static";
 import { existsSync, mkdirSync } from "node:fs";
+import { queryClient } from "@apoteku/db/client";
 import { posRoutes } from "./modules/pos/pos.routes.js";
-import { mediaRoutes } from "./modules/media/media.routes.js";
+import { mediaRoutes, UPLOADS_ROOT } from "./modules/media/media.routes.js";
 import { erpRoutes } from "./modules/erp/erp.routes.js";
 import { shiftRoutes } from "./modules/shift/shift.routes.js";
 import { prescriptionRoutes } from "./modules/prescription/prescription.routes.js";
@@ -17,8 +18,8 @@ import { reportsRoutes } from "./modules/reports/reports.routes.js";
 const PORT = Number(process.env.PORT || 3001);
 
 // Ensure uploads folder exists before staticPlugin mounts
-if (!existsSync("uploads")) {
-  mkdirSync("uploads", { recursive: true });
+if (!existsSync(UPLOADS_ROOT)) {
+  mkdirSync(UPLOADS_ROOT, { recursive: true });
 }
 
 export const app = new Elysia()
@@ -51,16 +52,27 @@ export const app = new Elysia()
   )
   .use(
     staticPlugin({
-      assets: "uploads",
+      assets: UPLOADS_ROOT,
       prefix: "/uploads"
     })
   )
-  .get("/health", () => ({
-    status: "ok",
-    service: "apoteku-backend",
-    engine: "Bun + Elysia.js",
-    timestamp: new Date().toISOString()
-  }))
+  .get("/health", async () => {
+    let dbStatus: "connected" | "disconnected" = "disconnected";
+    try {
+      await queryClient`SELECT 1`;
+      dbStatus = "connected";
+    } catch {
+      dbStatus = "disconnected";
+    }
+
+    return {
+      status: "ok",
+      db: dbStatus,
+      service: "apoteku-backend",
+      engine: "Bun + Elysia.js",
+      timestamp: new Date().toISOString()
+    };
+  })
   .use(posRoutes)
   .use(mediaRoutes)
   .use(erpRoutes)

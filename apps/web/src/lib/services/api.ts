@@ -1,7 +1,9 @@
 import { browser } from "$app/environment";
+import { env } from "$env/dynamic/public";
 
 const API_BASE_URL =
   (browser && (window as any).__API_BASE_URL__) ||
+  env.PUBLIC_API_URL ||
   (browser ? "" : "http://localhost:3001");
 
 export interface ApiFetchOptions extends RequestInit {

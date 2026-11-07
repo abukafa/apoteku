@@ -1,6 +1,25 @@
 import { Elysia, t } from "elysia";
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+
+function resolveUploadsRoot(): string {
+  if (process.env.UPLOADS_DIR) {
+    return resolve(process.env.UPLOADS_DIR);
+  }
+  let dir = import.meta.dir;
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(join(dir, "turbo.json"))) {
+      return join(dir, "uploads");
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return resolve(process.cwd(), "uploads");
+}
+
+export const UPLOADS_ROOT = resolveUploadsRoot();
 
 export const mediaRoutes = new Elysia({ prefix: "/api/uploads" }).post(
   "",
@@ -8,7 +27,7 @@ export const mediaRoutes = new Elysia({ prefix: "/api/uploads" }).post(
     try {
       const { file, category } = body;
       const targetCategory = category || "general";
-      const uploadDir = join(process.cwd(), "uploads", targetCategory);
+      const uploadDir = join(UPLOADS_ROOT, targetCategory);
 
       // Ensure directory exists
       await mkdir(uploadDir, { recursive: true });

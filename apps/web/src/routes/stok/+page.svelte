@@ -35,6 +35,7 @@
   import { portal } from "$lib/actions/portal";
   import { mockApi } from "$lib/services/mock-api";
   import { api } from "$lib/services/api";
+  import { alertStore } from "$lib/stores/alertStore.svelte";
   import {
     formatRupiah,
     calculateStockDifference,
@@ -1038,8 +1039,14 @@
   }
 
   async function handleDeleteProduct(prod: any) {
-    const confirmed = confirm(`Yakin ingin menghapus atau menonaktifkan obat "${prod.name}"?`);
-    if (!confirmed) return;
+    const isConfirmed = await alertStore.confirm({
+      type: "danger",
+      title: "Hapus / Nonaktifkan Obat",
+      message: `Apakah Anda yakin ingin menghapus atau menonaktifkan obat "${prod.name}"?`,
+      confirmText: "Ya, Lanjutkan",
+      cancelText: "Batal"
+    });
+    if (!isConfirmed) return;
     try {
       const res = await api.products.delete(prod.id);
       if (res?.success) {

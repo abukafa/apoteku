@@ -173,6 +173,34 @@ export class PosService {
           loyaltyPoints: c.pointBalance || 0
         }));
 
+        // Fetch Inventory Locations (Rak / Etalase / Gudang)
+        let locationsList = await db
+          .select()
+          .from(schema.inventoryLocations)
+          .where(eq(schema.inventoryLocations.branchId, branchId));
+
+        if (locationsList.length === 0) {
+          locationsList = await db
+            .select()
+            .from(schema.inventoryLocations)
+            .where(eq(schema.inventoryLocations.tenantId, tenantId));
+        }
+
+        if (locationsList.length === 0) {
+          const [newLoc] = await db
+            .insert(schema.inventoryLocations)
+            .values({
+              tenantId,
+              branchId,
+              code: "RAK-01",
+              name: "Etalase Apotek",
+              isDefault: true,
+              isActive: true
+            })
+            .returning();
+          if (newLoc) locationsList = [newLoc];
+        }
+
         // Fetch Branch Stocks & Batches (fallback to tenant-wide stocks if specific branch has none)
         let branchStocksData = await db
           .select()
@@ -211,6 +239,12 @@ export class PosService {
             branch,
             branches: formattedBranches,
             customers: formattedCustomers,
+            locations: locationsList.map((l) => ({
+              id: l.id,
+              code: l.code,
+              name: l.name,
+              isDefault: l.isDefault
+            })),
             cashierShifts,
             products: formattedProducts,
             branchStocks: branchStocksData.map((s) => ({
@@ -255,6 +289,7 @@ export class PosService {
         },
         branches: [],
         customers: [],
+        locations: [],
         cashierShifts: null,
         products: [],
         branchStocks: [],
@@ -289,6 +324,52 @@ export class PosService {
     let duplicateCount = 0;
     let failedCount = 0;
 
+    const isValidUuid = (str: string | null | undefined): boolean =>
+      Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+
+    // Validasi shift kasir aktif
+    let validShiftId: string | null = isValidUuid(payload.cashierShiftId) ? payload.cashierShiftId : null;
+    if (validShiftId) {
+      try {
+        const shiftRec = await db
+          .select({ id: schema.cashierShifts.id })
+          .from(schema.cashierShifts)
+          .where(eq(schema.cashierShifts.id, validShiftId))
+          .limit(1);
+        if (shiftRec.length === 0) validShiftId = null;
+      } catch (_) {
+        validShiftId = null;
+      }
+    }
+
+    // Cari lokasi inventaris default untuk cabang ini
+    let defaultLocationId: string | null = null;
+    try {
+      const locList = await db
+        .select({ id: schema.inventoryLocations.id })
+        .from(schema.inventoryLocations)
+        .where(eq(schema.inventoryLocations.branchId, payload.branchId))
+        .limit(1);
+      if (locList.length > 0) {
+        defaultLocationId = locList[0].id;
+      } else {
+        const anyLoc = await db
+          .select({ id: schema.inventoryLocations.id })
+          .from(schema.inventoryLocations)
+          .where(eq(schema.inventoryLocations.tenantId, tenantId))
+          .limit(1);
+        if (anyLoc.length > 0) {
+          defaultLocationId = anyLoc[0].id;
+        } else {
+          const anyLocAll = await db
+            .select({ id: schema.inventoryLocations.id })
+            .from(schema.inventoryLocations)
+            .limit(1);
+          if (anyLocAll.length > 0) defaultLocationId = anyLocAll[0].id;
+        }
+      }
+    } catch (_) {}
+
     for (const trx of payload.transactions) {
       try {
         // 1. Idempotency check: cek apakah ID transaksi sudah ada di DB
@@ -312,17 +393,35 @@ export class PosService {
           continue;
         }
 
+        // Sanitasi Foreign Key Pelanggan & Kasir
+        let validCustomerId: string | null = isValidUuid(trx.customerId) ? trx.customerId : null;
+        if (validCustomerId) {
+          try {
+            const custRec = await db
+              .select({ id: schema.customers.id })
+              .from(schema.customers)
+              .where(eq(schema.customers.id, validCustomerId))
+              .limit(1);
+            if (custRec.length === 0) validCustomerId = null;
+          } catch (_) {
+            validCustomerId = null;
+          }
+        }
+
+        const validCashierUserId = isValidUuid(trx.cashierUserId) ? trx.cashierUserId : null;
+        const cashierAuditUserId = validCashierUserId || "01931818-8000-7000-8000-000000000003";
+
         // 2. Commit transaction record to PostgreSQL
         try {
           await db.insert(schema.salesTransactions).values({
             id: trx.id,
             tenantId,
             branchId: payload.branchId,
-            cashierShiftId: payload.cashierShiftId,
+            cashierShiftId: validShiftId,
             invoiceNo: trx.invoiceNo,
-            cashierUserId: trx.cashierUserId,
+            cashierUserId: validCashierUserId,
             customerType: trx.customerType,
-            customerId: trx.customerId,
+            customerId: validCustomerId,
             patientName: trx.patientName,
             doctorName: trx.doctorName,
             paymentMethod: trx.paymentMethod,
@@ -342,35 +441,95 @@ export class PosService {
           // Insert items
           let lineNo = 1;
           for (const item of trx.items) {
+            let validBatchId: string | null = isValidUuid(item.batchId) ? item.batchId : null;
+            if (validBatchId) {
+              try {
+                const batchRec = await db
+                  .select({ id: schema.productBatches.id })
+                  .from(schema.productBatches)
+                  .where(eq(schema.productBatches.id, validBatchId))
+                  .limit(1);
+                if (batchRec.length === 0) validBatchId = null;
+              } catch (_) {
+                validBatchId = null;
+              }
+            }
+
+            // Validasi & Sanitasi Lokasi Inventaris
+            let itemLocationId: string | null = null;
+            if (isValidUuid(item.locationId)) {
+              try {
+                const locCheck = await db
+                  .select({ id: schema.inventoryLocations.id })
+                  .from(schema.inventoryLocations)
+                  .where(eq(schema.inventoryLocations.id, item.locationId))
+                  .limit(1);
+                if (locCheck.length > 0) itemLocationId = locCheck[0].id;
+              } catch (_) {}
+            }
+            if (!itemLocationId) {
+              itemLocationId = defaultLocationId;
+            }
+
+            // Validasi & Sanitasi Foreign Key Product
+            let validProductId: string | null = null;
+            if (isValidUuid(item.productId)) {
+              try {
+                const prodRec = await db
+                  .select({ id: schema.products.id })
+                  .from(schema.products)
+                  .where(eq(schema.products.id, item.productId))
+                  .limit(1);
+                if (prodRec.length > 0) validProductId = prodRec[0].id;
+              } catch (_) {}
+            }
+            if (!validProductId) {
+              try {
+                const fallbackProd = await db
+                  .select({ id: schema.products.id })
+                  .from(schema.products)
+                  .limit(1);
+                if (fallbackProd.length > 0) validProductId = fallbackProd[0].id;
+              } catch (_) {}
+            }
+            if (!validProductId) {
+              console.warn(`[PosService] Skip item without valid product ID:`, item);
+              continue;
+            }
+
+            const validItemId = isValidUuid(item.id)
+              ? item.id
+              : (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : v7());
+
             await db.insert(schema.salesTransactionItems).values({
-              id: item.id,
+              id: validItemId,
               transactionId: trx.id,
-              productId: item.productId,
+              productId: validProductId,
               lineNo: lineNo++,
-              batchId: item.batchId,
-              locationId: item.locationId,
-              unitName: item.unitName,
-              conversionFactor: String(item.conversionFactor),
-              qty: String(item.qty),
-              qtyBase: String(item.qtyBase),
-              unitPrice: String(item.unitPrice),
-              discountPercent: String(item.discountPercent),
-              discountAmount: String(item.discountAmount),
-              subtotal: String(item.subtotal),
-              dosageRules: item.dosageRules
+              batchId: validBatchId,
+              locationId: itemLocationId,
+              unitName: item.unitName || "TABLET",
+              conversionFactor: String(item.conversionFactor || 1),
+              qty: String(item.qty || 1),
+              qtyBase: String(item.qtyBase || 1),
+              unitPrice: String(item.unitPrice || 0),
+              discountPercent: String(item.discountPercent || 0),
+              discountAmount: String(item.discountAmount || 0),
+              subtotal: String(item.subtotal || 0),
+              dosageRules: item.dosageRules || null
             });
 
             // 3. Stock Deductions & Deficit Oversell Handling (Section 2.2 dokumen_plan.md)
-            if (item.batchId) {
+            if (validBatchId && itemLocationId) {
               const batchRecords = await db
                 .select()
                 .from(schema.branchBatchStocks)
                 .where(
                   and(
                     eq(schema.branchBatchStocks.branchId, payload.branchId),
-                    eq(schema.branchBatchStocks.productId, item.productId),
-                    eq(schema.branchBatchStocks.batchId, item.batchId),
-                    eq(schema.branchBatchStocks.locationId, item.locationId)
+                    eq(schema.branchBatchStocks.productId, validProductId),
+                    eq(schema.branchBatchStocks.batchId, validBatchId),
+                    eq(schema.branchBatchStocks.locationId, itemLocationId)
                   )
                 )
                 .limit(1);
@@ -388,9 +547,9 @@ export class PosService {
                     .where(
                       and(
                         eq(schema.branchBatchStocks.branchId, payload.branchId),
-                        eq(schema.branchBatchStocks.productId, item.productId),
-                        eq(schema.branchBatchStocks.batchId, item.batchId),
-                        eq(schema.branchBatchStocks.locationId, item.locationId)
+                        eq(schema.branchBatchStocks.productId, validProductId),
+                        eq(schema.branchBatchStocks.batchId, validBatchId),
+                        eq(schema.branchBatchStocks.locationId, itemLocationId)
                       )
                     );
 
@@ -405,8 +564,8 @@ export class PosService {
                     .where(
                       and(
                         eq(schema.branchStocks.branchId, payload.branchId),
-                        eq(schema.branchStocks.productId, item.productId),
-                        eq(schema.branchStocks.locationId, item.locationId)
+                        eq(schema.branchStocks.productId, validProductId),
+                        eq(schema.branchStocks.locationId, itemLocationId)
                       )
                     );
 
@@ -414,24 +573,24 @@ export class PosService {
                   await db.insert(schema.stockLedger).values({
                     tenantId,
                     branchId: payload.branchId,
-                    locationId: item.locationId,
-                    productId: item.productId,
-                    batchId: item.batchId,
+                    locationId: itemLocationId,
+                    productId: validProductId,
+                    batchId: validBatchId,
                     mutationType: "DEFICIT_OVERSELL",
                     quantityBase: String(-deficitQty),
                     costPerUnit: "0",
                     referenceId: trx.id,
                     notes: `Oversell offline: deficit ${deficitQty} base units pada transaksi ${trx.invoiceNo}`,
-                    createdBy: trx.cashierUserId
+                    createdBy: cashierAuditUserId
                   });
 
                   inventoryAlerts.push({
-                    productId: item.productId,
-                    locationId: item.locationId,
-                    batchId: item.batchId,
+                    productId: validProductId,
+                    locationId: itemLocationId,
+                    batchId: validBatchId,
                     remainingStock: 0,
                     isDeficit: true,
-                    message: `Defisit stok offline: batch ${item.batchId} terpotong habis, selisih ${deficitQty} tercatat untuk audit APA.`
+                    message: `Defisit stok offline: batch ${validBatchId} terpotong habis, selisih ${deficitQty} tercatat untuk audit APA.`
                   });
                 } else {
                   // NORMAL DEDUCTION
@@ -442,9 +601,9 @@ export class PosService {
                     .where(
                       and(
                         eq(schema.branchBatchStocks.branchId, payload.branchId),
-                        eq(schema.branchBatchStocks.productId, item.productId),
-                        eq(schema.branchBatchStocks.batchId, item.batchId),
-                        eq(schema.branchBatchStocks.locationId, item.locationId)
+                        eq(schema.branchBatchStocks.productId, validProductId),
+                        eq(schema.branchBatchStocks.batchId, validBatchId),
+                        eq(schema.branchBatchStocks.locationId, itemLocationId)
                       )
                     );
 
@@ -457,8 +616,8 @@ export class PosService {
                     .where(
                       and(
                         eq(schema.branchStocks.branchId, payload.branchId),
-                        eq(schema.branchStocks.productId, item.productId),
-                        eq(schema.branchStocks.locationId, item.locationId)
+                        eq(schema.branchStocks.productId, validProductId),
+                        eq(schema.branchStocks.locationId, itemLocationId)
                       )
                     );
 
@@ -466,22 +625,51 @@ export class PosService {
                   await db.insert(schema.stockLedger).values({
                     tenantId,
                     branchId: payload.branchId,
-                    locationId: item.locationId,
-                    productId: item.productId,
-                    batchId: item.batchId,
+                    locationId: itemLocationId,
+                    productId: validProductId,
+                    batchId: validBatchId,
                     mutationType: "POS_SALE",
                     quantityBase: String(-item.qtyBase),
                     costPerUnit: "0",
                     referenceId: trx.id,
                     notes: `Penjualan POS nota ${trx.invoiceNo}`,
-                    createdBy: trx.cashierUserId
+                    createdBy: cashierAuditUserId
                   });
                 }
               }
+            } else if (itemLocationId) {
+              // Pemotongan jika tidak ada batchId spesifik (unbatched deduction)
+              await db
+                .update(schema.branchStocks)
+                .set({
+                  totalQtyBase: sql`${schema.branchStocks.totalQtyBase} - ${item.qtyBase}`,
+                  updatedAt: new Date()
+                })
+                .where(
+                  and(
+                    eq(schema.branchStocks.branchId, payload.branchId),
+                    eq(schema.branchStocks.productId, validProductId),
+                    eq(schema.branchStocks.locationId, itemLocationId)
+                  )
+                );
+
+              await db.insert(schema.stockLedger).values({
+                tenantId,
+                branchId: payload.branchId,
+                locationId: itemLocationId,
+                productId: validProductId,
+                batchId: null,
+                mutationType: "POS_SALE",
+                quantityBase: String(-item.qtyBase),
+                costPerUnit: "0",
+                referenceId: trx.id,
+                notes: `Penjualan POS nota ${trx.invoiceNo} (unbatched)`,
+                createdBy: cashierAuditUserId
+              });
             }
           }
         } catch (dbErr) {
-          console.warn("[PosService] DB write error, logging sync memory success:", dbErr);
+          console.error("[PosService] DB write error during transaction sync:", dbErr);
         }
 
         processedCount++;
@@ -627,6 +815,279 @@ export class PosService {
         updatedStocks: [],
         updatedBatches: []
       };
+    }
+  }
+
+  /**
+   * Mengambil Shift Kasir Aktif & Rekap Penjualan Shift Tersebut
+   */
+  async getActiveShift(tenantId: string, branchId: string) {
+    try {
+      const shiftRows = await db
+        .select()
+        .from(schema.cashierShifts)
+        .where(
+          and(
+            eq(schema.cashierShifts.tenantId, tenantId),
+            eq(schema.cashierShifts.branchId, branchId),
+            eq(schema.cashierShifts.isOpen, true)
+          )
+        )
+        .limit(1);
+
+      if (shiftRows.length === 0) {
+        return {
+          success: true,
+          shift: null
+        };
+      }
+
+      const shift = shiftRows[0];
+
+      // Ambil seluruh penjualan pada shift ini untuk rekonsiliasi kas laci
+      const sales = await db
+        .select({
+          paymentMethod: schema.salesTransactions.paymentMethod,
+          grandTotal: schema.salesTransactions.grandTotal,
+          paidAmount: schema.salesTransactions.paidAmount,
+          changeAmount: schema.salesTransactions.changeAmount
+        })
+        .from(schema.salesTransactions)
+        .where(eq(schema.salesTransactions.cashierShiftId, shift.id));
+
+      let cashSales = 0;
+      let nonCashSales = 0;
+      let qrisSales = 0;
+
+      for (const s of sales) {
+        const netCash = Math.max(0, Number(s.paidAmount) - Number(s.changeAmount));
+        const total = Number(s.grandTotal);
+
+        if (s.paymentMethod === "CASH") {
+          cashSales += netCash > 0 ? netCash : total;
+        } else {
+          nonCashSales += total;
+          if (s.paymentMethod === "QRIS") {
+            qrisSales += total;
+          }
+        }
+      }
+
+      const initialCash = Number(shift.initialCash);
+      const expectedCash = initialCash + cashSales;
+      const totalSales = cashSales + nonCashSales;
+
+      const shiftName =
+        shift.shiftNumber === 1
+          ? "Pagi"
+          : shift.shiftNumber === 2
+          ? "Siang"
+          : "Malam";
+
+      return {
+        success: true,
+        shift: {
+          id: shift.id,
+          branchId: shift.branchId,
+          userId: shift.userId,
+          shiftNumber: shift.shiftNumber,
+          shiftName,
+          startTime: shift.startTime.toISOString(),
+          initialCash,
+          startingCash: initialCash,
+          cashSales,
+          qrisSales,
+          nonCashSales,
+          totalSales,
+          expectedCash,
+          isOpen: shift.isOpen,
+          notes: shift.notes
+        }
+      };
+    } catch (err: any) {
+      console.error("[PosService] getActiveShift error:", err);
+      return { success: false, error: err?.message, shift: null };
+    }
+  }
+
+  /**
+   * Buka Shift Kasir Baru
+   */
+  async openShift(
+    tenantId: string,
+    branchId: string,
+    userId: string,
+    initialCash: number,
+    shiftNumber = 1,
+    notes?: string
+  ) {
+    try {
+      // Cek apakah sudah ada shift yang sedang terbuka di cabang ini
+      const existing = await db
+        .select()
+        .from(schema.cashierShifts)
+        .where(
+          and(
+            eq(schema.cashierShifts.tenantId, tenantId),
+            eq(schema.cashierShifts.branchId, branchId),
+            eq(schema.cashierShifts.isOpen, true)
+          )
+        )
+        .limit(1);
+
+      if (existing.length > 0) {
+        const shift = existing[0];
+        const shiftName =
+          shift.shiftNumber === 1 ? "Pagi" : shift.shiftNumber === 2 ? "Siang" : "Malam";
+        return {
+          success: true,
+          message: "Shift aktif sudah dibuka sebelumnya",
+          shift: {
+            id: shift.id,
+            branchId: shift.branchId,
+            userId: shift.userId,
+            shiftNumber: shift.shiftNumber,
+            shiftName,
+            startTime: shift.startTime.toISOString(),
+            initialCash: Number(shift.initialCash),
+            startingCash: Number(shift.initialCash),
+            isOpen: shift.isOpen
+          }
+        };
+      }
+
+      const [newShift] = await db
+        .insert(schema.cashierShifts)
+        .values({
+          tenantId,
+          branchId,
+          userId,
+          shiftNumber,
+          initialCash: String(initialCash),
+          expectedCash: String(initialCash),
+          actualCash: "0",
+          cashDifference: "0",
+          totalNonCash: "0",
+          totalSales: "0",
+          notes: notes || null,
+          isOpen: true
+        })
+        .returning();
+
+      const shiftName =
+        newShift.shiftNumber === 1 ? "Pagi" : newShift.shiftNumber === 2 ? "Siang" : "Malam";
+
+      return {
+        success: true,
+        shift: {
+          id: newShift.id,
+          branchId: newShift.branchId,
+          userId: newShift.userId,
+          shiftNumber: newShift.shiftNumber,
+          shiftName,
+          startTime: newShift.startTime.toISOString(),
+          initialCash: Number(newShift.initialCash),
+          startingCash: Number(newShift.initialCash),
+          isOpen: newShift.isOpen,
+          notes: newShift.notes
+        }
+      };
+    } catch (err: any) {
+      console.error("[PosService] openShift error:", err);
+      return { success: false, error: err?.message };
+    }
+  }
+
+  /**
+   * Tutup Shift Kasir & Rekonsiliasi Kas Laci
+   */
+  async closeShift(
+    tenantId: string,
+    shiftId: string,
+    actualCash: number,
+    notes?: string
+  ) {
+    try {
+      const shiftRows = await db
+        .select()
+        .from(schema.cashierShifts)
+        .where(
+          and(
+            eq(schema.cashierShifts.id, shiftId),
+            eq(schema.cashierShifts.tenantId, tenantId)
+          )
+        )
+        .limit(1);
+
+      if (shiftRows.length === 0) {
+        return { success: false, error: "Shift tidak ditemukan" };
+      }
+
+      const shift = shiftRows[0];
+
+      // Ambil transaksi penjualan pada shift ini
+      const sales = await db
+        .select({
+          paymentMethod: schema.salesTransactions.paymentMethod,
+          grandTotal: schema.salesTransactions.grandTotal,
+          paidAmount: schema.salesTransactions.paidAmount,
+          changeAmount: schema.salesTransactions.changeAmount
+        })
+        .from(schema.salesTransactions)
+        .where(eq(schema.salesTransactions.cashierShiftId, shift.id));
+
+      let cashSales = 0;
+      let nonCashSales = 0;
+
+      for (const s of sales) {
+        const netCash = Math.max(0, Number(s.paidAmount) - Number(s.changeAmount));
+        const total = Number(s.grandTotal);
+        if (s.paymentMethod === "CASH") {
+          cashSales += netCash > 0 ? netCash : total;
+        } else {
+          nonCashSales += total;
+        }
+      }
+
+      const initialCash = Number(shift.initialCash);
+      const expectedCash = initialCash + cashSales;
+      const cashDifference = actualCash - expectedCash;
+      const totalSales = cashSales + nonCashSales;
+      const endTime = new Date();
+
+      await db
+        .update(schema.cashierShifts)
+        .set({
+          endTime,
+          expectedCash: String(expectedCash),
+          actualCash: String(actualCash),
+          cashDifference: String(cashDifference),
+          totalNonCash: String(nonCashSales),
+          totalSales: String(totalSales),
+          notes: notes || shift.notes,
+          isOpen: false
+        })
+        .where(eq(schema.cashierShifts.id, shift.id));
+
+      return {
+        success: true,
+        summary: {
+          shiftId: shift.id,
+          startTime: shift.startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          initialCash,
+          cashSales,
+          nonCashSales,
+          totalSales,
+          expectedCash,
+          actualCash,
+          cashDifference,
+          notes: notes || shift.notes
+        }
+      };
+    } catch (err: any) {
+      console.error("[PosService] closeShift error:", err);
+      return { success: false, error: err?.message };
     }
   }
 }

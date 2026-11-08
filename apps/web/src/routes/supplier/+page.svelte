@@ -23,6 +23,7 @@
   import { onMount } from "svelte";
   import { mockApi } from "$lib/services/mock-api";
   import { api } from "$lib/services/api";
+  import { alertStore } from "$lib/stores/alertStore.svelte";
   import { formatRupiah } from "@apoteku/core";
 
   let suppliers = $state<any[]>([]);
@@ -111,7 +112,7 @@
 
   async function handleSaveSupplier() {
     if (!supplierForm.name.trim()) {
-      alert("Nama PBF wajib diisi");
+      alertStore.warning("Validasi Distributor", "Nama distributor / PBF wajib diisi.");
       return;
     }
     isSavingSupplier = true;
@@ -123,48 +124,53 @@
           if (idx !== -1) {
             suppliers[idx] = { ...suppliers[idx], ...res.data };
           }
-          supplierFeedback = { type: 'success', message: `Distributor "${res.data.name}" berhasil diperbarui!` };
+          alertStore.toast(`Distributor "${res.data.name}" berhasil diperbarui!`, "success");
         } else {
-          alert(res?.error || "Gagal memperbarui supplier");
+          alertStore.danger("Gagal Memperbarui Distributor", res?.error || "Gagal memperbarui distributor");
         }
       } else {
         const res = await api.suppliers.create(supplierForm);
         if (res?.success) {
           suppliers = [res.data, ...suppliers];
-          supplierFeedback = { type: 'success', message: `Distributor "${res.data.name}" berhasil ditambahkan!` };
+          alertStore.toast(`Distributor "${res.data.name}" berhasil ditambahkan!`, "success");
         } else {
-          alert(res?.error || "Gagal menambahkan supplier");
+          alertStore.danger("Gagal Menambahkan Distributor", res?.error || "Gagal menambahkan distributor");
         }
       }
       isSupplierModalOpen = false;
-      setTimeout(() => { supplierFeedback = null; }, 4000);
     } catch (err: any) {
-      alert(err?.message || "Terjadi kesalahan saat menyimpan supplier");
+      alertStore.danger("Terjadi Kesalahan", err?.message || "Terjadi kesalahan saat menyimpan distributor");
     } finally {
       isSavingSupplier = false;
     }
   }
 
   async function handleDeleteSupplier(s: any) {
-    const confirmed = confirm(`Yakin ingin menghapus atau menonaktifkan distributor "${s.name}"?`);
-    if (!confirmed) return;
+    const isConfirmed = await alertStore.confirm({
+      type: "danger",
+      title: "Hapus / Nonaktifkan Distributor",
+      message: `Apakah Anda yakin ingin menghapus atau menonaktifkan distributor "${s.name}"?`,
+      confirmText: "Ya, Lanjutkan",
+      cancelText: "Batal"
+    });
+    if (!isConfirmed) return;
+
     try {
       const res = await api.suppliers.delete(s.id);
       if (res?.success) {
         if (res.action === 'soft_deleted') {
           const idx = suppliers.findIndex(x => x.id === s.id);
           if (idx !== -1) suppliers[idx].isActive = false;
-          supplierFeedback = { type: 'success', message: `Distributor "${s.name}" dinonaktifkan (karena memiliki riwayat faktur/PO).` };
+          alertStore.toast(`Distributor "${s.name}" dinonaktifkan (memiliki riwayat transaksi).`, "info");
         } else {
           suppliers = suppliers.filter(x => x.id !== s.id);
-          supplierFeedback = { type: 'success', message: `Distributor "${s.name}" berhasil dihapus permanen!` };
+          alertStore.toast(`Distributor "${s.name}" berhasil dihapus permanen!`, "success");
         }
-        setTimeout(() => { supplierFeedback = null; }, 4000);
       } else {
-        alert(res?.error || "Gagal menghapus supplier");
+        alertStore.danger("Gagal Menghapus Distributor", res?.error || "Gagal menghapus distributor");
       }
     } catch (err: any) {
-      alert(err?.message || "Terjadi kesalahan saat menghapus supplier");
+      alertStore.danger("Terjadi Kesalahan", err?.message || "Terjadi kesalahan saat menghapus distributor");
     }
   }
 
@@ -243,11 +249,14 @@
 
   async function handleSavePbfPayment() {
     if (!selectedPbfDebt || pbfPaymentAmount <= 0) {
-      alert("Nominal pembayaran harus lebih besar dari Rp 0");
+      alertStore.warning("Nominal Tidak Valid", "Nominal pembayaran hutang harus lebih besar dari Rp 0.");
       return;
     }
     if (pbfPaymentAmount > selectedPbfDebt.totalDebt) {
-      alert(`Nominal pembayaran (${formatRupiah(pbfPaymentAmount)}) tidak boleh melebihi sisa tagihan (${formatRupiah(selectedPbfDebt.totalDebt)})`);
+      alertStore.danger(
+        "Nominal Melebihi Tagihan",
+        `Nominal pembayaran (${formatRupiah(pbfPaymentAmount)}) tidak boleh melebihi sisa tagihan faktur (${formatRupiah(selectedPbfDebt.totalDebt)}).`
+      );
       return;
     }
 
@@ -269,24 +278,23 @@
           selectedPbfDebt.status = "PAID";
         }
 
-        supplierFeedback = {
-          type: "success",
-          message: `Pelunasan hutang (${paidNum}) faktur ${selectedPbfDebt.invoiceRef} sebesar ${formatRupiah(pbfPaymentAmount)} berhasil dicatat! Status Faktur: ${isLunas ? "LUNAS (PAID)" : "SEBAGIAN (PARTIAL)"}.`
-        };
+        alertStore.toast(
+          `Pelunasan hutang (${paidNum}) faktur ${selectedPbfDebt.invoiceRef} sebesar ${formatRupiah(pbfPaymentAmount)} berhasil dicatat! Status: ${isLunas ? "LUNAS (PAID)" : "SEBAGIAN (PARTIAL)"}.`,
+          "success",
+          "Pembayaran Tercatat",
+          5000
+        );
 
         isPayPbfDebtModalOpen = false;
         selectedPbfDebt = null;
 
         // Muat ulang data hutang terbaru dari database
         await loadDebts();
-        setTimeout(() => {
-          supplierFeedback = null;
-        }, 5000);
       } else {
-        alert(res?.error || "Gagal mencatat pelunasan hutang");
+        alertStore.danger("Gagal Mencatat Pelunasan", res?.error || "Gagal mencatat pelunasan hutang");
       }
     } catch (err: any) {
-      alert(err?.message || "Terjadi kesalahan saat memproses pembayaran");
+      alertStore.danger("Terjadi Kesalahan", err?.message || "Terjadi kesalahan saat memproses pembayaran");
     } finally {
       isSavingPayment = false;
     }
@@ -295,29 +303,30 @@
   let isDeletingPaymentId = $state<string | null>(null);
 
   async function handleDeleteDebtPayment(p: any) {
-    const confirmed = confirm(
-      `Yakin ingin membatalkan pembayaran ${p.paymentNumber || "ini"} sebesar ${formatRupiah(p.amountPaid)}?\n\n` +
-      `Sisa tagihan faktur ${p.invoiceNumber || ""} akan dikembalikan dan status faktur akan dipulihkan.`
-    );
-    if (!confirmed) return;
+    const isConfirmed = await alertStore.confirm({
+      type: "danger",
+      title: "Batalkan Pembayaran Hutang",
+      message: `Yakin ingin membatalkan pembayaran ${p.paymentNumber || "ini"} sebesar ${formatRupiah(p.amountPaid)}? Sisa tagihan faktur ${p.invoiceNumber || ""} akan dikembalikan dan status faktur akan dipulihkan.`,
+      confirmText: "Ya, Batalkan Pembayaran",
+      cancelText: "Kembali"
+    });
+    if (!isConfirmed) return;
 
     isDeletingPaymentId = p.id;
     try {
       const res = await api.finance.deleteDebtPayment(p.id);
       if (res?.success) {
-        supplierFeedback = {
-          type: "success",
-          message: res.message || `Bukti pembayaran ${p.paymentNumber} berhasil dibatalkan. Tagihan faktur dipulihkan.`
-        };
+        alertStore.toast(
+          res.message || `Bukti pembayaran ${p.paymentNumber} berhasil dibatalkan. Tagihan faktur dipulihkan.`,
+          "success",
+          "Pembatalan Berhasil"
+        );
         await loadDebts();
-        setTimeout(() => {
-          supplierFeedback = null;
-        }, 5000);
       } else {
-        alert(res?.error || "Gagal membatalkan pembayaran hutang");
+        alertStore.danger("Gagal Membatalkan Pembayaran", res?.error || "Gagal membatalkan pembayaran hutang");
       }
     } catch (err: any) {
-      alert(err?.message || "Terjadi kesalahan saat membatalkan pembayaran hutang");
+      alertStore.danger("Terjadi Kesalahan", err?.message || "Terjadi kesalahan saat membatalkan pembayaran hutang");
     } finally {
       isDeletingPaymentId = null;
     }

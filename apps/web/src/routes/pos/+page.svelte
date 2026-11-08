@@ -13,8 +13,10 @@
   } from "$lib/services/mock-api";
   import { calculateCartTotals, selectFefoBatches, EscPosBuilder } from "@apoteku/core";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { alertStore } from "$lib/stores/alertStore.svelte";
   import { localDb } from "@apoteku/db/client-indexeddb";
   import { networkStore } from "$lib/stores/networkStore.svelte";
+  import { api } from "$lib/services/api";
   import { portal } from "$lib/actions/portal";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
@@ -55,11 +57,14 @@
   let customers = $state<Customer[]>([]);
   let selectedCustomerId = $state("cust-general");
   let activeShift = $state<CashierShift | null>(null);
+  let defaultLocationId = $state<string>("01931818-8000-7000-8000-000000000004");
 
   let searchQuery = $state("");
   let products = $state<Product[]>([]);
+  let allCatalogProducts = $state<Product[]>([]);
   let productMap = $state(new Map<string, Product>());
   let isLoading = $state(false);
+  let isSyncingCatalog = $state(false);
 
   // Paginasi katalog POS (24 produk per halaman; pencarian bekerja di seluruh 5.749 obat)
   const POS_PAGE_SIZE = 24;
@@ -120,10 +125,9 @@
   // Offline Sync State powered by networkStore & Dexie.js
   let pendingSalesCount = $derived(networkStore.pendingCount);
   let isSyncing = $derived(networkStore.isSyncing);
-  let syncFeedback = $derived(networkStore.syncMessage);
 
   async function handleManualSync() {
-    await networkStore.syncPendingSales();
+    await networkStore.syncPendingSales(true);
   }
 
   // Shift Register State
@@ -137,11 +141,43 @@
   let shiftNotes = $state("");
   let shiftClosureSuccess = $state("");
 
+  async function openShiftModal() {
+    isShiftModalOpen = true;
+    if (networkStore.effectiveOnline) {
+      try {
+        const res = await api.pos.getActiveShift(selectedBranchId);
+        if (res && res.success && res.shift) {
+          activeShift = res.shift;
+          shiftInitialCash = res.shift.initialCash || 0;
+          shiftCashSales = res.shift.cashSales || 0;
+          shiftQrisSales = res.shift.qrisSales || 0;
+          shiftActualCash = res.shift.expectedCash || shiftInitialCash + shiftCashSales;
+        }
+      } catch (err) {
+        console.warn("[POS] Gagal memuat rekap shift kasir dari API:", err);
+      }
+    }
+  }
+
   async function handleOpenShift() {
     try {
-      const created = await mockApi.openShift(selectedBranchId, shiftInitialCash, 1, shiftNotes);
-      activeShift = created;
-      shiftClosureSuccess = `Shift #${created.shiftName} berhasil dibuka!`;
+      if (networkStore.effectiveOnline) {
+        const res = await api.pos.openShift({
+          branchId: selectedBranchId,
+          initialCash: shiftInitialCash,
+          shiftNumber: 1,
+          notes: shiftNotes
+        });
+        if (res && res.success && res.shift) {
+          activeShift = res.shift;
+        } else {
+          activeShift = await mockApi.openShift(selectedBranchId, shiftInitialCash, 1, shiftNotes);
+        }
+      } else {
+        activeShift = await mockApi.openShift(selectedBranchId, shiftInitialCash, 1, shiftNotes);
+      }
+
+      shiftClosureSuccess = `Shift #${activeShift?.shiftName || "Pagi"} berhasil dibuka!`;
       setTimeout(() => {
         shiftClosureSuccess = "";
         isShiftModalOpen = false;
@@ -154,6 +190,12 @@
   async function handleCloseShift() {
     if (activeShift?.id) {
       try {
+        if (networkStore.effectiveOnline) {
+          await api.pos.closeShift(activeShift.id, {
+            actualCash: shiftActualCash,
+            notes: shiftNotes
+          });
+        }
         await mockApi.closeShift(activeShift.id, shiftActualCash, shiftNotes);
         activeShift = null;
       } catch (e) {
@@ -283,163 +325,264 @@
 
   let changeAmount = $derived(totals.changeAmount);
 
-  // Load initial data
-  onMount(async () => {
-    isLoading = true;
-    if (authStore.user?.branchId) {
-      selectedBranchId = authStore.user.branchId;
+  // Filter memory katalog obat secara instan (< 2ms, zero disk I/O)
+  function applyCatalogFilter() {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q && selectedCategoryId === "cat-all") {
+      products = allCatalogProducts;
+    } else {
+      products = allCatalogProducts.filter((p) => {
+        const matchCat =
+          selectedCategoryId === "cat-all" || p.categoryId === selectedCategoryId;
+        if (!matchCat) return false;
+        if (!q) return true;
+        return (
+          p.name.toLowerCase().includes(q) ||
+          p.sku.toLowerCase().includes(q) ||
+          (p.barcode && p.barcode.includes(q)) ||
+          (p.description && p.description.toLowerCase().includes(q))
+        );
+      });
     }
+    posCatalogPage = 1;
+  }
+
+  // Load seluruh produk dari Dexie IndexedDB ke memori RAM kasir
+  async function loadLocalProducts(): Promise<boolean> {
+    if (typeof window === "undefined") return false;
     try {
-      const [branchList, catList, custList, shift, allProds] = await Promise.all([
-        mockApi.getBranches(),
-        mockApi.getCategories(),
-        mockApi.getCustomers(),
-        mockApi.getCurrentShift(selectedBranchId),
-        mockApi.searchProducts({ branchId: selectedBranchId })
-      ]);
-      branches = branchList;
-      categories = catList;
-      customers = custList;
-      activeShift = shift;
-      if (shift) {
-        shiftInitialCash = shift.startingCash || 0;
-        shiftActualCash = shift.startingCash || 0;
-      }
-      for (const p of allProds) {
-        productMap.set(p.id, p);
+      const localItems = await localDb.products.toArray();
+      if (localItems.length === 0) return false;
+
+      // Ambil seluruh batch stock dalam 1 query cepat
+      const allBatches = await localDb.batchStocks.toArray();
+      const batchMap = new Map<string, any[]>();
+      for (const b of allBatches) {
+        const list = batchMap.get(b.productId) || [];
+        list.push({
+          id: b.batchId,
+          batchNumber: b.batchNo || "BATCH-REG",
+          branchId: selectedBranchId,
+          expiryDate: b.expiredDate || "2029-12-31",
+          stock: b.qtyBase,
+          buyPrice: b.buyPrice
+        });
+        batchMap.set(b.productId, list);
       }
 
-      // Seed local Dexie indexedDB if empty
-      if (typeof window !== "undefined") {
-        try {
-          const prodCount = await localDb.products.count();
-          if (prodCount === 0 && allProds.length > 0) {
-            const dexieProds = allProds.map((p) => ({
+      // Ambil seluruh total stok cabang dalam 1 query cepat
+      const allBranchStocks = await localDb.branchStocks.toArray();
+      const branchStockMap = new Map<string, number>();
+      for (const s of allBranchStocks) {
+        branchStockMap.set(s.productId, Number(s.totalQtyBase || 0));
+      }
+
+      productMap.clear(); // Bersihkan cache RAM agar selalu konsisten dengan data riil stok
+      allCatalogProducts = localItems.map((lp) => {
+        let productBatches = batchMap.get(lp.id);
+
+        // Jika belum ada alokasi per batch, cek saldo stok riil cabang dari branchStocks
+        if (!productBatches || productBatches.length === 0) {
+          const realStock = branchStockMap.get(lp.id) || 0;
+          if (realStock > 0) {
+            productBatches = [
+              {
+                id: "batch-local-01",
+                batchNumber: "REGULER",
+                branchId: selectedBranchId,
+                expiryDate: "2029-12-31",
+                stock: realStock,
+                buyPrice: 0
+              }
+            ];
+          } else {
+            productBatches = []; // Stok benar-benar 0 (tidak ada dummy 100)
+          }
+        }
+
+        const item: Product = {
+          id: lp.id,
+          sku: lp.sku,
+          barcode: lp.barcode || "",
+          name: lp.name,
+          categoryId: "cat-1",
+          categoryName: "Obat Bebas & Terbatas",
+          drugClass: (lp.drugClass as any) || "OTC",
+          requiresPrescription: lp.drugClass === "ETHICAL" || lp.drugClass === "KERAS",
+          isConsignment: false,
+          manufacturer: "Generik",
+          baseUnit: lp.baseUnit,
+          description: lp.activeSubstance || "",
+          indication: "Sesuai anjuran medis",
+          dosage: lp.defaultDosage || "3x1 Sehari",
+          units: lp.units.map((u) => ({
+            unit: u.unitName,
+            multiplier: u.conversionFactor,
+            prices: {
+              general: u.salePriceGeneral,
+              prescription: u.salePriceResep,
+              wholesale: u.salePriceGrosir,
+              delivery: u.salePriceDelivery,
+              member: u.salePriceMember
+            }
+          })),
+          batches: productBatches
+        };
+        productMap.set(item.id, item);
+        return item;
+      });
+
+      applyCatalogFilter();
+      return true;
+    } catch (dexErr) {
+      console.warn("[POS] Gagal load dari lokal IndexedDB:", dexErr);
+      return false;
+    }
+  }
+
+  // Unduh penuh master bootstrap dari server ke IndexedDB (hanya pertama kali atau saat sinkronisasi manual)
+  async function syncFullBootstrapFromServer(force = false) {
+    if (!networkStore.effectiveOnline || isSyncingCatalog) return;
+    isSyncingCatalog = true;
+
+    try {
+      const res = await api.pos.getBootstrap(selectedBranchId);
+      if (res && res.success && res.data) {
+        const d = res.data;
+        if (d.branches && d.branches.length > 0) branches = d.branches;
+        if (d.customers && d.customers.length > 0) customers = d.customers;
+        if (d.cashierShifts) {
+          activeShift = d.cashierShifts;
+          shiftInitialCash = d.cashierShifts.initialCash || 0;
+          shiftActualCash = d.cashierShifts.expectedCash || d.cashierShifts.initialCash || 0;
+        }
+        if (d.locations && d.locations.length > 0) {
+          const defLoc = d.locations.find((l: any) => l.isDefault) || d.locations[0];
+          defaultLocationId = defLoc.id;
+        }
+
+        if (typeof window !== "undefined") {
+          if (d.products && d.products.length > 0) {
+            const dexieProds = d.products.map((p: any) => ({
               id: p.id,
               sku: p.sku,
               barcode: p.barcode || null,
               name: p.name,
-              activeSubstance: p.description || null,
-              dosageForm: "Tablet",
-              defaultDosage: "3x1 Sehari",
-              rackLocation: "RAK-A1",
+              activeSubstance: p.activeSubstance || null,
+              dosageForm: p.dosageForm || "Tablet",
+              defaultDosage: p.defaultDosage || "3x1 Sehari",
+              rackLocation: p.rackLocation || "RAK-01",
               drugClass: p.drugClass,
               baseUnit: p.baseUnit,
-              isActive: true,
-              units: p.units.map((u) => ({
-                unitName: u.unit,
-                conversionFactor: u.multiplier,
-                salePriceGeneral: u.prices.general || 0,
-                salePriceResep: u.prices.prescription || 0,
-                salePriceGrosir: u.prices.wholesale || 0,
-                salePriceDelivery: u.prices.delivery || 0,
-                salePriceMember: u.prices.member || 0,
-                isBaseUnit: u.multiplier === 1
-              })),
+              isActive: p.isActive,
+              units: p.units || [],
               updatedAt: new Date().toISOString()
             }));
             await localDb.products.bulkPut(dexieProds);
           }
-        } catch (dexErr) {
-          console.warn("[POS] Dexie seed skipped:", dexErr);
+
+          if (d.branchBatches && d.branchBatches.length > 0) {
+            const dexieBatches = d.branchBatches.map((b: any) => ({
+              id: `${b.locationId}_${b.productId}_${b.batchId}`,
+              productId: b.productId,
+              locationId: b.locationId,
+              batchId: b.batchId,
+              batchNo: b.batchNo || "BATCH-REG",
+              expiredDate: b.expiredDate || "2029-12-31",
+              qtyBase: Number(b.qtyBase || 0),
+              buyPrice: Number(b.buyPrice || 0),
+              updatedAt: new Date().toISOString()
+            }));
+            await localDb.batchStocks.bulkPut(dexieBatches);
+          }
+
+          if (d.branchStocks && d.branchStocks.length > 0) {
+            const dexieStocks = d.branchStocks.map((s: any) => ({
+              productId: s.productId,
+              locationId: s.locationId,
+              totalQtyBase: Number(s.totalQtyBase || 0),
+              unbatchedQtyBase: Number(s.unbatchedQtyBase || 0),
+              updatedAt: new Date().toISOString()
+            }));
+            await localDb.branchStocks.bulkPut(dexieStocks);
+          }
+
+          await loadLocalProducts();
         }
       }
-
-      await fetchProducts();
+    } catch (bootErr) {
+      console.warn("[POS] Gagal bootstrap dari server:", bootErr);
     } finally {
-      isLoading = false;
+      isSyncingCatalog = false;
+    }
+  }
+
+  // Load initial data (Instan dari IndexedDB Lokal, background sync non-blocking)
+  onMount(async () => {
+    if (authStore.user?.branchId) {
+      selectedBranchId = authStore.user.branchId;
+    }
+
+    // 1. TAMPILKAN LANGSUNG DARI LOKAL (< 100ms) JIKA SUDAH ADA DATA
+    let hasLocal = false;
+    if (typeof window !== "undefined") {
+      try {
+        const prodCount = await localDb.products.count();
+        if (prodCount > 0) {
+          hasLocal = await loadLocalProducts();
+          isLoading = false; // Langsung tampil seketika!
+        }
+      } catch (e) {
+        console.warn("[POS] Gagal mengecek data lokal:", e);
+      }
+    }
+
+    // 2. Ambil metadata cabang, kategori, pelanggan
+    try {
+      const [branchList, catList, custList] = await Promise.all([
+        mockApi.getBranches(),
+        mockApi.getCategories(),
+        mockApi.getCustomers()
+      ]);
+      if (branches.length === 0) branches = branchList;
+      categories = catList;
+      if (customers.length === 0) customers = custList;
+    } catch (_) {}
+
+    // Cek shift kasir aktif di background tanpa memblokir UI
+    if (networkStore.effectiveOnline) {
+      api.pos.getActiveShift(selectedBranchId).then((res) => {
+        if (res?.success && res.shift) {
+          activeShift = res.shift;
+          shiftInitialCash = res.shift.initialCash || 0;
+          shiftActualCash = res.shift.expectedCash || res.shift.initialCash || 0;
+        }
+      }).catch(() => {});
+    }
+
+    // 3. JIKA LOKAL MASIH KOSONG (Hanya saat pertama kali buka web di browser baru):
+    if (!hasLocal) {
+      isLoading = true;
+      try {
+        await syncFullBootstrapFromServer(true);
+      } catch (err) {
+        // Fallback mock
+        products = await mockApi.searchProducts({ branchId: selectedBranchId });
+        allCatalogProducts = products;
+        for (const p of products) productMap.set(p.id, p);
+      } finally {
+        isLoading = false;
+      }
     }
   });
 
-  async function fetchProducts() {
-    isLoading = true;
-    try {
-      if (!networkStore.effectiveOnline && typeof window !== "undefined") {
-        try {
-          const localItems = await localDb.products.toArray();
-          const q = searchQuery.toLowerCase().trim();
-          const filtered = localItems.filter((p) => {
-            if (!q) return true;
-            return (
-              p.name.toLowerCase().includes(q) ||
-              p.sku.toLowerCase().includes(q) ||
-              (p.barcode && p.barcode.includes(q)) ||
-              (p.activeSubstance && p.activeSubstance.toLowerCase().includes(q))
-            );
-          });
-          products = filtered.map((lp) => {
-            const cached = productMap.get(lp.id);
-            if (cached) return cached;
-            const item: Product = {
-              id: lp.id,
-              sku: lp.sku,
-              barcode: lp.barcode || "",
-              name: lp.name,
-              categoryId: "cat-1",
-              categoryName: "Obat Bebas & Terbatas",
-              drugClass: (lp.drugClass as any) || "OTC",
-              requiresPrescription: lp.drugClass === "ETHICAL" || lp.drugClass === "KERAS",
-              isConsignment: false,
-              manufacturer: "Generik",
-              baseUnit: lp.baseUnit,
-              description: lp.activeSubstance || "",
-              indication: "Sesuai anjuran medis",
-              dosage: lp.defaultDosage || "3x1 Sehari",
-              units: lp.units.map((u) => ({
-                unit: u.unitName,
-                multiplier: u.conversionFactor,
-                prices: {
-                  general: u.salePriceGeneral,
-                  prescription: u.salePriceResep,
-                  wholesale: u.salePriceGrosir,
-                  delivery: u.salePriceDelivery,
-                  member: u.salePriceMember
-                }
-              })),
-              batches: [
-                {
-                  id: "batch-local-01",
-                  batchNumber: "BTC-LOKAL",
-                  branchId: selectedBranchId,
-                  expiryDate: "2027-12-31",
-                  stock: 100,
-                  buyPrice: 500
-                }
-              ]
-            };
-            return item;
-          });
-          for (const p of products) {
-            productMap.set(p.id, p);
-          }
-          return;
-        } catch (err) {
-          console.warn("Offline fetch fallback failed:", err);
-        }
-      }
-
-      products = await mockApi.searchProducts({
-        query: searchQuery,
-        categoryId: selectedCategoryId,
-        branchId: selectedBranchId
-      });
-      for (const p of products) {
-        productMap.set(p.id, p);
-      }
-    } finally {
-      isLoading = false;
-    }
-  }
-
   function handleCategoryChange(catId: string) {
     selectedCategoryId = catId;
-    posCatalogPage = 1;
-    fetchProducts();
+    applyCatalogFilter();
   }
 
   function handleSearchInput() {
-    posCatalogPage = 1;
-    fetchProducts();
+    applyCatalogFilter();
   }
 
   function getDrugClassBadge(drugClass: string) {
@@ -460,17 +603,53 @@
   }
 
   function addToCart(product: Product, unitIndex = 0) {
+    if (!activeShift) {
+      alertStore.danger(
+        "Shift Kasir Belum Dibuka",
+        "Anda belum membuka sesi shift kasir hari ini. Silakan buka shift kasir terlebih dahulu untuk mencatat saldo kas awal dan melayani transaksi.",
+        {
+          actionButton: {
+            label: "Buka Shift Sekarang",
+            onClick: () => openShiftModal()
+          }
+        }
+      );
+      return;
+    }
+
     productMap.set(product.id, product);
     const selectedUnitObj = product.units[unitIndex] || product.units[0];
     const unitPrice = selectedUnitObj.prices[currentPriceTier] || selectedUnitObj.prices.general;
+
+    // VALIDASI KETAT: Pengecekan Ketersediaan Stok
+    const availableStock = getAvailableStock(product);
+    if (availableStock <= 0) {
+      alertStore.danger(
+        "Stok Produk Kosong",
+        `Produk "${product.name}" saat ini memiliki stok 0 ${product.baseUnit}. Transaksi tidak dapat diproses.`,
+        { autoClose: 4000 }
+      );
+      return;
+    }
 
     const existingIndex = cart.findIndex(
       (item) => item.productId === product.id && item.selectedUnit === selectedUnitObj.unit
     );
 
-    // Calculate FEFO batch allocation preview
     const requestedQty = existingIndex >= 0 ? cart[existingIndex].quantity + 1 : 1;
-    const batchAllocations = allocateBatches(product, requestedQty * selectedUnitObj.multiplier);
+    const requestedQtyBase = requestedQty * selectedUnitObj.multiplier;
+
+    if (requestedQtyBase > availableStock) {
+      alertStore.danger(
+        "Stok Tidak Mencukupi",
+        `Permintaan untuk "${product.name}" (${requestedQty} ${selectedUnitObj.unit} = ${requestedQtyBase} ${product.baseUnit}) melebihi sisa stok yang tersedia (${availableStock} ${product.baseUnit}).`,
+        { autoClose: 4500 }
+      );
+      return;
+    }
+
+    // Calculate FEFO batch allocation preview
+    const batchAllocations = allocateBatches(product, requestedQtyBase);
 
     if (existingIndex >= 0) {
       cart[existingIndex].quantity += 1;
@@ -503,6 +682,18 @@
 
     const unitObj = product.units.find((u) => u.unit === newUnitName) || product.units[0];
     const newUnitPrice = unitObj.prices[currentPriceTier] || unitObj.prices.general;
+
+    // VALIDASI KETAT: Cek stok jika ganti satuan
+    const neededQtyBase = item.quantity * unitObj.multiplier;
+    const availableStock = getAvailableStock(product);
+    if (neededQtyBase > availableStock) {
+      alertStore.danger(
+        "Stok Tidak Mencukupi",
+        `Penggantian satuan menjadi ${unitObj.unit} membutuhkan ${neededQtyBase} ${product.baseUnit}, sedangkan sisa stok hanya ${availableStock} ${product.baseUnit}.`,
+        { autoClose: 4500 }
+      );
+      return;
+    }
 
     // Cek jika produk dengan satuan baru ini sudah ada di baris keranjang lain
     const existingIndex = cart.findIndex(
@@ -540,16 +731,31 @@
       }));
 
     const result = selectFefoBatches(candidates, requiredUnits);
-    return result.batches.map((b) => ({
+    const allocated = result.batches.map((b) => ({
       batchId: b.batchId,
       batchNumber: b.batchNo || "-",
       expiryDate: b.expiredDate || "-",
       quantity: b.allocatedQtyBase
     }));
+
+    // Jika total alokasi batch masih kurang dari kebutuhan (oversell/defisit stok offline),
+    // tampung sisa defisit sebagai unbatched agar total QTY yang dibeli kasir tetap utuh
+    if (result.remainingRequiredBase > 0) {
+      allocated.push({
+        batchId: "batch-local-01",
+        batchNumber: "UNBATCHED",
+        expiryDate: "-",
+        quantity: result.remainingRequiredBase
+      });
+    }
+
+    return allocated;
   }
 
   function updateQuantity(index: number, delta: number) {
     const item = cart[index];
+    if (!item) return;
+
     const newQty = item.quantity + delta;
     if (newQty <= 0) {
       removeFromCart(index);
@@ -558,6 +764,19 @@
 
     const product = productMap.get(item.productId) || products.find((p) => p.id === item.productId);
     if (product) {
+      // VALIDASI KETAT: Cek stok saat menaikkan kuantitas
+      if (delta > 0) {
+        const availableStock = getAvailableStock(product);
+        const requestedQtyBase = newQty * item.multiplier;
+        if (requestedQtyBase > availableStock) {
+          alertStore.danger(
+            "Stok Tidak Mencukupi",
+            `Jumlah kuantitas untuk "${product.name}" (${newQty} ${item.selectedUnit} = ${requestedQtyBase} ${product.baseUnit}) melebihi total stok yang tersedia (${availableStock} ${product.baseUnit}).`,
+            { autoClose: 4500 }
+          );
+          return;
+        }
+      }
       item.batches = allocateBatches(product, newQty * item.multiplier);
     }
     item.quantity = newQty;
@@ -575,6 +794,57 @@
   }
 
   function openCheckout() {
+    // 1. VALIDASI KETAT: SHIFT KASIR WAJIB AKTIF
+    if (!activeShift) {
+      alertStore.danger(
+        "Shift Kasir Belum Dibuka",
+        "Anda belum membuka sesi shift kasir hari ini. Silakan buka shift kasir terlebih dahulu untuk mencatat saldo kas awal dan melayani transaksi.",
+        {
+          actionButton: {
+            label: "Buka Shift Sekarang",
+            onClick: () => openShiftModal()
+          }
+        }
+      );
+      return;
+    }
+
+    // 2. VALIDASI KETAT: KERANJANG KOSONG
+    if (cart.length === 0) {
+      alertStore.warning(
+        "Keranjang Masih Kosong",
+        "Silakan pilih obat atau produk yang akan dibeli terlebih dahulu sebelum melanjutkan ke pembayaran.",
+        { autoClose: 3500 }
+      );
+      return;
+    }
+
+    // 3. VALIDASI KETAT MENYELURUH: STOK TIAP ITEM DI KERANJANG
+    const deficitItems: string[] = [];
+    for (const it of cart) {
+      const p = productMap.get(it.productId) || products.find((x) => x.id === it.productId);
+      if (p) {
+        const avail = getAvailableStock(p);
+        const need = it.quantity * it.multiplier;
+        if (need > avail) {
+          deficitItems.push(
+            `${p.name}: Dibeli ${it.quantity} ${it.selectedUnit} (${need} ${p.baseUnit}), namun stok tersedia hanya ${avail} ${p.baseUnit}`
+          );
+        }
+      }
+    }
+
+    if (deficitItems.length > 0) {
+      alertStore.danger(
+        "Transaksi Ditolak: Stok Tidak Mencukupi",
+        "Terdapat item di keranjang yang melebihi jumlah stok fisik yang tersedia di apotek. Sesuaikan kuantitas sebelum melanjutkan.",
+        {
+          details: deficitItems
+        }
+      );
+      return;
+    }
+
     cashPaid = totals.grandTotal;
     selectedPaymentMethod = "CASH";
     qrisStatus = "WAITING";
@@ -583,29 +853,68 @@
   }
 
   async function handleCheckoutSubmit() {
+    if (!activeShift) {
+      alertStore.danger(
+        "Shift Kasir Belum Dibuka",
+        "Sesi shift kasir telah ditutup atau belum dibuka. Buka shift kasir terlebih dahulu.",
+        {
+          actionButton: {
+            label: "Buka Shift Sekarang",
+            onClick: () => openShiftModal()
+          }
+        }
+      );
+      return;
+    }
+
     if (selectedPaymentMethod === "CASH" && cashPaid < totals.grandTotal) {
-      alert("Jumlah uang tunai kurang dari total tagihan.");
+      alertStore.warning(
+        "Uang Pembayaran Kurang",
+        `Total tagihan adalah Rp ${totals.grandTotal.toLocaleString("id-ID")}, uang tunai yang dimasukkan baru Rp ${cashPaid.toLocaleString("id-ID")}. Kurang sebesar Rp ${(totals.grandTotal - cashPaid).toLocaleString("id-ID")}.`,
+        { autoClose: 4000 }
+      );
       return;
     }
 
     if (selectedPaymentMethod === "QRIS" && qrisStatus !== "PAID") {
-      alert("Pembayaran QRIS belum terkonfirmasi oleh sistem perbankan. Silakan klik tombol 'Simulasikan Pembayaran Berhasil' untuk menguji alur nota.");
+      alertStore.warning(
+        "QRIS Belum Terkonfirmasi",
+        "Pembayaran QRIS belum terkonfirmasi oleh sistem perbankan. Silakan tunggu status berhasil atau klik 'Simulasikan Pembayaran Berhasil' untuk pengujian."
+      );
       return;
     }
 
     if (qrisTimerInterval) clearInterval(qrisTimerInterval);
 
+    const customerTypeMap: Record<string, "UMUM" | "RESEP" | "GROSIR" | "MEMBER" | "DELIVERY"> = {
+      general: "UMUM",
+      prescription: "RESEP",
+      wholesale: "GROSIR",
+      delivery: "DELIVERY",
+      member: "MEMBER"
+    };
+
     const payload = {
       branchId: selectedBranchId,
+      locationId: defaultLocationId,
+      cashierShiftId: activeShift?.id || null,
       cashierId: authStore.user?.id || activeShift?.cashierId || "usr-01",
       cashierName: authStore.user?.fullName || "Kasir Utama",
-      customerId: selectedCustomer?.id,
+      customerId: selectedCustomer?.id && selectedCustomer.id !== "cust-general" ? selectedCustomer.id : undefined,
       customerName: selectedCustomer?.name,
+      customerType: customerTypeMap[currentPriceTier] || "UMUM",
+      patientName: selectedCustomer?.name || "Pasien Umum",
+      doctorName: undefined,
       paymentMethod: selectedPaymentMethod,
-      items: cart,
+      items: cart.map((i) => ({
+        ...i,
+        locationId: defaultLocationId
+      })),
       subtotal: totals.subtotal,
       invoiceDiscount: totals.totalDiscount,
       taxAmount: totals.taxAmount,
+      tuslahAmount: 0,
+      embalaseAmount: 0,
       roundingAmount: totals.roundingDifference,
       grandTotal: totals.grandTotal,
       cashPaid: selectedPaymentMethod === "QRIS" ? totals.grandTotal : cashPaid,
@@ -621,14 +930,14 @@
     await networkStore.queueSale({
       id: saleId,
       invoiceNo: result.invoiceNumber,
-      payload
+      payload: JSON.parse(JSON.stringify(payload))
     });
 
     // Generate receipt preview string
     buildReceiptPreview(result);
     showReceiptModal = true;
     clearCart();
-    await fetchProducts(); // Refresh stock
+    await loadLocalProducts(); // Refresh stock dari IndexedDB lokal
   }
 
   function buildReceiptPreview(res: CheckoutResult) {
@@ -659,12 +968,12 @@
       p.roundingAmount !== 0 ? `Pembulatan     : Rp ${p.roundingAmount.toLocaleString("id-ID")}` : "",
       "----------------------------------------",
       `TOTAL AKHIR    : Rp ${p.grandTotal.toLocaleString("id-ID")}`,
-      `Pembayaran (${p.paymentMethod}): Rp ${p.cashPaid.toLocaleString("id-ID")}`,
+      `Pembayaran     : Rp ${p.cashPaid.toLocaleString("id-ID")} (${p.paymentMethod})`,
       `Kembalian      : Rp ${p.changeAmount.toLocaleString("id-ID")}`,
       "========================================",
-      "      Terima kasih atas kunjungan Anda  ",
-      "           Semoga Lekas Sembuh          ",
-      "        -- Ikhtiar Sehat Keluarga --    ",
+      "    Terima kasih atas kunjungan Anda    ",
+      "         Semoga Lekas Sembuh            ",
+      "     -- Ikhtiar Sehat Keluarga --       ",
       "========================================"
     ].filter(Boolean);
 
@@ -720,7 +1029,7 @@
           variant="soft"
           size="sm"
           align="right"
-          onchange={() => fetchProducts()}
+          onchange={() => syncFullBootstrapFromServer(true)}
           options={branches.map((b) => ({
             value: b.id,
             label: `${b.name}`,
@@ -737,7 +1046,7 @@
       <!-- Shift Info (Clickable for Shift Close / Reconciliation) -->
       <button
         type="button"
-        onclick={() => (isShiftModalOpen = true)}
+        onclick={openShiftModal}
         class="hidden md:flex items-center gap-1.5 bg-[#f4f7fb] hover:bg-slate-100 px-2.5 py-1.5 rounded-xl border border-slate-200 text-slate-700 transition-colors"
         title="Klik untuk rekonsiliasi & tutup shift kasir"
       >
@@ -760,6 +1069,20 @@
           <span>Online</span>
         {/if}
       </button>
+
+      <!-- Update Master Katalog dari Server Cloud -->
+      {#if networkStore.effectiveOnline}
+        <button
+          type="button"
+          onclick={() => syncFullBootstrapFromServer(true)}
+          disabled={isSyncingCatalog}
+          class="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-medium bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer"
+          title="Tarik pembaruan master obat terbaru dari server cloud"
+        >
+          <RefreshCw class="w-3.5 h-3.5 text-slate-500 {isSyncingCatalog ? 'animate-spin text-[#1d63d8]' : ''}" />
+          <span>{isSyncingCatalog ? 'Memperbarui...' : 'Update'}</span>
+        </button>
+      {/if}
 
       <!-- Sync Queue Monitor -->
       {#if networkStore.pendingCount > 0 || networkStore.isSyncing}
@@ -786,13 +1109,6 @@
       </button>
     </div>
   </header>
-
-  {#if syncFeedback}
-    <div class="fixed top-16 right-6 z-50 bg-slate-900/90 backdrop-blur-md text-white px-3.5 py-2 rounded-xl text-xs shadow-xl flex items-center gap-2 border border-slate-800">
-      <RefreshCw class="w-3.5 h-3.5 text-blue-400 {isSyncing ? 'animate-spin' : ''}" />
-      <span>{syncFeedback}</span>
-    </div>
-  {/if}
 
   <!-- MAIN POS LAYOUT: 2 COLUMNS (Catalog & Cart) -->
   <div class="flex-1 flex flex-col lg:flex-row gap-4 overflow-hidden min-h-0">
@@ -890,8 +1206,14 @@
                     <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded border {badge.bg}">
                       {badge.text.charAt(badge.text.length - 2)}
                     </span>
-                    <span class="text-[10px] font-mono font-medium {stock > 10 ? 'text-emerald-700 bg-emerald-50' : 'text-amber-700 bg-amber-50'} px-1.5 py-0.5 rounded">
-                      Stok: {stock} {prod.baseUnit}
+                    <span
+                      class="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded border {stock > 10
+                        ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                        : stock > 0
+                        ? 'text-amber-700 bg-amber-50 border-amber-200'
+                        : 'text-rose-700 bg-rose-50 border-rose-200 font-bold'}"
+                    >
+                      {stock > 0 ? `Stok: ${stock} ${prod.baseUnit}` : `Stok: 0 (Habis)`}
                     </span>
                   </div>
 
@@ -926,8 +1248,10 @@
                       {@const uPrice = u.prices[currentPriceTier] || u.prices.general}
                       <button
                         onclick={() => addToCart(prod, uIdx)}
-                        class="flex-1 py-1 px-1.5 text-[11px] font-semibold rounded bg-brand-blue-50 text-brand-blue hover:bg-brand-blue hover:text-white border border-brand-blue-200 transition-colors text-center"
-                        title="Beli per {u.unit} (Rp {uPrice.toLocaleString('id-ID')})"
+                        class="flex-1 py-1 px-1.5 text-[11px] font-semibold rounded text-center transition-colors {stock > 0
+                          ? 'bg-brand-blue-50 text-brand-blue hover:bg-brand-blue hover:text-white border border-brand-blue-200'
+                          : 'bg-slate-100 text-slate-400 border border-slate-200 hover:bg-slate-200'}"
+                        title={stock > 0 ? `Beli per ${u.unit} (Rp ${uPrice.toLocaleString('id-ID')})` : 'Stok produk ini kosong (0)'}
                       >
                         {u.unit}
                       </button>
@@ -1406,20 +1730,15 @@
       <div class="flex items-center justify-between pb-2 border-b border-surface-border">
         <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
           <Printer class="w-5 h-5 text-emerald-600" />
-          Nota Penjualan Sukses!
+          Nota Penjualan
         </h3>
         <button onclick={() => (showReceiptModal = false)} class="text-slate-400 hover:text-slate-600">
           <X class="w-5 h-5" />
         </button>
       </div>
 
-      <div class="bg-emerald-50 text-emerald-800 p-2.5 rounded-lg text-xs font-medium flex items-center gap-2">
-        <CheckCircle2 class="w-4 h-4 text-emerald-600 flex-shrink-0" />
-        <span>Faktur: <strong>{lastCheckoutResult.invoiceNumber}</strong> berhasil disimpan ke memory mock server!</span>
-      </div>
-
       <!-- Thermal Receipt Box -->
-      <div class="bg-slate-900 text-emerald-400 font-mono text-[11px] p-4 rounded-xl overflow-x-auto max-h-[350px] whitespace-pre shadow-inner">
+      <div class="bg-slate-900 text-emerald-400 font-mono text-[11px] p-4 rounded-lg overflow-x-auto max-h-[350px] whitespace-pre no-scrollbar">
         {receiptTextPreview}
       </div>
 

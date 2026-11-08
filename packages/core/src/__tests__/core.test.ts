@@ -24,6 +24,7 @@ import {
   generateDebtPaymentNumber,
   generateTransferNumber
 } from "../generators/doc-numbers.js";
+import { calculateCashierShiftReconciliation } from "../calculations/shift.js";
 
 describe("calculateCartTotals", () => {
   it("calculates subtotal, discount, tax, and change accurately", () => {
@@ -222,5 +223,43 @@ describe("document number generators", () => {
     expect(generateAdjustmentNumber(1234, fixedDate)).toBe("RJK-202611-1234");
     expect(generateDebtPaymentNumber(567, fixedDate)).toBe("RLH-20261105-567");
     expect(generateTransferNumber(7890, fixedDate)).toBe("SJL-202611-7890");
+  });
+});
+
+describe("cashier shift reconciliation calculations", () => {
+  it("determines balanced cash drawer accurately", () => {
+    const res = calculateCashierShiftReconciliation({
+      initialCash: 200000,
+      cashSales: 1550000,
+      actualCash: 1750000
+    });
+    expect(res.expectedCash).toBe(1750000);
+    expect(res.cashDifference).toBe(0);
+    expect(res.status).toBe("BALANCED");
+    expect(res.isDiscrepancy).toBe(false);
+  });
+
+  it("identifies cash surplus in drawer", () => {
+    const res = calculateCashierShiftReconciliation({
+      initialCash: 100000,
+      cashSales: 500000,
+      actualCash: 620000
+    });
+    expect(res.expectedCash).toBe(600000);
+    expect(res.cashDifference).toBe(20000);
+    expect(res.status).toBe("SURPLUS");
+    expect(res.isDiscrepancy).toBe(true);
+  });
+
+  it("identifies cash deficit (shortage) in drawer", () => {
+    const res = calculateCashierShiftReconciliation({
+      initialCash: 100000,
+      cashSales: 500000,
+      actualCash: 580000
+    });
+    expect(res.expectedCash).toBe(600000);
+    expect(res.cashDifference).toBe(-20000);
+    expect(res.status).toBe("DEFICIT");
+    expect(res.isDiscrepancy).toBe(true);
   });
 });

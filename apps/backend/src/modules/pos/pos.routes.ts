@@ -3,7 +3,10 @@ import { posService } from "./pos.service.js";
 import {
   BootstrapQuerySchema,
   SyncSalesBodySchema,
-  DeltaSyncQuerySchema
+  DeltaSyncQuerySchema,
+  OpenShiftBodySchema,
+  CloseShiftBodySchema,
+  ActiveShiftQuerySchema
 } from "./pos.schema.js";
 
 export const posRoutes = new Elysia({ prefix: "/api/pos" })
@@ -74,6 +77,63 @@ export const posRoutes = new Elysia({ prefix: "/api/pos" })
         summary: "Down-Sync Perubahan Data Delta",
         description:
           "Mengambil perubahan master obat dan inventori sejak sinkronisasi terakhir"
+      }
+    }
+  )
+  .get(
+    "/shifts/active",
+    async ({ tenant, query }) => {
+      const targetBranchId = query.branch_id || tenant.branchId;
+      return await posService.getActiveShift(tenant.tenantId, targetBranchId);
+    },
+    {
+      query: ActiveShiftQuerySchema,
+      detail: {
+        tags: ["POS"],
+        summary: "Ambil Shift Kasir Aktif & Rekapitulasi Kas",
+        description:
+          "Menghitung omzet tunai dan non-tunai pada shift kasir yang sedang berjalan"
+      }
+    }
+  )
+  .post(
+    "/shifts/open",
+    async ({ tenant, body }) => {
+      return await posService.openShift(
+        tenant.tenantId,
+        body.branchId,
+        tenant.userId,
+        body.initialCash,
+        body.shiftNumber || 1,
+        body.notes
+      );
+    },
+    {
+      body: OpenShiftBodySchema,
+      detail: {
+        tags: ["POS"],
+        summary: "Buka Shift Kasir Baru",
+        description: "Mencatat modal awal laci kasir dan memulai sesi transaksi"
+      }
+    }
+  )
+  .post(
+    "/shifts/:id/close",
+    async ({ tenant, params, body }) => {
+      return await posService.closeShift(
+        tenant.tenantId,
+        params.id,
+        body.actualCash,
+        body.notes
+      );
+    },
+    {
+      body: CloseShiftBodySchema,
+      detail: {
+        tags: ["POS"],
+        summary: "Tutup Shift Kasir & Rekonsiliasi Kas Laci",
+        description:
+          "Mencatat fisik uang kasir, menghitung selisih kas (discrepancy), dan menutup shift"
       }
     }
   );

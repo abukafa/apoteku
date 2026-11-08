@@ -31,48 +31,59 @@
   import { portal } from "$lib/actions/portal";
   import { onMount } from "svelte";
   import { api } from "$lib/services/api";
+  import { alertStore } from "$lib/stores/alertStore.svelte";
   import { formatRupiah } from "@apoteku/core";
 
   // Reactive state
   let sales = $state<any[]>([]);
+  let isLoading = $state(false);
   let summary = $state({
-    totalSalesToday: 4850000,
-    transactionsToday: 142,
-    totalPrescriptions: 24,
-    unpaidReceivables: 1250000,
-    totalSalesMonth: 128450000,
-    averageBasketSize: 68500
+    totalSalesToday: 0,
+    transactionsToday: 0,
+    totalPrescriptions: 0,
+    unpaidReceivables: 0,
+    totalSalesMonth: 0,
+    averageBasketSize: 0
   });
 
   let activeTab = $state<"SEMUA" | "UMUM" | "RESEP" | "GROSIR" | "TEMPO" | "DELIVERY">("SEMUA");
   let searchQuery = $state("");
   let selectedPaymentFilter = $state<string>("ALL");
 
-  onMount(async () => {
-    try {
-      const res = await api.erp.getSales(100);
-      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
-        sales = res.data.map((s: any) => ({
-          id: s.id,
-          invoiceNumber: s.invoiceNumber,
-          transactionTime: s.transactionTime,
-          cashierName: "Kasir Apotek",
-          customerName: s.customerType === "MEMBER" ? "Member Pasien" : "Pelanggan Umum",
-          transactionType: s.customerType || "UMUM",
-          paymentMethod: s.paymentMethod,
-          totalAmount: s.grandTotal,
-          status: "SUCCESS",
-          itemsCount: 1,
-          items: []
-        }));
+  // Paginasi
+  let currentPage = $state(1);
+  let pageSize = $state(15);
 
-        const totalRev = res.data.reduce((acc: number, cur: any) => acc + (Number(cur.grandTotal) || 0), 0);
+  onMount(async () => {
+    isLoading = true;
+    try {
+      const res = await api.erp.getSales(250);
+      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+        sales = res.data;
+
+        // Hitung metrik dinamis dari data transaksi API
+        const totalRev = sales.reduce((acc, cur) => acc + (Number(cur.grandTotal) || 0), 0);
+        const resepCount = sales.filter((s) => s.transactionType === "RESEP").length;
+        const unpaidTempo = sales
+          .filter((s) => s.paymentMethod === "TEMPO" || s.paymentStatus !== "PAID")
+          .reduce(
+            (acc, cur) =>
+              acc + Math.max(0, (Number(cur.grandTotal) || 0) - (Number(cur.paidAmount) || 0)),
+            0
+          );
+
         summary.totalSalesToday = totalRev;
-        summary.transactionsToday = res.data.length;
+        summary.transactionsToday = sales.length;
+        summary.totalPrescriptions = resepCount;
+        summary.unpaidReceivables = unpaidTempo;
         summary.totalSalesMonth = totalRev;
-        summary.averageBasketSize = res.data.length > 0 ? Math.round(totalRev / res.data.length) : 0;
+        summary.averageBasketSize = sales.length > 0 ? Math.round(totalRev / sales.length) : 0;
       }
-    } catch (_) {}
+    } catch (e) {
+      console.warn("[Penjualan] Gagal memuat data penjualan dari API:", e);
+    } finally {
+      isLoading = false;
+    }
   });
 
   // Modal Detail State
@@ -93,19 +104,29 @@
       // Search query
       if (searchQuery.trim() !== "") {
         const query = searchQuery.toLowerCase();
-        const matchesInvoice = item.invoiceNo.toLowerCase().includes(query);
-        const matchesCustomer = item.customerName.toLowerCase().includes(query);
+        const matchesInvoice = (item.invoiceNo || item.invoiceNumber || "").toLowerCase().includes(query);
+        const matchesCustomer = (item.customerName || "").toLowerCase().includes(query);
         const matchesPatient = item.patientName?.toLowerCase().includes(query) ?? false;
-        const matchesCashier = item.cashierName.toLowerCase().includes(query);
+        const matchesCashier = (item.cashierName || "").toLowerCase().includes(query);
         return matchesInvoice || matchesCustomer || matchesPatient || matchesCashier;
       }
       return true;
     })
   );
 
+  let totalPages = $derived(Math.max(1, Math.ceil(filteredSales.length / pageSize)));
+  let paginatedSales = $derived(
+    filteredSales.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  );
+
+  function handleTabChange(tab: typeof activeTab) {
+    activeTab = tab;
+    currentPage = 1;
+  }
+
   // Total filtered nominal
   let totalFilteredNominal = $derived(
-    filteredSales.reduce((acc, curr) => acc + curr.grandTotal, 0)
+    filteredSales.reduce((acc, curr) => acc + (Number(curr.grandTotal) || 0), 0)
   );
 
   function openDetail(trx: any) {
@@ -129,7 +150,7 @@
     {#snippet actions()}
       <button
         type="button"
-        onclick={() => alert("Mengunduh rekapan data penjualan format CSV / Excel...")}
+        onclick={() => alertStore.toast("Mengunduh rekapan data penjualan format CSV / Excel...", "info", "Ekspor Data")}
         class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs"
       >
         <Download class="w-4 h-4 text-slate-500" />
@@ -184,7 +205,7 @@
   <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold overflow-x-auto pb-1 no-scrollbar">
     <button
       type="button"
-      onclick={() => (activeTab = "SEMUA")}
+      onclick={() => handleTabChange("SEMUA")}
       class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'SEMUA' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-2">
@@ -201,7 +222,7 @@
 
     <button
       type="button"
-      onclick={() => (activeTab = "UMUM")}
+      onclick={() => handleTabChange("UMUM")}
       class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'UMUM' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-2">
@@ -218,7 +239,7 @@
 
     <button
       type="button"
-      onclick={() => (activeTab = "RESEP")}
+      onclick={() => handleTabChange("RESEP")}
       class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'RESEP' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-2">
@@ -235,7 +256,7 @@
 
     <button
       type="button"
-      onclick={() => (activeTab = "GROSIR")}
+      onclick={() => handleTabChange("GROSIR")}
       class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'GROSIR' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-2">
@@ -252,7 +273,7 @@
 
     <button
       type="button"
-      onclick={() => (activeTab = "TEMPO")}
+      onclick={() => handleTabChange("TEMPO")}
       class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'TEMPO' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-2">
@@ -269,7 +290,7 @@
 
     <button
       type="button"
-      onclick={() => (activeTab = "DELIVERY")}
+      onclick={() => handleTabChange("DELIVERY")}
       class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'DELIVERY' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-2">
@@ -291,13 +312,18 @@
     searchPlaceholder="Cari nomor faktur nota, nama pelanggan/pasien, atau nama kasir..."
     bind:searchValue={searchQuery}
     totalCount={filteredSales.length}
+    currentPage={currentPage}
+    totalPages={totalPages}
+    pageSize={pageSize}
+    onPageChange={(p) => (currentPage = p)}
+    onSearchChange={() => (currentPage = 1)}
   >
     {#snippet filters()}
       <!-- Filter Pembayaran -->
       <div class="flex items-center gap-1.5 text-xs">
-        <span class="text-slate-500 font-medium hidden sm:inline">Metode:</span>
         <Select
           bind:value={selectedPaymentFilter}
+          onchange={() => (currentPage = 1)}
           size="sm"
           align="right"
           options={[
@@ -314,10 +340,9 @@
 
     {#snippet header()}
       <th class="py-3 px-4">Faktur</th>
-      <th class="py-3 px-4">Waktu & Sif</th>
+      <th class="py-3 px-4">Waktu Sif</th>
       <th class="py-3 px-4">Pelanggan</th>
       <th class="py-3 px-4 text-center">Jenis</th>
-      <th class="py-3 px-4 text-center">Pembayaran</th>
       <th class="py-3 px-4 text-right">Total</th>
       <th class="py-3 px-4 text-center">Status</th>
       <th class="py-3 px-4 text-center">Aksi</th>
@@ -334,18 +359,18 @@
           </td>
         </tr>
       {:else}
-        {#each filteredSales as trx}
+        {#each paginatedSales as trx}
         <tr class="hover:bg-blue-50/40 transition-colors">
           <!-- No Faktur -->
-          <td class="py-3.5 px-4">
-            <div class="font-mono font-bold text-slate-900">{trx.invoiceNo}</div>
+          <td class="py-3.5 px-4 max-w-[120px]">
+            <div class="font-mono font-bold text-slate-900 truncate">{trx.invoiceNo}</div>
             <div class="text-[11px] text-slate-400 font-mono">{trx.itemsCount} Item</div>
           </td>
 
           <!-- Waktu & Sif -->
           <td class="py-3.5 px-4">
             <div class="font-medium text-slate-800 text-xs">{trx.createdAt}</div>
-            <div class="text-[10px] text-slate-400">{trx.cashierName} ({trx.cashierShift})</div>
+            <div class="text-[10px] text-slate-400">{trx.cashierShift}</div>
           </td>
 
           <!-- Pelanggan / Pasien -->
@@ -364,32 +389,7 @@
 
           <!-- Jenis Transaksi -->
           <td class="py-3.5 px-4 text-center">
-            {#if trx.transactionType === "RESEP"}
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">
-                RESEP
-              </span>
-            {:else if trx.transactionType === "GROSIR"}
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-100 text-purple-700">
-                GROSIR
-              </span>
-            {:else if trx.transactionType === "TEMPO"}
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-700">
-                PIUTANG
-              </span>
-            {:else if trx.transactionType === "DELIVERY"}
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-teal-100 text-teal-700">
-                DELIVERY
-              </span>
-            {:else}
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-100 text-slate-700">
-                UMUM
-              </span>
-            {/if}
-          </td>
-
-          <!-- Metode Bayar -->
-          <td class="py-3.5 px-4 text-center">
-            <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[11px] font-bold border border-slate-200 bg-white text-slate-700 shadow-2xs">
+            <div class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[11px] font-bold border border-slate-200 bg-white text-slate-700 shadow-2xs">
               {#if trx.paymentMethod === "CASH"}
                 <Banknote class="w-3.5 h-3.5 text-emerald-600" />
                 <span>Tunai</span>
@@ -406,7 +406,7 @@
                 <Clock class="w-3.5 h-3.5 text-amber-600" />
                 <span>Tempo</span>
               {/if}
-            </span>
+            </div>
           </td>
 
           <!-- Grand Total -->
@@ -438,7 +438,7 @@
               </button>
               <button
                 type="button"
-                onclick={() => alert(`Mencetak ulang struk thermal untuk ${trx.invoiceNo}`)}
+                onclick={() => alertStore.toast(`Mencetak ulang struk thermal untuk ${trx.invoiceNo}`, "success", "Cetak Struk")}
                 class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-emerald-600 transition-colors"
                 title="Cetak Ulang Struk Thermal ESC/POS"
               >
@@ -469,7 +469,10 @@
       <div class="flex items-center justify-between border-b border-slate-100 pb-3">
         <div class="flex items-center gap-2 text-slate-900 font-bold">
           <FileText class="w-5 h-5 text-brand-blue" />
-          <span>Rincian Nota Penjualan: <span class="font-mono text-brand-blue-700">{selectedTransaction.invoiceNo}</span></span>
+          <div>
+            <div>Rincian Nota Penjualan</div>
+            <div class="font-mono text-xs text-brand-blue-700">{selectedTransaction.invoiceNo}</div>
+          </div>
         </div>
         <button
           onclick={() => (isDetailModalOpen = false)}
@@ -529,17 +532,25 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100 font-medium text-slate-700">
-            {#each selectedTransaction.items as item}
+            {#if !selectedTransaction.items || selectedTransaction.items.length === 0}
               <tr>
-                <td class="py-2.5 px-3 font-semibold text-slate-900">{item.productName}</td>
-                <td class="py-2.5 px-3 font-mono text-[11px] text-slate-500">
-                  {item.batchNo} ({item.expDate})
+                <td colspan="5" class="py-6 text-center text-slate-400 italic">
+                  Tidak ada rincian item obat yang tercatat pada nota transaksi ini.
                 </td>
-                <td class="py-2.5 px-3 text-center font-bold">{item.qty} {item.unit}</td>
-                <td class="py-2.5 px-3 text-right font-mono">{formatRupiah(item.price)}</td>
-                <td class="py-2.5 px-3 text-right font-mono font-bold text-slate-900">{formatRupiah(item.subtotal)}</td>
               </tr>
-            {/each}
+            {:else}
+              {#each selectedTransaction.items as item}
+                <tr>
+                  <td class="py-2.5 px-3 font-semibold text-slate-900">{item.productName}</td>
+                  <td class="py-2.5 px-3 font-mono text-[11px] text-slate-500">
+                    {item.batchNo} ({item.expDate})
+                  </td>
+                  <td class="py-2.5 px-3 text-center font-bold">{item.qty} {item.unit}</td>
+                  <td class="py-2.5 px-3 text-right font-mono">{formatRupiah(item.price)}</td>
+                  <td class="py-2.5 px-3 text-right font-mono font-bold text-slate-900">{formatRupiah(item.subtotal)}</td>
+                </tr>
+              {/each}
+            {/if}
           </tbody>
         </table>
       </div>
@@ -582,7 +593,7 @@
       <div class="border-t border-slate-100 pt-3 flex items-center justify-between">
         <button
           type="button"
-          onclick={() => alert(`Mencetak ulang faktur penjualan resmi ${selectedTransaction.invoiceNo}`)}
+          onclick={() => alertStore.toast(`Mencetak ulang faktur resmi ${selectedTransaction.invoiceNo}`, "success", "Cetak Faktur")}
           class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors"
         >
           <Printer class="w-4 h-4 text-emerald-600" />

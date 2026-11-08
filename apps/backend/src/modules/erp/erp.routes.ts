@@ -86,31 +86,146 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
   // 4. RIWAYAT PENJUALAN KASIR
   .get("/sales", async ({ query }) => {
     try {
-      const limit = Number(query.limit || 100);
-      const sales = await db
-        .select()
+      const limit = Number(query.limit || 200);
+      const salesData = await db
+        .select({
+          id: schema.salesTransactions.id,
+          invoiceNo: schema.salesTransactions.invoiceNo,
+          createdAt: schema.salesTransactions.createdAt,
+          customerType: schema.salesTransactions.customerType,
+          customerId: schema.salesTransactions.customerId,
+          customerName: schema.customers.name,
+          patientName: schema.salesTransactions.patientName,
+          doctorName: schema.salesTransactions.doctorName,
+          cashierUserId: schema.salesTransactions.cashierUserId,
+          cashierName: schema.users.fullName,
+          shiftNumber: schema.cashierShifts.shiftNumber,
+          paymentMethod: schema.salesTransactions.paymentMethod,
+          subtotal: schema.salesTransactions.subtotal,
+          discountAmount: schema.salesTransactions.discountAmount,
+          taxAmount: schema.salesTransactions.taxAmount,
+          tuslahAmount: schema.salesTransactions.tuslahAmount,
+          embalaseAmount: schema.salesTransactions.embalaseAmount,
+          grandTotal: schema.salesTransactions.grandTotal,
+          paidAmount: schema.salesTransactions.paidAmount,
+          changeAmount: schema.salesTransactions.changeAmount
+        })
         .from(schema.salesTransactions)
+        .leftJoin(
+          schema.customers,
+          eq(schema.salesTransactions.customerId, schema.customers.id)
+        )
+        .leftJoin(
+          schema.users,
+          eq(schema.salesTransactions.cashierUserId, schema.users.id)
+        )
+        .leftJoin(
+          schema.cashierShifts,
+          eq(schema.salesTransactions.cashierShiftId, schema.cashierShifts.id)
+        )
         .orderBy(desc(schema.salesTransactions.createdAt))
         .limit(limit);
 
+      // Fetch items for each transaction
+      const saleIds = salesData.map((s) => s.id);
+      const itemsBySaleId = new Map<string, any[]>();
+
+      if (saleIds.length > 0) {
+        const itemsData = await db
+          .select({
+            id: schema.salesTransactionItems.id,
+            transactionId: schema.salesTransactionItems.transactionId,
+            productId: schema.salesTransactionItems.productId,
+            productName: schema.products.name,
+            batchId: schema.salesTransactionItems.batchId,
+            batchNo: schema.productBatches.batchNo,
+            expDate: schema.productBatches.expiredDate,
+            qty: schema.salesTransactionItems.qty,
+            unitName: schema.salesTransactionItems.unitName,
+            unitPrice: schema.salesTransactionItems.unitPrice,
+            subtotal: schema.salesTransactionItems.subtotal,
+            dosageRules: schema.salesTransactionItems.dosageRules
+          })
+          .from(schema.salesTransactionItems)
+          .leftJoin(
+            schema.products,
+            eq(schema.salesTransactionItems.productId, schema.products.id)
+          )
+          .leftJoin(
+            schema.productBatches,
+            eq(schema.salesTransactionItems.batchId, schema.productBatches.id)
+          )
+          .where(sql`${schema.salesTransactionItems.transactionId} IN ${saleIds}`);
+
+        for (const item of itemsData) {
+          const list = itemsBySaleId.get(item.transactionId) || [];
+          list.push({
+            id: item.id,
+            productId: item.productId,
+            productName: item.productName || "Obat",
+            batchNo: item.batchNo || "BATCH-REG",
+            expDate: item.expDate || "-",
+            qty: Number(item.qty),
+            unit: item.unitName,
+            price: Number(item.unitPrice),
+            subtotal: Number(item.subtotal),
+            dosageRules: item.dosageRules
+          });
+          itemsBySaleId.set(item.transactionId, list);
+        }
+      }
+
       return {
         success: true,
-        data: sales.map((s) => ({
-          id: s.id,
-          invoiceNumber: s.invoiceNo,
-          transactionTime: s.createdAt.toISOString(),
-          customerType: s.customerType,
-          paymentMethod: s.paymentMethod,
-          subtotal: Number(s.subtotal),
-          discountAmount: Number(s.discountAmount),
-          taxAmount: Number(s.taxAmount),
-          grandTotal: Number(s.grandTotal),
-          paidAmount: Number(s.paidAmount),
-          changeAmount: Number(s.changeAmount)
-        }))
+        data: salesData.map((s) => {
+          const items = itemsBySaleId.get(s.id) || [];
+          const paid = Number(s.paidAmount);
+          const total = Number(s.grandTotal);
+          let paymentStatus = "PAID";
+          if (paid < total) {
+            paymentStatus = paid > 0 ? "PARTIAL" : "UNPAID";
+          }
+
+          return {
+            id: s.id,
+            invoiceNo: s.invoiceNo,
+            invoiceNumber: s.invoiceNo,
+            createdAt: s.createdAt.toLocaleString("id-ID", {
+              dateStyle: "medium",
+              timeStyle: "short"
+            }),
+            transactionTime: s.createdAt.toISOString(),
+            cashierName: s.cashierName || "Kasir Utama",
+            cashierShift:
+              s.shiftNumber === 1
+                ? "Shift Pagi"
+                : s.shiftNumber === 2
+                ? "Shift Siang"
+                : "Shift Malam",
+            customerName:
+              s.customerName ||
+              (s.customerType === "MEMBER" ? "Member Pasien" : "Pelanggan Umum"),
+            patientName: s.patientName || null,
+            doctorName: s.doctorName || null,
+            transactionType: s.customerType || "UMUM",
+            paymentMethod: s.paymentMethod,
+            paymentStatus,
+            subtotal: Number(s.subtotal),
+            discountAmount: Number(s.discountAmount),
+            taxAmount: Number(s.taxAmount),
+            tuslahAmount: Number(s.tuslahAmount || 0),
+            embalaseAmount: Number(s.embalaseAmount || 0),
+            grandTotal: total,
+            paidAmount: paid,
+            changeAmount: Number(s.changeAmount),
+            itemsCount: items.length,
+            items
+          };
+        })
       };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      console.error("[ERP] /sales error:", err);
+      return { success: false, error: err.message, data: [] };
     }
   })
 

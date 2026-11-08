@@ -37,6 +37,7 @@
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { alertStore } from "$lib/stores/alertStore.svelte";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
 
@@ -98,7 +99,6 @@
   });
 
   let saveSuccessMessage = $state("");
-  let resyncMessage = $state("");
   let isLoading = $state(true);
 
   // Profil & PIN Saya State
@@ -195,7 +195,7 @@
         setTimeout(() => (saveSuccessMessage = ""), 3000);
       }
     } catch (e: any) {
-      alert("Gagal mengubah peran: " + e.message);
+      alertStore.danger("Gagal Mengubah Peran", e.message || "Terjadi kesalahan sistem saat mengubah peran.");
     }
   }
 
@@ -205,25 +205,31 @@
       if (res.success) {
         const br = branches.find((b) => b.id === newBranchId);
         users = users.map((u) => (u.id === userId ? { ...u, branchId: newBranchId, branchName: br?.name || u.branchName } : u));
-        saveSuccessMessage = `Cabang penugasan berhasil diubah`;
-        setTimeout(() => (saveSuccessMessage = ""), 3000);
+        alertStore.toast("Cabang penugasan berhasil diubah", "success");
       }
     } catch (e: any) {
-      alert("Gagal mengubah cabang penugasan: " + e.message);
+      alertStore.danger("Gagal Mengubah Cabang", e.message || "Terjadi kesalahan sistem saat memindahkan cabang.");
     }
   }
 
   async function handleDeleteUser(userId: string, fullName: string) {
-    if (!confirm(`Apakah Anda yakin ingin menghapus pengguna ${fullName}?`)) return;
+    const isConfirmed = await alertStore.confirm({
+      type: "danger",
+      title: "Hapus Akses Pengguna",
+      message: `Apakah Anda yakin ingin menghapus pengguna "${fullName}"? Pengguna tidak akan dapat login lagi ke sistem.`,
+      confirmText: "Ya, Hapus Pengguna",
+      cancelText: "Batal"
+    });
+    if (!isConfirmed) return;
+
     try {
       const res = await api.users.delete(userId);
       if (res.success) {
         users = users.filter((u) => u.id !== userId);
-        saveSuccessMessage = `Pengguna ${fullName} berhasil dihapus dari sistem`;
-        setTimeout(() => (saveSuccessMessage = ""), 3000);
+        alertStore.toast(`Pengguna ${fullName} berhasil dihapus dari sistem.`, "success");
       }
     } catch (e: any) {
-      alert("Gagal menghapus pengguna: " + e.message);
+      alertStore.danger("Gagal Menghapus Pengguna", e.message || "Terjadi kesalahan saat menghapus pengguna.");
     }
   }
 
@@ -565,10 +571,12 @@
   }
 
   function handleResyncMaster() {
-    resyncMessage = "Katalog master berhasil disinkronkan ulang ke IndexedDB!";
-    setTimeout(() => {
-      resyncMessage = "";
-    }, 3500);
+    alertStore.toast({
+      title: "Sinkronisasi Master",
+      message: "Katalog master berhasil disinkronkan ulang ke IndexedDB lokal!",
+      type: "success",
+      duration: 3500
+    });
   }
 </script>
 
@@ -1557,7 +1565,7 @@
       <div class="border-t border-slate-100 pt-4 flex items-center justify-start gap-3">
         <button
           type="button"
-          onclick={() => alert("Mengirim sinyal uji cetak ESC/POS dan pembukaan laci RJ11...")}
+          onclick={() => alertStore.toast("Mengirim sinyal uji cetak ESC/POS dan pembukaan laci RJ11...", "info", "Uji Printer & Laci")}
           class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm flex items-center gap-2"
         >
           <Printer class="w-4 h-4" />
@@ -1574,13 +1582,6 @@
         <h3 class="text-sm font-bold text-slate-800">Status Penyimpanan Offline</h3>
         <p class="text-xs text-slate-500 mt-0.5">Database lokal di browser untuk menjamin kasir tetap dapat bertransaksi saat internet mati</p>
       </div>
-
-      {#if resyncMessage}
-        <div class="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-2">
-          <CheckCircle2 class="w-4 h-4 text-emerald-600" />
-          <span>{resyncMessage}</span>
-        </div>
-      {/if}
 
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
         <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">

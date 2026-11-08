@@ -5,6 +5,7 @@
   import { authStore } from "$lib/stores/authStore.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import Navbar from "$lib/components/Navbar.svelte";
+  import AlertHost from "$lib/components/ui/AlertHost.svelte";
 
   let { children } = $props();
   let isMobileOpen = $state(false);
@@ -68,3 +69,6 @@
     </div>
   </div>
 {/if}
+
+<!-- GLOBAL REUSABLE ALERT & TOAST HOST -->
+<AlertHost />

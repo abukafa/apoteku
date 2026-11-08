@@ -23,6 +23,7 @@
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
+  import { alertStore } from "$lib/stores/alertStore.svelte";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
   import { mockApi } from "$lib/services/mock-api";
@@ -381,11 +382,11 @@
 
   async function handleSaveNewInvoice() {
     if (!newInvoiceNumber.trim()) {
-      alert("Nomor faktur wajib diisi");
+      alertStore.warning("Validasi Faktur", "Nomor faktur dari supplier/PBF wajib diisi.");
       return;
     }
     if (newInvoiceItems.length === 0) {
-      alert("Tambahkan minimal 1 item obat pada faktur");
+      alertStore.warning("Item Faktur Kosong", "Tambahkan minimal 1 baris item obat pada faktur pembelian.");
       return;
     }
 
@@ -465,9 +466,15 @@
       newInvoiceNumber = "";
       newInvoicePoNumber = "NONE";
 
-      alert(res?.message || `Faktur ${createdInvoice.invoiceNumber} berhasil disimpan dan stok otomatis tercatat.`);
+      alertStore.success(
+        "Faktur Berhasil Disimpan",
+        res?.message || `Faktur ${createdInvoice.invoiceNumber} berhasil dicatat dan stok gudang otomatis bertambah.`
+      );
     } catch (err: any) {
-      alert(err?.message || "Terjadi kesalahan saat menyimpan faktur.");
+      alertStore.danger(
+        "Gagal Menyimpan Faktur",
+        err?.message || "Terjadi kesalahan sistem saat menyimpan faktur pembelian."
+      );
     } finally {
       isSavingInvoice = false;
     }

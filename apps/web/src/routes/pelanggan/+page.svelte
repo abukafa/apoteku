@@ -24,6 +24,7 @@
   import { onMount } from "svelte";
   import { mockApi } from "$lib/services/mock-api";
   import { api } from "$lib/services/api";
+  import { alertStore } from "$lib/stores/alertStore.svelte";
   import { formatRupiah } from "@apoteku/core";
 
   let customers = $state<any[]>([]);
@@ -164,18 +165,25 @@
   }
 
   async function handleDeleteCustomer(c: any) {
-    if (!confirm(`Apakah Anda yakin ingin menghapus pelanggan "${c.name}"?`)) return;
+    const isConfirmed = await alertStore.confirm({
+      type: "danger",
+      title: "Hapus Data Pelanggan",
+      message: `Apakah Anda yakin ingin menghapus data pelanggan "${c.name}"? Tindakan ini tidak dapat dibatalkan.`,
+      confirmText: "Ya, Hapus",
+      cancelText: "Batal"
+    });
+    if (!isConfirmed) return;
+
     try {
       const res = await api.customers.delete(c.id);
       if (res?.success) {
         await loadCustomers();
-        successMessage = res.message || `Pelanggan "${c.name}" berhasil dihapus.`;
-        setTimeout(() => (successMessage = ""), 3000);
+        alertStore.toast(res.message || `Pelanggan "${c.name}" berhasil dihapus.`, "success");
       } else {
-        alert("Gagal menghapus: " + (res?.error || "Kesalahan server"));
+        alertStore.danger("Gagal Menghapus Pelanggan", res?.error || "Kesalahan server saat menghapus data.");
       }
     } catch (e: any) {
-      alert("Gagal menghapus: " + e.message);
+      alertStore.danger("Gagal Menghapus Pelanggan", e.message || "Terjadi kesalahan koneksi.");
     }
   }
 

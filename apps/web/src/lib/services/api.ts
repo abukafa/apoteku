@@ -81,6 +81,23 @@ export const api = {
       const params = new URLSearchParams({ branch_id: branchId });
       if (since) params.append("since", since);
       return await apiFetch<any>(`/api/pos/sync-delta?${params.toString()}`, { branchId });
+    },
+    async getActiveShift(branchId?: string) {
+      const query = branchId ? `?branch_id=${encodeURIComponent(branchId)}` : "";
+      return await apiFetch<any>(`/api/pos/shifts/active${query}`, { branchId });
+    },
+    async openShift(payload: { branchId: string; initialCash: number; shiftNumber?: number; notes?: string }) {
+      return await apiFetch<any>("/api/pos/shifts/open", {
+        method: "POST",
+        branchId: payload.branchId,
+        body: JSON.stringify(payload)
+      });
+    },
+    async closeShift(shiftId: string, payload: { actualCash: number; notes?: string }) {
+      return await apiFetch<any>(`/api/pos/shifts/${shiftId}/close`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
     }
   },
   media: {

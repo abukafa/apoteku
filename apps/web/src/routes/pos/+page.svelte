@@ -46,7 +46,10 @@
     Lock,
     KeyRound,
     ChevronLeft,
-    ChevronRight
+    ChevronRight,
+    Monitor,
+    Maximize2,
+    Home
   } from "lucide-svelte";
 
   // Reactive state using Svelte 5 Runes
@@ -987,7 +990,80 @@
 
 <svelte:window onkeydown={handlePosKeydown} />
 
-<div class="h-screen w-screen p-3 sm:p-4 bg-[#f0f4f9] flex flex-col overflow-hidden space-y-3">
+<!-- 1. BLOKIR RESOLUSI LAYAR KECIL (< LG / < 1024px) DENGAN ALERT ELEGAN -->
+<div
+  class="fixed inset-0 z-[9999] bg-[#f0f4f9] flex flex-col items-center justify-center p-6 text-center lg:hidden overflow-y-auto"
+>
+  <div
+    class="max-w-md w-full bg-white/95 backdrop-blur-md rounded-3xl p-6 sm:p-8 border border-slate-200/80 shadow-2xl space-y-5 animate-scale-up"
+  >
+    <!-- ICON MONITOR / SCREEN RESTRICTION -->
+    <div class="relative mx-auto w-20 h-20 flex items-center justify-center">
+      <div class="absolute inset-0 rounded-3xl bg-amber-500/15 animate-ping opacity-60"></div>
+      <div
+        class="w-20 h-20 rounded-3xl bg-amber-50 border border-amber-200 flex items-center justify-center shadow-inner text-amber-600 relative z-10"
+      >
+        <Monitor class="w-10 h-10" />
+      </div>
+    </div>
+
+    <!-- BADGE & TITLE -->
+    <div class="space-y-2">
+      <span
+        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200"
+      >
+        <ShieldAlert class="w-3.5 h-3.5 text-amber-600" />
+        <span><span class="hidden sm:inline">Resolusi </span> Layar Terlalu Kecil</span>
+      </span>
+
+      <h2 class="text-lg font-black text-slate-900 leading-snug">
+        Terminal Kasir POS Memerlukan Layar PC / Tablet <span class="hidden sm:inline">Landscape (&ge; 1024px)</span>
+      </h2>
+
+      <p class="text-xs text-slate-600 leading-relaxed">
+        Antarmuka kasir farmasi didesain dengan tata letak multi-kolom untuk memastikan kecepatan dan akurasi peresepan.
+      </p>
+    </div>
+
+    <!-- PETUNJUK TINDAKAN -->
+    <div class="bg-slate-50 border border-slate-200/70 rounded-2xl p-4 text-left text-xs space-y-2.5 text-slate-700">
+      <div class="font-bold text-slate-900 flex items-center gap-1.5">
+        <Maximize2 class="w-4 h-4 text-brand-blue" />
+        <span>Solusi untuk Melanjutkan:</span>
+      </div>
+      <ul class="space-y-1.5 pl-5 list-disc text-slate-600">
+        <li>
+          <strong>Jika menggunakan PC / Laptop:</strong> Perbesar jendela browser atau tekan tombol <em>Maximize</em>.
+        </li>
+        <li>
+          <strong>Jika menggunakan Tablet:</strong> Putar layar ke posisi mendatar (<em>Landscape Mode</em>).
+        </li>
+      </ul>
+    </div>
+
+    <!-- BUTTONS NAVIGASI KELUAR -->
+    <div class="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
+      <a
+        href="/penjualan"
+        class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white text-xs font-bold shadow-md transition-all"
+      >
+        <ArrowLeft class="w-4 h-4" />
+        <span>Kembali ke Penjualan</span>
+      </a>
+
+      <a
+        href="/"
+        class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all"
+      >
+        <Home class="w-4 h-4 text-slate-500" />
+        <span>Dashboard Utama</span>
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- 2. MAIN POS SCREEN (HANYA AKTIF DI LAYAR >= LG / >= 1024px) -->
+<div class="hidden lg:flex h-screen w-screen p-3 sm:p-4 bg-[#f0f4f9] flex-col overflow-hidden space-y-3">
   <!-- POS DEDICATED FULLSCREEN TOPBAR -->
   <header class="bg-white rounded-2xl px-4 py-2.5 border border-slate-100 shadow-sm flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
     <div class="flex items-center gap-3">

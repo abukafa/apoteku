@@ -3,6 +3,18 @@ import { eq, and, gt, sql } from "drizzle-orm";
 import type { Static } from "elysia";
 import type { SyncSalesBodySchema } from "./pos.schema.js";
 
+function resolveShiftName(shiftNumber: number, notes?: string | null): string {
+  if (notes && notes.startsWith("[")) {
+    const match = notes.match(/^\[(.*?)\]/);
+    if (match && match[1]) return match[1];
+  }
+  if (shiftNumber === 1) return "Pagi";
+  if (shiftNumber === 2) return "Siang";
+  if (shiftNumber === 3) return "Malam";
+  if (shiftNumber === 4) return "Lembur";
+  return `Shift ${shiftNumber}`;
+}
+
 export class PosService {
   /**
    * Initial Bootstrap POS: Mengambil seluruh data awal untuk IndexedDB kasir
@@ -877,12 +889,7 @@ export class PosService {
       const expectedCash = initialCash + cashSales;
       const totalSales = cashSales + nonCashSales;
 
-      const shiftName =
-        shift.shiftNumber === 1
-          ? "Pagi"
-          : shift.shiftNumber === 2
-          ? "Siang"
-          : "Malam";
+      const shiftName = resolveShiftName(shift.shiftNumber, shift.notes);
 
       return {
         success: true,
@@ -937,8 +944,7 @@ export class PosService {
 
       if (existing.length > 0) {
         const shift = existing[0];
-        const shiftName =
-          shift.shiftNumber === 1 ? "Pagi" : shift.shiftNumber === 2 ? "Siang" : "Malam";
+        const shiftName = resolveShiftName(shift.shiftNumber, shift.notes);
         return {
           success: true,
           message: "Shift aktif sudah dibuka sebelumnya",
@@ -974,8 +980,7 @@ export class PosService {
         })
         .returning();
 
-      const shiftName =
-        newShift.shiftNumber === 1 ? "Pagi" : newShift.shiftNumber === 2 ? "Siang" : "Malam";
+      const shiftName = resolveShiftName(newShift.shiftNumber, newShift.notes);
 
       return {
         success: true,

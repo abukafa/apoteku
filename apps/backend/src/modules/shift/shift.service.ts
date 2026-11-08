@@ -280,24 +280,40 @@ class ShiftService {
       .orderBy(desc(schema.cashierShifts.startTime))
       .limit(limit);
 
-    return shifts.map((s) => ({
-      id: s.id,
-      shiftCode: `SHF-${s.shiftNumber.toString().padStart(3, "0")}`,
-      branchId: s.branchId,
-      branchName: s.branchName || "Cabang",
-      cashierName: "Kasir Petugas",
-      shiftLabel: `Shift ${s.shiftNumber}`,
-      startTime: s.startTime.toISOString(),
-      endTime: s.endTime ? s.endTime.toISOString() : "",
-      initialCash: Number(s.initialCash),
-      expectedCash: Number(s.expectedCash),
-      actualCash: Number(s.actualCash),
-      cashDifference: Number(s.cashDifference),
-      totalNonCash: Number(s.totalNonCash),
-      totalSales: Number(s.totalSales),
-      isOpen: s.isOpen,
-      notes: s.notes || ""
-    }));
+    return shifts.map((s) => {
+      let shiftLabel = `Shift ${s.shiftNumber}`;
+      if (s.notes && s.notes.startsWith("[")) {
+        const match = s.notes.match(/^\[(.*?)\]/);
+        if (match && match[1]) shiftLabel = match[1];
+      } else if (s.shiftNumber === 1) {
+        shiftLabel = "Shift 1 - Pagi";
+      } else if (s.shiftNumber === 2) {
+        shiftLabel = "Shift 2 - Siang";
+      } else if (s.shiftNumber === 3) {
+        shiftLabel = "Shift 3 - Malam";
+      } else if (s.shiftNumber === 4) {
+        shiftLabel = "Shift 4 - Lembur";
+      }
+
+      return {
+        id: s.id,
+        shiftCode: `SHF-${s.shiftNumber.toString().padStart(3, "0")}`,
+        branchId: s.branchId,
+        branchName: s.branchName || "Cabang",
+        cashierName: "Kasir Petugas",
+        shiftLabel,
+        startTime: s.startTime.toISOString(),
+        endTime: s.endTime ? s.endTime.toISOString() : "",
+        initialCash: Number(s.initialCash),
+        expectedCash: Number(s.expectedCash),
+        actualCash: Number(s.actualCash),
+        cashDifference: Number(s.cashDifference),
+        totalNonCash: Number(s.totalNonCash),
+        totalSales: Number(s.totalSales),
+        isOpen: s.isOpen,
+        notes: s.notes || ""
+      };
+    });
   }
 }
 

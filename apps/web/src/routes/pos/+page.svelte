@@ -134,7 +134,17 @@
   }
 
   // Shift Register State
+  const SHIFT_TEMPLATES = [
+    { value: "1", label: "Shift 1 - Pagi", sublabel: "07:00 - 15:00 WIB", shiftNumber: 1, name: "Pagi (07:00 - 15:00)" },
+    { value: "2", label: "Shift 2 - Siang", sublabel: "14:00 - 22:00 WIB", shiftNumber: 2, name: "Siang (14:00 - 22:00)" },
+    { value: "3", label: "Shift 3 - Malam", sublabel: "21:00 - 07:00 WIB", shiftNumber: 3, name: "Malam (21:00 - 07:00)" },
+    { value: "4", label: "Shift 4 - Lembur / Ekstra", sublabel: "Jam fleksibel di luar shift normal", shiftNumber: 4, name: "Lembur / Ekstra" },
+    { value: "custom", label: "Kustom / Shift Tambahan", sublabel: "Tentukan jam & nama shift sendiri", shiftNumber: 5, name: "Kustom" }
+  ];
+
   let isShiftModalOpen = $state(false);
+  let selectedShiftValue = $state("1");
+  let customShiftLabel = $state("");
   let shiftInitialCash = $state(0);
   let shiftCashSales = $state(0);
   let shiftQrisSales = $state(0);
@@ -146,6 +156,19 @@
 
   async function openShiftModal() {
     isShiftModalOpen = true;
+
+    // Rekomendasikan shift sesuai jam saat ini jika belum ada activeShift
+    if (!activeShift) {
+      const currentHour = new Date().getHours();
+      if (currentHour >= 6 && currentHour < 14) {
+        selectedShiftValue = "1";
+      } else if (currentHour >= 14 && currentHour < 21) {
+        selectedShiftValue = "2";
+      } else {
+        selectedShiftValue = "3";
+      }
+    }
+
     if (networkStore.effectiveOnline) {
       try {
         const res = await api.pos.getActiveShift(selectedBranchId);
@@ -164,23 +187,31 @@
 
   async function handleOpenShift() {
     try {
+      const selectedTemplate = SHIFT_TEMPLATES.find((t) => t.value === selectedShiftValue);
+      const shiftNumber = selectedTemplate?.shiftNumber || 1;
+      const shiftTag =
+        selectedTemplate?.value === "custom" && customShiftLabel.trim()
+          ? customShiftLabel.trim()
+          : selectedTemplate?.label + (selectedTemplate?.sublabel ? ` (${selectedTemplate.sublabel})` : "");
+      const combinedNotes = shiftNotes.trim() ? `[${shiftTag}] ${shiftNotes.trim()}` : `[${shiftTag}]`;
+
       if (networkStore.effectiveOnline) {
         const res = await api.pos.openShift({
           branchId: selectedBranchId,
           initialCash: shiftInitialCash,
-          shiftNumber: 1,
-          notes: shiftNotes
+          shiftNumber,
+          notes: combinedNotes
         });
         if (res && res.success && res.shift) {
           activeShift = res.shift;
         } else {
-          activeShift = await mockApi.openShift(selectedBranchId, shiftInitialCash, 1, shiftNotes);
+          activeShift = await mockApi.openShift(selectedBranchId, shiftInitialCash, shiftNumber, combinedNotes);
         }
       } else {
-        activeShift = await mockApi.openShift(selectedBranchId, shiftInitialCash, 1, shiftNotes);
+        activeShift = await mockApi.openShift(selectedBranchId, shiftInitialCash, shiftNumber, combinedNotes);
       }
 
-      shiftClosureSuccess = `Shift #${activeShift?.shiftName || "Pagi"} berhasil dibuka!`;
+      shiftClosureSuccess = `${shiftTag} berhasil dibuka!`;
       setTimeout(() => {
         shiftClosureSuccess = "";
         isShiftModalOpen = false;
@@ -1874,9 +1905,42 @@
                 Shift Kasir Belum Dibuka
               </span>
               <p class="text-[11px] text-amber-700">
-                Silakan masukkan modal awal kas di laci untuk memulai sesi transaksi kasir Anda.
+                Pilih jadwal shift kerja Anda dan masukkan modal awal kas di laci untuk memulai sesi transaksi.
               </p>
             </div>
+
+            <!-- Dropdown Pilihan Shift & Jam Kerja -->
+            <div>
+              <label for="shift-template-select" class="font-bold text-slate-700 block mb-1">
+                Pilihan Jadwal / Jam Shift
+              </label>
+              <Select
+                id="shift-template-select"
+                options={SHIFT_TEMPLATES.map((t) => ({
+                  value: t.value,
+                  label: t.label,
+                  sublabel: t.sublabel
+                }))}
+                value={selectedShiftValue}
+                onchange={(val) => (selectedShiftValue = String(val))}
+              />
+            </div>
+
+            <!-- Jika memilih Kustom / Shift Tambahan -->
+            {#if selectedShiftValue === "custom"}
+              <div>
+                <label for="shift-custom-label" class="font-bold text-slate-700 block mb-1">
+                  Keterangan Jam / Nama Shift Kustom
+                </label>
+                <input
+                  id="shift-custom-label"
+                  type="text"
+                  bind:value={customShiftLabel}
+                  placeholder="Contoh: Shift Sore 12:00 - 18:00 / Lembur Event"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800"
+                />
+              </div>
+            {/if}
 
             <div>
               <label for="shift-init" class="font-bold text-slate-700 block mb-1">
@@ -1927,6 +1991,10 @@
               <div class="flex justify-between text-slate-600">
                 <span>Kasir Bertugas:</span>
                 <strong class="text-slate-800">{authStore.user?.fullName || "Kasir Utama"}</strong>
+              </div>
+              <div class="flex justify-between text-slate-600">
+                <span>Jadwal / Sesi Shift:</span>
+                <strong class="text-brand-blue-700 font-semibold">{activeShift.shiftName || "Shift Pagi"}</strong>
               </div>
               <div class="flex justify-between text-slate-600">
                 <span>Waktu Buka Shift:</span>

@@ -602,17 +602,22 @@
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{d.invoiceRef}</td>
             <td class="py-3.5 px-4 font-bold text-slate-800">{d.supplierName}</td>
-            <td class="py-3.5 px-4 font-mono {d.status === 'OVERDUE' ? 'text-brand-red-600 font-bold' : d.status === 'DUE_SOON' ? 'text-amber-600 font-bold' : 'text-slate-600'}">
-              {d.dueDate} ({d.daysLeft > 0 ? `${d.daysLeft} hari lagi` : 'Lewat tempo'})
+            <td class="py-3.5 px-4 font-mono">
+              <div class="font-bold {d.status === 'OVERDUE' ? 'text-brand-red-600' : d.status === 'DUE_SOON' ? 'text-amber-600' : 'text-slate-800'}">
+                {d.dueDate}
+              </div>
+              <div class="text-[10px] {d.status === 'OVERDUE' ? 'text-brand-red-600 font-semibold' : d.status === 'DUE_SOON' ? 'text-amber-600 font-semibold' : 'text-slate-400'}">
+                {d.daysLeft < 0 ? `Lewat ${Math.abs(d.daysLeft)} hari` : d.daysLeft === 0 ? 'Jatuh tempo hari ini' : `${d.daysLeft} hari lagi`}
+              </div>
             </td>
             <td class="py-3.5 px-4 text-right font-mono font-black text-brand-red-600">
               {formatRupiah(d.totalDebt)}
             </td>
             <td class="py-3.5 px-4 text-center">
               {#if d.status === "OVERDUE"}
-                <Badge type="DANGER" label="LEWAT TEMPO" />
+                <Badge type="DANGER" label={`LEWAT ${Math.abs(d.daysLeft)} HARI`} />
               {:else if d.status === "DUE_SOON"}
-                <Badge type="WARNING" label="H-2 JATUH TEMPO" />
+                <Badge type="WARNING" label={d.daysLeft === 0 ? "HARI INI" : `H-${d.daysLeft} TEMPO`} />
               {:else}
                 <Badge type="INFO" label="BERJALAN" />
               {/if}

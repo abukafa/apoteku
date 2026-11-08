@@ -12,7 +12,8 @@
     Lock,
     Eye,
     Store,
-    X
+    X,
+    Trash2
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
@@ -21,8 +22,8 @@
   import Select from "$lib/components/ui/Select.svelte";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
-  import { mockApi } from "$lib/services/mock-api";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { alertStore } from "$lib/stores/alertStore.svelte";
   import { formatRupiah } from "@apoteku/core";
 
   interface CashLedgerEntry {
@@ -68,6 +69,7 @@
   let shiftStatusFilter = $state<"ALL" | "OPEN" | "CLOSED">("ALL");
   let searchQuery = $state("");
   let shiftSearchQuery = $state("");
+  let isLoading = $state(false);
 
   // Modals State
   let isAddExpenseModalOpen = $state(false);
@@ -75,200 +77,93 @@
   let selectedShiftForClose = $state<CashierShiftRecord | null>(null);
   let actualCountedCashInput = $state(0);
   let closeShiftNotes = $state("");
+  let isSubmittingExpense = $state(false);
+  let isSubmittingPayout = $state(false);
+  let isClosingShift = $state(false);
 
-  // QRIS Payment Gateway Settlement State
-  let qrisBalance = $state(3420000);
+  // Financial Balances from Backend
+  let qrisBalance = $state(0);
+  let totalKasBank = $state(0);
+  let kasLaci = $state(0);
+  let kasBrankas = $state(0);
+  let bcaBalance = $state(0);
+  let totalDebt = $state(0);
+
   let isPayoutModalOpen = $state(false);
   let payoutSuccess = $state("");
-  let payoutAmount = $state(3420000);
+  let payoutAmount = $state(0);
 
-  // Cash Ledger Entries
-  let cashEntries = $state<CashLedgerEntry[]>([
-    {
-      id: "csh-001",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      time: "2025-10-27 10:12",
-      type: "IN",
-      category: "POS Kasir",
-      account: "KAS_LACI",
-      refNumber: "PJ-1025-0287",
-      amount: 125000,
-      balance: 4850000,
-      operator: "Nida Farida",
-      description: "Penjualan OTC Tunai"
-    },
-    {
-      id: "csh-002",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      time: "2025-10-27 09:48",
-      type: "IN",
-      category: "QRIS",
-      account: "BANK_BCA",
-      refNumber: "PJ-1025-0286",
-      amount: 86500,
-      balance: 4725000,
-      operator: "Nida Farida",
-      description: "Pembayaran QRIS Kasir (Resep RSP-2025-10-098)"
-    },
-    {
-      id: "csh-003",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      time: "2025-10-27 08:30",
-      type: "OUT",
-      category: "Operasional",
-      account: "KAS_LACI",
-      refNumber: "BOP-1027-01",
-      amount: 150000,
-      balance: 4638500,
-      operator: "Erwin Noval Mufid",
-      description: "Pembelian kantong kresek & lakban packing"
-    },
-    {
-      id: "csh-004",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      time: "2025-10-27 07:00",
-      type: "IN",
-      category: "Modal Kasir",
-      account: "KAS_LACI",
-      refNumber: "SFT-1027-01",
-      amount: 500000,
-      balance: 4788500,
-      operator: "Nida Farida",
-      description: "Kas awal laci kasir Shift Pagi"
-    },
-    {
-      id: "csh-005",
-      branchId: "2",
-      branchName: "Apotek Hafidz Farma 2",
-      time: "2025-10-27 09:15",
-      type: "OUT",
-      category: "Pelunasan PBF",
-      account: "BANK_BCA",
-      refNumber: "RLH-251027",
-      amount: 1200000,
-      balance: 3588500,
-      operator: "apt. Hafidz Nurul",
-      description: "Cicilan faktur PBF PT. Enseval Putera Megatrading"
-    }
-  ]);
+  // Cash Ledger Entries (Real database via API)
+  let cashEntries = $state<CashLedgerEntry[]>([]);
 
-  // Cashier Shift Reconciliation Records (cashier_shifts)
-  let shiftRecords = $state<CashierShiftRecord[]>([
-    {
-      id: "shf-001",
-      shiftCode: "SFT-20251028-01",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      cashierName: "Nida Farida",
-      shiftLabel: "Shift Pagi (07:00 - 15:00)",
-      startTime: "2025-10-28 07:00",
-      endTime: "-",
-      initialCash: 500000,
-      expectedCash: 3470000,
-      actualCash: 0,
-      cashDifference: 0,
-      totalNonCash: 1480000,
-      totalSales: 4450000,
-      isOpen: true,
-      notes: "Shift sedang berlangsung"
-    },
-    {
-      id: "shf-002",
-      shiftCode: "SFT-20251027-02",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      cashierName: "Darajat Rahmatulloh",
-      shiftLabel: "Shift Siang (15:00 - 22:00)",
-      startTime: "2025-10-27 15:00",
-      endTime: "2025-10-27 22:05",
-      initialCash: 500000,
-      expectedCash: 2890000,
-      actualCash: 2890000,
-      cashDifference: 0,
-      totalNonCash: 1120000,
-      totalSales: 3510000,
-      isOpen: false,
-      notes: "Setoran tunai & struk EDC klop"
-    },
-    {
-      id: "shf-003",
-      shiftCode: "SFT-20251027-01",
-      branchId: "2",
-      branchName: "Apotek Hafidz Farma 2",
-      cashierName: "Cantika Nur Gustiani",
-      shiftLabel: "Shift Pagi (07:00 - 15:00)",
-      startTime: "2025-10-27 07:00",
-      endTime: "2025-10-27 15:10",
-      initialCash: 400000,
-      expectedCash: 2150000,
-      actualCash: 2148000,
-      cashDifference: -2000,
-      totalNonCash: 860000,
-      totalSales: 2610000,
-      isOpen: false,
-      notes: "Selisih kurang Rp 2.000 pembulatan kembalian receh"
-    }
-  ]);
+  // Cashier Shift Reconciliation Records (Real database via API)
+  let shiftRecords = $state<CashierShiftRecord[]>([]);
 
   // Form Catat Mutasi Kas Kecil State
   let expenseForm = $state({
     branchId: authStore.user?.branchId || "1",
     type: "OUT" as "IN" | "OUT",
-    category: "Perlengkapan Apotek",
+    category: "Perlengkapan",
     account: "KAS_LACI" as "KAS_LACI" | "KAS_BRANKAS" | "BANK_BCA",
     amount: 50000,
-    operator: "Erwin Noval Mufid",
+    operator: authStore.user?.fullName || "Staf Keuangan",
     description: ""
   });
 
-  onMount(async () => {
-    if (authStore.user?.branchId) {
-      selectedBranchId = authStore.user.branchId;
-      expenseForm.branchId = authStore.user.branchId;
-    }
+  async function loadFinanceData(branchId?: string) {
+    isLoading = true;
     try {
-      await mockApi.ensureDataLoaded();
-      const [bList, shiftRes, cfRes] = await Promise.all([
-        mockApi.getBranches(),
-        api.shift.list(),
-        api.finance.getCashflow()
+      const targetBranch = branchId === "ALL" ? undefined : branchId;
+      const [shiftRes, cfRes] = await Promise.all([
+        api.shift.list({ branchId: targetBranch }),
+        api.finance.getCashflow(targetBranch)
       ]);
-      if (bList.length > 0) {
-        branches = bList;
-        if (!authStore.user?.branchId && bList[0]?.id) {
-          selectedBranchId = bList[0].id;
-          expenseForm.branchId = bList[0].id;
-        }
-      }
 
-      if (shiftRes?.success && Array.isArray(shiftRes.data) && shiftRes.data.length > 0) {
+      if (shiftRes?.success && Array.isArray(shiftRes.data)) {
         shiftRecords = shiftRes.data;
       }
+
       if (cfRes?.success && cfRes.data) {
         const d = cfRes.data;
-        if (d.kasLaci) payoutAmount = d.kasLaci;
-        if (Array.isArray(d.entries) && d.entries.length > 0) {
-          cashEntries = d.entries.map((e: any) => ({
-            id: e.id,
-            branchId: "1",
-            branchName: "Apotek Hafidz Farma Pusat",
-            time: `${e.date} ${e.time}`,
-            type: e.type,
-            category: e.category,
-            account: e.account,
-            refNumber: `CF-${e.id}`,
-            amount: e.amount,
-            balance: 5000000,
-            operator: "Sistem Keuangan",
-            description: e.description
-          }));
+        qrisBalance = Number(d.qrisBalance || 0);
+        payoutAmount = qrisBalance;
+        kasLaci = Number(d.kasLaci || 0);
+        kasBrankas = Number(d.kasBrankas || 0);
+        bcaBalance = Number(d.bcaBalance || 0);
+        totalKasBank = Number(d.totalKasBank || 0);
+        totalDebt = Number(d.totalDebt || 0);
+        if (Array.isArray(d.entries)) {
+          cashEntries = d.entries;
         }
       }
-    } catch (_) {}
+    } catch (err) {
+      console.error("Gagal memuat data keuangan:", err);
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  onMount(async () => {
+    if (authStore.user?.fullName) {
+      expenseForm.operator = authStore.user.fullName;
+    }
+    try {
+      const bRes = await api.erp.getBranches();
+      const bList = bRes?.data || (Array.isArray(bRes) ? bRes : []);
+      if (bList.length > 0) {
+        branches = bList;
+        const exists = bList.some((b: any) => b.id === selectedBranchId);
+        if (!exists) {
+          selectedBranchId = bList[0].id;
+          expenseForm.branchId = bList[0].id;
+        } else {
+          expenseForm.branchId = selectedBranchId;
+        }
+      }
+      await loadFinanceData(selectedBranchId);
+    } catch (err) {
+      console.error("Error onMount keuangan:", err);
+    }
   });
 
   // Branch-filtered arrays
@@ -324,67 +219,70 @@
       .filter((e) => e.type === "OUT")
       .reduce((a, b) => a + b.amount, 0)
   );
-  let currentBalance = $derived(branchCashEntries[0]?.balance || 4850000);
+  let currentBalance = $derived(
+    branchCashEntries.length > 0 ? branchCashEntries[0].balance : totalKasBank
+  );
 
-  function handleSaveExpense() {
+  async function handleSaveExpense() {
     if (!expenseForm.amount || expenseForm.amount <= 0) return;
-    const branchObj =
-      branches.find((b) => b.id === expenseForm.branchId) || branches[0];
-    const amt = Number(expenseForm.amount);
-    const nextBalance =
-      expenseForm.type === "IN" ? currentBalance + amt : currentBalance - amt;
-    const prefix = expenseForm.type === "IN" ? "KSM" : "BOP";
+    isSubmittingExpense = true;
+    try {
+      const amt = Number(expenseForm.amount);
+      const res = await api.finance.recordCashMutation({
+        branchId: expenseForm.branchId,
+        type: expenseForm.type,
+        category: expenseForm.category,
+        account: expenseForm.account,
+        amount: amt,
+        description:
+          expenseForm.description.trim() ||
+          `${expenseForm.category} (${expenseForm.account})`,
+        operator: authStore.user?.fullName || expenseForm.operator
+      });
 
-    const newEntry: CashLedgerEntry = {
-      id: `csh-${Date.now()}`,
-      branchId: expenseForm.branchId,
-      branchName: branchObj?.name || "Apotek Hafidz Farma Pusat",
-      time: "2025-10-28 11:30",
-      type: expenseForm.type,
-      category: expenseForm.category,
-      account: expenseForm.account,
-      refNumber: `${prefix}-1028-${String(cashEntries.length + 1).padStart(2, "0")}`,
-      amount: amt,
-      balance: nextBalance,
-      operator: expenseForm.operator,
-      description:
-        expenseForm.description.trim() ||
-        `${expenseForm.category} (${expenseForm.account})`
-    };
-
-    cashEntries = [newEntry, ...cashEntries];
-    expenseForm.description = "";
-    isAddExpenseModalOpen = false;
+      if (res?.success) {
+        await loadFinanceData(selectedBranchId);
+        expenseForm.description = "";
+        isAddExpenseModalOpen = false;
+      } else {
+        alert(res?.error || "Gagal menyimpan mutasi kas");
+      }
+    } catch (err: any) {
+      alert("Terjadi kesalahan: " + (err?.message || err));
+    } finally {
+      isSubmittingExpense = false;
+    }
   }
 
-  function handlePayoutSubmit() {
+  async function handlePayoutSubmit() {
     if (payoutAmount <= 0) return;
-    const amount = payoutAmount;
-    qrisBalance = Math.max(0, qrisBalance - amount);
+    isSubmittingPayout = true;
+    try {
+      const targetBranch =
+        selectedBranchId && selectedBranchId !== "ALL"
+          ? selectedBranchId
+          : branches[0]?.id;
+      const res = await api.finance.recordQrisPayout({
+        branchId: targetBranch,
+        amount: payoutAmount,
+        operator: authStore.user?.fullName || "Staf Keuangan"
+      });
 
-    cashEntries = [
-      {
-        id: `csh-${Date.now()}`,
-        branchId: "1",
-        branchName: "Apotek Hafidz Farma Pusat",
-        time: "2025-10-28 11:40",
-        type: "IN",
-        category: "Settlement QRIS",
-        account: "BANK_BCA",
-        refNumber: `SET-${Date.now().toString().slice(-6)}`,
-        amount: amount,
-        balance: currentBalance + amount,
-        operator: "Sistem Otomatis (Xendit)",
-        description: "Penarikan Dana QRIS ke Rekening BCA Apotek"
-      },
-      ...cashEntries
-    ];
-
-    payoutSuccess = `Penarikan ${formatRupiah(amount)} berhasil diproses!`;
-    setTimeout(() => {
-      payoutSuccess = "";
-      isPayoutModalOpen = false;
-    }, 1500);
+      if (res?.success) {
+        payoutSuccess = `Penarikan ${formatRupiah(payoutAmount)} berhasil diproses!`;
+        await loadFinanceData(selectedBranchId);
+        setTimeout(() => {
+          payoutSuccess = "";
+          isPayoutModalOpen = false;
+        }, 1500);
+      } else {
+        alert(res?.error || "Gagal memproses penarikan QRIS");
+      }
+    } catch (err: any) {
+      alert("Terjadi kesalahan: " + (err?.message || err));
+    } finally {
+      isSubmittingPayout = false;
+    }
   }
 
   function openCloseShiftModal(shift: CashierShiftRecord) {
@@ -396,54 +294,77 @@
 
   async function handleConfirmCloseShift() {
     if (!selectedShiftForClose) return;
-    const diff = Number(actualCountedCashInput) - selectedShiftForClose.expectedCash;
-
+    isClosingShift = true;
     try {
-      await api.shift.close({
+      const res = await api.shift.close({
         shiftId: selectedShiftForClose.id,
         actualCash: Number(actualCountedCashInput),
         notes: closeShiftNotes
       });
 
-      const res = await api.shift.list();
-      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
-        shiftRecords = res.data;
+      if (res?.success) {
+        await loadFinanceData(selectedBranchId);
+        isCloseShiftModalOpen = false;
+        selectedShiftForClose = null;
+      } else {
+        alert(res?.error || "Gagal menutup shift");
       }
-    } catch (_) {
-      shiftRecords = shiftRecords.map((s) =>
-        s.id === selectedShiftForClose?.id
-          ? {
-              ...s,
-              endTime: new Date().toISOString().replace("T", " ").substring(0, 16),
-              actualCash: Number(actualCountedCashInput),
-              cashDifference: diff,
-              isOpen: false,
-              notes: closeShiftNotes
-            }
-          : s
-      );
+    } catch (err: any) {
+      alert("Terjadi kesalahan: " + (err?.message || err));
+    } finally {
+      isClosingShift = false;
+    }
+  }
+
+  let deletingEntryId = $state<string | null>(null);
+
+  async function handleDeleteEntry(entry: CashLedgerEntry) {
+    if (authStore.user?.role !== "SUPERADMIN" && authStore.user?.role !== "OWNER") {
+      alertStore.danger("Akses Ditolak", "Hanya Superuser dan Owner yang berhak menghapus entri buku kas.");
+      return;
     }
 
-    cashEntries = [
-      {
-        id: `csh-${Date.now()}`,
-        branchId: selectedShiftForClose.branchId,
-        branchName: selectedShiftForClose.branchName,
-        time: new Date().toISOString().replace("T", " ").substring(0, 16),
-        type: "IN",
-        category: "Setoran Shift",
-        account: "KAS_BRANKAS",
-        refNumber: selectedShiftForClose.shiftCode,
-        amount: Number(actualCountedCashInput),
-        balance: currentBalance + Number(actualCountedCashInput),
-        operator: selectedShiftForClose.cashierName,
-        description: `Setoran tutup ${selectedShiftForClose.shiftLabel}`
-      },
-      ...cashEntries
-    ];
+    const isDebtPayment = entry.id.startsWith("dp-");
+    const title = isDebtPayment ? "Batalkan Pembayaran Hutang" : "Hapus Mutasi Kas";
+    const message = isDebtPayment
+      ? `Yakin ingin membatalkan transaksi pelunasan "${entry.refNumber}" (${entry.description}) senilai ${formatRupiah(entry.amount)}? Saldo sisa tagihan faktur PBF akan dikembalikan secara otomatis.`
+      : `Yakin ingin menghapus entri mutasi kas "${entry.refNumber}" (${entry.description || entry.category}) senilai ${formatRupiah(entry.amount)}? Saldo kas akan dihitung ulang secara otomatis.`;
 
-    isCloseShiftModalOpen = false;
-    selectedShiftForClose = null;
+    const isConfirmed = await alertStore.confirm({
+      type: "danger",
+      title,
+      message,
+      confirmText: isDebtPayment ? "Ya, Batalkan Pembayaran" : "Ya, Hapus Mutasi",
+      cancelText: "Batal"
+    });
+
+    if (!isConfirmed) return;
+
+    deletingEntryId = entry.id;
+    try {
+      let res;
+      if (isDebtPayment) {
+        const debtPaymentId = entry.id.replace("dp-", "");
+        res = await api.finance.deleteDebtPayment(debtPaymentId);
+      } else {
+        res = await api.finance.deleteCashMutation(entry.id);
+      }
+
+      if (res?.success) {
+        alertStore.toast(
+          res.message || `Transaksi ${entry.refNumber} berhasil dihapus.`,
+          "success",
+          "Berhasil Dihapus"
+        );
+        await loadFinanceData(selectedBranchId);
+      } else {
+        alertStore.danger("Gagal Menghapus Transaksi", res?.error || "Gagal menghapus entri kas");
+      }
+    } catch (err: any) {
+      alertStore.danger("Terjadi Kesalahan", err?.message || "Terjadi kesalahan saat menghapus entri");
+    } finally {
+      deletingEntryId = null;
+    }
   }
 </script>
 
@@ -465,7 +386,10 @@
         <div class="w-56">
           <Select
             value={selectedBranchId}
-            onchange={(val) => (selectedBranchId = val)}
+            onchange={(val) => {
+              selectedBranchId = val;
+              loadFinanceData(val);
+            }}
             options={[
               { value: "ALL", label: "Semua Cabang Apotek" },
               ...branches.map((b) => ({ value: b.id, label: b.name }))
@@ -494,8 +418,8 @@
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
     <MetricCard
       title="Saldo Kas & Bank"
-      value={formatRupiah(currentBalance)}
-      subtext="Kas laci, brankas & rekening"
+      value={formatRupiah(currentBalance, false)}
+      subtext="Cash: {formatRupiah(kasLaci)}"
       icon={Wallet}
       variant="brand"
     />
@@ -507,14 +431,14 @@
       variant="success"
     />
     <MetricCard
-      title="Total Kas Keluar (OUT)"
+      title="Kas Keluar (OUT)"
       value={formatRupiah(totalCashOut)}
       subtext="{branchCashEntries.filter((e) => e.type === 'OUT').length} Beban & pembayaran"
       icon={ArrowDownLeft}
       variant="warning"
     />
     <MetricCard
-      title="Arus Kas Bersih (Net)"
+      title="Kas Bersih (Net)"
       value={formatRupiah(totalCashIn - totalCashOut)}
       subtext="Selisih kas masuk vs keluar"
       icon={TrendingUp}
@@ -552,11 +476,11 @@
   </div>
 
   <!-- TAB NAVIGATION -->
-  <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold">
+  <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold overflow-x-auto no-scrollbar">
     <button
       type="button"
       onclick={() => (activeTab = "buku_kas")}
-      class="pb-3 px-3 transition-colors relative {activeTab === 'buku_kas' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'buku_kas' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <span>Buku Kas & Mutasi Harian ({branchCashEntries.length})</span>
       {#if activeTab === "buku_kas"}
@@ -567,7 +491,7 @@
     <button
       type="button"
       onclick={() => (activeTab = "rekonsiliasi_shift")}
-      class="pb-3 px-3 transition-colors relative {activeTab === 'rekonsiliasi_shift' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'rekonsiliasi_shift' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <span>Rekonsiliasi & Tutup Shift Kasir ({branchShiftRecords.length})</span>
       {#if activeTab === "rekonsiliasi_shift"}
@@ -602,14 +526,21 @@
         <th class="py-3 px-4">Waktu</th>
         <th class="py-3 px-4">Referensi</th>
         <th class="py-3 px-4">Kategori & Akun</th>
-        <th class="py-3 px-4">Keterangan Transaksi</th>
-        <th class="py-3 px-4 text-right">Masuk (IN)</th>
-        <th class="py-3 px-4 text-right">Keluar (OUT)</th>
-        <th class="py-3 px-4 text-right">Saldo</th>
+        <th class="py-3 px-4">Keterangan</th>
+        <th class="py-3 px-4 text-right">Masuk</th>
+        <th class="py-3 px-4 text-right">Keluar</th>
         <th class="py-3 px-4 text-center">Petugas</th>
+        <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
+        {#if filteredCashEntries.length === 0}
+          <tr>
+            <td colspan="9" class="py-12 text-center text-slate-400 text-xs">
+              {isLoading ? "Memuat riwayat transaksi kas..." : "Belum ada transaksi arus kas untuk cabang ini."}
+            </td>
+          </tr>
+        {/if}
         {#each filteredCashEntries as entry}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono text-slate-500 text-[11px]">
@@ -630,10 +561,23 @@
             <td class="py-3.5 px-4 text-right font-mono font-bold text-brand-red-600">
               {entry.type === "OUT" ? formatRupiah(entry.amount) : "-"}
             </td>
-            <td class="py-3.5 px-4 text-right font-mono font-black text-slate-900">
-              {formatRupiah(entry.balance)}
-            </td>
             <td class="py-3.5 px-4 text-center text-slate-600 font-semibold">{entry.operator}</td>
+            <td class="py-3.5 px-4 text-center">
+              {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+                <button
+                  type="button"
+                  onclick={() => handleDeleteEntry(entry)}
+                  disabled={deletingEntryId === entry.id}
+                  class="p-1.5 rounded-lg text-slate-400 hover:text-brand-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
+                  title="Hapus / Batalkan Transaksi Kas"
+                  aria-label="Hapus Transaksi Kas"
+                >
+                  <Trash2 class="w-4 h-4" />
+                </button>
+              {:else}
+                <span class="text-slate-300 text-xs">-</span>
+              {/if}
+            </td>
           </tr>
         {/each}
       {/snippet}
@@ -642,7 +586,7 @@
   <!-- TAB 2: REKONSILIASI & TUTUP SHIFT KASIR -->
   {:else if activeTab === "rekonsiliasi_shift"}
     <DataTable
-      title="Daftar Rekonsiliasi Kasir & Setoran Laci per Shift"
+      title="Rekonsiliasi Kasir & Setoran Laci"
       searchPlaceholder="Cari kode shift, nama kasir, atau jadwal..."
       bind:searchValue={shiftSearchQuery}
       totalCount={filteredShiftRecords.length}
@@ -662,17 +606,24 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Kode & Jadwal Shift</th>
-        <th class="py-3 px-4">Kasir & Cabang</th>
-        <th class="py-3 px-4 text-right">Modal Awal</th>
-        <th class="py-3 px-4 text-right">Tunai Sistem</th>
-        <th class="py-3 px-4 text-right">Tunai Fisik</th>
+        <th class="py-3 px-4">Shift</th>
+        <th class="py-3 px-4">Kasir</th>
+        <th class="py-3 px-4 text-right">Modal</th>
+        <th class="py-3 px-4 text-right">Sistem</th>
+        <th class="py-3 px-4 text-right">Fisik</th>
         <th class="py-3 px-4 text-right">Non-Tunai</th>
-        <th class="py-3 px-4 text-center">Selisih Kas</th>
-        <th class="py-3 px-4 text-center">Status & Aksi</th>
+        <th class="py-3 px-4 text-center">Selisih</th>
+        <th class="py-3 px-4 text-center">Status</th>
       {/snippet}
 
       {#snippet rows()}
+        {#if filteredShiftRecords.length === 0}
+          <tr>
+            <td colspan="8" class="py-12 text-center text-slate-400 text-xs">
+              {isLoading ? "Memuat riwayat shift kasir..." : "Belum ada catatan shift kasir untuk cabang ini."}
+            </td>
+          </tr>
+        {/if}
         {#each filteredShiftRecords as s}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4">
@@ -789,12 +740,12 @@
             value={expenseForm.category}
             onchange={(val) => (expenseForm.category = val)}
             options={[
-              "Perlengkapan Apotek",
-              "Kebersihan & Sanitasi",
-              "Listrik, Air & Internet",
-              "Biaya Angkut / Ekspedisi",
-              "Konsumsi Staf & Lembur",
-              "Modal Kasir Tambahan"
+              "Perlengkapan",
+              "Kebersihan",
+              "Tagihan",
+              "Biaya",
+              "Konsumsi",
+              "Modal Kasir"
             ]}
           />
         </div>
@@ -851,9 +802,10 @@
         <button
           type="button"
           onclick={handleSaveExpense}
-          class="px-4 py-2 rounded-xl bg-brand-red-600 hover:bg-brand-red-700 text-white font-bold text-xs shadow-sm"
+          disabled={isSubmittingExpense}
+          class="px-4 py-2 rounded-xl bg-brand-red-600 hover:bg-brand-red-700 text-white font-bold text-xs shadow-sm disabled:opacity-50"
         >
-          Simpan ke Buku Kas
+          {isSubmittingExpense ? "Menyimpan..." : "Simpan ke Buku Kas"}
         </button>
       </div>
     </div>
@@ -945,9 +897,10 @@
         <button
           type="button"
           onclick={handleConfirmCloseShift}
-          class="px-4 py-1.5 rounded-xl bg-brand-red-600 hover:bg-brand-red-700 text-white font-bold"
+          disabled={isClosingShift}
+          class="px-4 py-1.5 rounded-xl bg-brand-red-600 hover:bg-brand-red-700 text-white font-bold disabled:opacity-50"
         >
-          Konfirmasi Tutup Shift
+          {isClosingShift ? "Menutup..." : "Konfirmasi Tutup Shift"}
         </button>
       </div>
     </div>
@@ -1017,9 +970,10 @@
           <button
             type="button"
             onclick={handlePayoutSubmit}
-            class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm"
+            disabled={isSubmittingPayout}
+            class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm disabled:opacity-50"
           >
-            Proses Penarikan Dana
+            {isSubmittingPayout ? "Memproses..." : "Proses Penarikan Dana"}
           </button>
         </div>
       {/if}

@@ -296,6 +296,343 @@ class FinanceService {
       };
     });
   }
+
+  async deleteCashMutation(mutationId: string) {
+    const [mut] = await db
+      .select({
+        id: schema.cashMutations.id,
+        refNumber: schema.cashMutations.refNumber,
+        amount: schema.cashMutations.amount,
+        type: schema.cashMutations.type,
+        category: schema.cashMutations.category,
+        description: schema.cashMutations.description
+      })
+      .from(schema.cashMutations)
+      .where(eq(schema.cashMutations.id, mutationId))
+      .limit(1);
+
+    if (!mut) {
+      throw new Error(`Data mutasi kas dengan ID "${mutationId}" tidak ditemukan`);
+    }
+
+    await db
+      .delete(schema.cashMutations)
+      .where(eq(schema.cashMutations.id, mutationId));
+
+    return {
+      success: true,
+      message: `Mutasi kas "${mut.refNumber}" (${mut.category} - Rp ${Number(mut.amount).toLocaleString("id-ID")}) berhasil dihapus.`,
+      data: {
+        deletedId: mut.id,
+        refNumber: mut.refNumber
+      }
+    };
+  }
+
+  async recordCashMutation(payload: {
+    tenantId?: string;
+    branchId?: string;
+    type: "IN" | "OUT";
+    category: string;
+    account?: string;
+    refNumber?: string;
+    amount: number;
+    description?: string;
+    operator?: string;
+    transactionDate?: Date;
+  }) {
+    const tenantId = await this.getTenantId(payload.tenantId);
+
+    let branchId = payload.branchId;
+    let branch = null;
+    if (branchId && branchId !== "ALL") {
+      const [found] = await db
+        .select({ id: schema.branches.id, name: schema.branches.name })
+        .from(schema.branches)
+        .where(eq(schema.branches.id, branchId))
+        .limit(1);
+      branch = found;
+    }
+
+    if (!branch) {
+      const [defaultBranch] = await db
+        .select({ id: schema.branches.id, name: schema.branches.name })
+        .from(schema.branches)
+        .limit(1);
+      branch = defaultBranch;
+      branchId = defaultBranch?.id;
+    }
+
+    if (!branchId) {
+      throw new Error("Tidak ada cabang yang valid di database");
+    }
+
+    const prefix = payload.type === "IN" ? "KSM" : "BOP";
+    const refNumber =
+      payload.refNumber ||
+      `${prefix}-${new Date().toISOString().slice(2, 7).replace("-", "")}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const [created] = await db
+      .insert(schema.cashMutations)
+      .values({
+        id: crypto.randomUUID(),
+        tenantId,
+        branchId,
+        type: payload.type,
+        category: payload.category,
+        account: payload.account || "KAS_LACI",
+        refNumber,
+        amount: String(payload.amount),
+        description: payload.description,
+        operator: payload.operator || "Staf Keuangan",
+        transactionDate: payload.transactionDate || new Date()
+      })
+      .returning();
+
+    return {
+      success: true,
+      message: `Mutasi ${payload.type === "IN" ? "Kas Masuk" : "Kas Keluar"} ${refNumber} berhasil dicatat.`,
+      data: {
+        ...created,
+        branchName: branch?.name || "Apotek Hafidz Farma",
+        amount: Number(created.amount)
+      }
+    };
+  }
+
+  async recordQrisPayout(payload: {
+    tenantId?: string;
+    branchId?: string;
+    amount: number;
+    operator?: string;
+  }) {
+    const tenantId = await this.getTenantId(payload.tenantId);
+    const amount = Number(payload.amount);
+    const refNumber = `SET-${new Date().toISOString().slice(2, 7).replace("-", "")}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    let branchId = payload.branchId;
+    let branch = null;
+    if (branchId && branchId !== "ALL") {
+      const [found] = await db
+        .select({ id: schema.branches.id, name: schema.branches.name })
+        .from(schema.branches)
+        .where(eq(schema.branches.id, branchId))
+        .limit(1);
+      branch = found;
+    }
+
+    if (!branch) {
+      const [defaultBranch] = await db
+        .select({ id: schema.branches.id, name: schema.branches.name })
+        .from(schema.branches)
+        .limit(1);
+      branch = defaultBranch;
+      branchId = defaultBranch?.id;
+    }
+
+    if (!branchId) {
+      throw new Error("Tidak ada cabang yang valid di database");
+    }
+
+    const [created] = await db
+      .insert(schema.cashMutations)
+      .values({
+        id: crypto.randomUUID(),
+        tenantId,
+        branchId,
+        type: "IN",
+        category: "Settlement QRIS",
+        account: "BANK_BCA",
+        refNumber,
+        amount: String(amount),
+        description: "Penarikan Dana QRIS (Xendit) ke Rekening BCA Apotek",
+        operator: payload.operator || "Sistem Otomatis (Xendit)",
+        transactionDate: new Date()
+      })
+      .returning();
+
+    return {
+      success: true,
+      message: `Penarikan dana QRIS sebesar Rp ${amount.toLocaleString("id-ID")} berhasil disetorkan ke Rekening BCA.`,
+      data: {
+        ...created,
+        branchName: branch?.name || "Apotek Hafidz Farma",
+        amount: Number(created.amount)
+      }
+    };
+  }
+
+  async getCashflow(branchId?: string) {
+    const debtSummary = await this.getDebtSummary(branchId);
+    const recentDebtPayments = await this.getDebtPayments({ branchId, limit: 100 });
+
+    // 1. Ambil mutasi kas kecil dari database
+    const mutConditions = [];
+    if (branchId && branchId !== "ALL") {
+      mutConditions.push(eq(schema.cashMutations.branchId, branchId));
+    }
+    const mutations = await db
+      .select({
+        id: schema.cashMutations.id,
+        branchId: schema.cashMutations.branchId,
+        branchName: schema.branches.name,
+        type: schema.cashMutations.type,
+        category: schema.cashMutations.category,
+        account: schema.cashMutations.account,
+        refNumber: schema.cashMutations.refNumber,
+        amount: schema.cashMutations.amount,
+        description: schema.cashMutations.description,
+        operator: schema.cashMutations.operator,
+        transactionDate: schema.cashMutations.transactionDate
+      })
+      .from(schema.cashMutations)
+      .leftJoin(schema.branches, eq(schema.cashMutations.branchId, schema.branches.id))
+      .where(mutConditions.length > 0 ? and(...mutConditions) : undefined)
+      .orderBy(desc(schema.cashMutations.transactionDate))
+      .limit(100);
+
+    // 2. Agregasi Penjualan POS Kasir
+    let posCashTotal = 0;
+    let posQrisTotal = 0;
+    let posOtherNonCash = 0;
+    try {
+      const salesAgg = await db
+        .select({
+          cashSales: sql<number>`COALESCE(SUM(CASE WHEN ${schema.salesTransactions.paymentMethod} = 'CASH' THEN ${schema.salesTransactions.grandTotal} ELSE 0 END), 0)::numeric`,
+          qrisSales: sql<number>`COALESCE(SUM(CASE WHEN ${schema.salesTransactions.paymentMethod} = 'QRIS' THEN ${schema.salesTransactions.grandTotal} ELSE 0 END), 0)::numeric`,
+          otherNonCashSales: sql<number>`COALESCE(SUM(CASE WHEN ${schema.salesTransactions.paymentMethod} NOT IN ('CASH', 'QRIS') THEN ${schema.salesTransactions.grandTotal} ELSE 0 END), 0)::numeric`
+        })
+        .from(schema.salesTransactions)
+        .where(
+          branchId && branchId !== "ALL"
+            ? eq(schema.salesTransactions.branchId, branchId)
+            : undefined
+        );
+
+      posCashTotal = Number(salesAgg[0]?.cashSales || 0);
+      posQrisTotal = Number(salesAgg[0]?.qrisSales || 0);
+      posOtherNonCash = Number(salesAgg[0]?.otherNonCashSales || 0);
+    } catch (_) {}
+
+    // 3. Hitung QRIS Payouts yang sudah ditarik
+    const totalQrisPaidOut = mutations
+      .filter((m) => m.category === "Settlement QRIS" || (m.description && m.description.includes("QRIS")))
+      .reduce((sum, m) => sum + Number(m.amount || 0), 0);
+    const qrisBalance = Math.max(0, posQrisTotal - totalQrisPaidOut);
+
+    // 4. Hitung Saldo Arus Kas per Akun
+    let cashInLaci = 0;
+    let cashOutLaci = 0;
+    let cashInBrankas = 0;
+    let cashOutBrankas = 0;
+    let cashInBca = 0;
+    let cashOutBca = 0;
+
+    for (const m of mutations) {
+      const amt = Number(m.amount || 0);
+      const acc = (m.account || "KAS_LACI").toUpperCase();
+      if (m.type === "IN") {
+        if (acc.includes("BRANKAS")) cashInBrankas += amt;
+        else if (acc.includes("BCA") || acc.includes("BANK")) cashInBca += amt;
+        else cashInLaci += amt;
+      } else {
+        if (acc.includes("BRANKAS")) cashOutBrankas += amt;
+        else if (acc.includes("BCA") || acc.includes("BANK")) cashOutBca += amt;
+        else cashOutLaci += amt;
+      }
+    }
+
+    const totalDebtPaidBca = recentDebtPayments.reduce((sum, p) => sum + p.amountPaid, 0);
+
+    const kasLaci = Math.max(0, posCashTotal + cashInLaci - cashOutLaci);
+    const kasBrankas = Math.max(0, cashInBrankas - cashOutBrankas);
+    const bcaBalance = Math.max(0, posOtherNonCash + cashInBca - totalDebtPaidBca - cashOutBca);
+    const totalKasBank = kasLaci + kasBrankas + bcaBalance;
+
+    // 5. Susun Seluruh Entri Riwayat Kas (Entries)
+    const combinedEntries: Array<{
+      id: string;
+      branchId: string;
+      branchName: string;
+      time: string;
+      type: "IN" | "OUT";
+      category: string;
+      account: "KAS_LACI" | "KAS_BRANKAS" | "BANK_BCA";
+      refNumber: string;
+      amount: number;
+      balance: number;
+      operator: string;
+      description: string;
+    }> = [];
+
+    // Tambah mutasi kas kecil
+    for (const m of mutations) {
+      const acc = (m.account || "KAS_LACI").toUpperCase();
+      const normAcc: "KAS_LACI" | "KAS_BRANKAS" | "BANK_BCA" =
+        acc.includes("BRANKAS") ? "KAS_BRANKAS" : acc.includes("BCA") || acc.includes("BANK") ? "BANK_BCA" : "KAS_LACI";
+
+      combinedEntries.push({
+        id: m.id,
+        branchId: m.branchId,
+        branchName: m.branchName || "Apotek Hafidz Farma",
+        time: m.transactionDate ? new Date(m.transactionDate).toISOString().replace("T", " ").substring(0, 16) : "-",
+        type: m.type as "IN" | "OUT",
+        category: m.category,
+        account: normAcc,
+        refNumber: m.refNumber,
+        amount: Number(m.amount),
+        balance: 0,
+        operator: m.operator || "Staf Keuangan",
+        description: m.description || m.category
+      });
+    }
+
+    // Tambah pembayaran hutang PBF
+    for (const p of recentDebtPayments) {
+      const method = (p.paymentMethod || "").toUpperCase();
+      const normAcc: "KAS_LACI" | "KAS_BRANKAS" | "BANK_BCA" =
+        method.includes("BCA") || method.includes("TRANSFER") ? "BANK_BCA" : "KAS_LACI";
+
+      combinedEntries.push({
+        id: `dp-${p.id}`,
+        branchId: p.branchId || "1",
+        branchName: p.branchName || "Apotek Hafidz Farma",
+        time: p.paymentDate ? `${p.paymentDate} 10:00` : "-",
+        type: "OUT",
+        category: "Pelunasan PBF",
+        account: normAcc,
+        refNumber: p.paymentNumber,
+        amount: p.amountPaid,
+        balance: 0,
+        operator: p.paidByName || "Bagian Keuangan",
+        description: `Pelunasan Faktur ${p.invoiceNumber} (${p.supplierName})`
+      });
+    }
+
+    // Urutkan berdasarkan waktu descending
+    combinedEntries.sort((a, b) => (b.time > a.time ? 1 : -1));
+
+    // Hitung running balance
+    let cur = totalKasBank;
+    for (let i = 0; i < combinedEntries.length; i++) {
+      combinedEntries[i].balance = cur;
+      if (combinedEntries[i].type === "IN") {
+        cur -= combinedEntries[i].amount;
+      } else {
+        cur += combinedEntries[i].amount;
+      }
+    }
+
+    return {
+      kasLaci,
+      kasBrankas,
+      bcaBalance,
+      qrisBalance,
+      totalKasBank,
+      totalDebt: debtSummary.totalRemainingDebt,
+      entries: combinedEntries
+    };
+  }
 }
 
 export const financeService = new FinanceService();

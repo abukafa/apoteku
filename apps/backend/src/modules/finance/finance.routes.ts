@@ -64,79 +64,92 @@ export const financeRoutes = new Elysia({ prefix: "/api/finance" })
   // 2B. GET CASHFLOW & BANK BALANCE
   .get(
     "/cashflow",
-    async () => {
+    async ({ query, branchId }) => {
       try {
-        const debtSummary = await financeService.getDebtSummary();
-
-        // 1. Kas Laci & Penjualan Tunai
-        const kasLaci = 15850000;
-        const bcaBalance = 142500000;
-        const mandiriBalance = 68750000;
-        const totalKasBank = kasLaci + bcaBalance + mandiriBalance;
-
-        // Transactions in/out
-        const entries = [
-          {
-            id: "cf-1",
-            date: new Date().toISOString().slice(0, 10),
-            time: "10:30",
-            category: "PENJUALAN_TUNAI",
-            type: "IN",
-            account: "KAS_KASIR",
-            description: "Penerimaan Penjualan Kasir POS Shift Pagi",
-            amount: 4850000
-          },
-          {
-            id: "cf-2",
-            date: new Date().toISOString().slice(0, 10),
-            time: "09:15",
-            category: "PENJUALAN_NON_TUNAI",
-            type: "IN",
-            account: "BANK_BCA",
-            description: "Settlement QRIS & EDC Pasien Rawat Jalan",
-            amount: 2150000
-          },
-          {
-            id: "cf-3",
-            date: new Date().toISOString().slice(0, 10),
-            time: "11:45",
-            category: "PELUNASAN_HUTANG",
-            type: "OUT",
-            account: "BANK_MANDIRI",
-            description: "Pelunasan Faktur Jatuh Tempo PT. Kimia Farma TD",
-            amount: 3500000
-          },
-          {
-            id: "cf-4",
-            date: new Date().toISOString().slice(0, 10),
-            time: "13:00",
-            category: "OPERASIONAL",
-            type: "OUT",
-            account: "KAS_KASIR",
-            description: "Pembelian ATK, Plastik Klip & Thermal Paper Struk",
-            amount: 175000
-          }
-        ];
-
-        return {
-          success: true,
-          data: {
-            kasLaci,
-            bcaBalance,
-            mandiriBalance,
-            totalKasBank,
-            totalDebt: debtSummary.totalRemainingDebt,
-            entries
-          }
-        };
+        const targetBranch = query.branch_id || branchId;
+        const data = await financeService.getCashflow(targetBranch);
+        return { success: true, data };
       } catch (err: any) {
         return { success: false, error: err.message };
       }
     },
     {
+      query: t.Object({
+        branch_id: t.Optional(t.String())
+      }),
       detail: {
         tags: ["Keuangan & Hutang"],
         summary: "Arus Kas Masuk/Keluar & Saldo Kasir serta Rekening Bank"
+      }
+    }
+  )
+
+  // 2C. RECORD CASH MUTATION (KAS KECIL / BIAYA OPERASIONAL)
+  .post(
+    "/cash-mutations",
+    async ({ body, tenantId, branchId }) => {
+      try {
+        const targetBranch = body.branchId || branchId;
+        const res = await financeService.recordCashMutation({
+          tenantId,
+          branchId: targetBranch,
+          type: body.type,
+          category: body.category,
+          account: body.account,
+          refNumber: body.refNumber,
+          amount: Number(body.amount),
+          description: body.description,
+          operator: body.operator
+        });
+        return res;
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      body: t.Object({
+        branchId: t.Optional(t.String()),
+        type: t.Union([t.Literal("IN"), t.Literal("OUT")]),
+        category: t.String(),
+        account: t.Optional(t.String()),
+        refNumber: t.Optional(t.String()),
+        amount: t.Number({ minimum: 1 }),
+        description: t.Optional(t.String()),
+        operator: t.Optional(t.String())
+      }),
+      detail: {
+        tags: ["Keuangan & Hutang"],
+        summary: "Catat Mutasi Kas Masuk / Kas Keluar (Buku Kas & Kas Kecil)"
+      }
+    }
+  )
+
+  // 2D. RECORD QRIS PAYOUT
+  .post(
+    "/qris-payout",
+    async ({ body, tenantId, branchId }) => {
+      try {
+        const targetBranch = body.branchId || branchId;
+        const res = await financeService.recordQrisPayout({
+          tenantId,
+          branchId: targetBranch,
+          amount: Number(body.amount),
+          operator: body.operator
+        });
+        return res;
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      body: t.Object({
+        branchId: t.Optional(t.String()),
+        amount: t.Number({ minimum: 1 }),
+        operator: t.Optional(t.String())
+      }),
+      detail: {
+        tags: ["Keuangan & Hutang"],
+        summary: "Penarikan Dana / Settlement Saldo QRIS Xendit ke Rekening BCA"
       }
     }
   )
@@ -199,6 +212,28 @@ export const financeRoutes = new Elysia({ prefix: "/api/finance" })
       detail: {
         tags: ["Keuangan & Hutang"],
         summary: "Batalkan Pelunasan Hutang & Pulihkan Saldo Tagihan Faktur"
+      }
+    }
+  )
+
+  // 5. DELETE CASH MUTATION (HAPUS MUTASI KAS KECIL & OPERASIONAL)
+  .delete(
+    "/cash-mutations/:id",
+    async ({ params }) => {
+      try {
+        const res = await financeService.deleteCashMutation(params.id);
+        return res;
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      params: t.Object({
+        id: t.String()
+      }),
+      detail: {
+        tags: ["Keuangan & Hutang"],
+        summary: "Hapus Entri Mutasi Kas Kecil & Operasional"
       }
     }
   );

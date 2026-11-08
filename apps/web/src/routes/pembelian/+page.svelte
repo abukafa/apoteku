@@ -15,7 +15,9 @@
     Eye,
     ArrowRightLeft,
     Store,
-    X
+    X,
+    Info,
+    Ban
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
@@ -26,7 +28,6 @@
   import { alertStore } from "$lib/stores/alertStore.svelte";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
-  import { mockApi } from "$lib/services/mock-api";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { formatRupiah } from "@apoteku/core";
 
@@ -40,6 +41,13 @@
     hna: number;
     disc1: number;
     disc2: number;
+    subtotal?: number;
+    poItemId?: string;
+    qtyOrdered?: number;
+    estimatedHna?: number;
+    discrepancyReason?: string;
+    isRejected?: boolean;
+    showDiscrepancyMenu?: boolean;
   }
 
   interface PurchaseInvoiceRecord {
@@ -68,11 +76,17 @@
   }
 
   interface SpItemRow {
+    id?: string;
     productId: string;
     productName: string;
     qty: number;
+    qtyOrdered?: number;
+    qtyReceived?: number;
+    qtyRemaining?: number;
     unit: string;
     estimatedHna: number;
+    subtotal?: number;
+    notes?: string;
   }
 
   interface PurchaseOrderRecord {
@@ -93,8 +107,10 @@
 
   interface ConsignmentRecord {
     id: string;
+    receiptId?: string;
     receiptNumber: string;
     branchId?: string;
+    branchName?: string;
     supplierName: string;
     date: string;
     productName: string;
@@ -118,10 +134,67 @@
   // Navigation & Filters
   let selectedBranchId = $state(authStore.user?.branchId || "1");
   let activeTab = $state<"faktur" | "sp" | "konsinyasi">("faktur");
-  let invoiceStatusFilter = $state<"ALL" | "UNPAID" | "PARTIAL" | "OVERDUE" | "PAID">("ALL");
+  let invoiceStatusFilter = $state<"ALL" | "UNPAID" | "PARTIAL" | "OVERDUE" | "DUE_SOON" | "PAID">("ALL");
   let searchQuery = $state("");
   let spSearchQuery = $state("");
   let ksnSearchQuery = $state("");
+
+  function mapPurchaseRecord(p: any): PurchaseInvoiceRecord {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const dueStr = p.dueDate ? String(p.dueDate).slice(0, 10) : "";
+    let status: "PAID" | "PARTIAL" | "UNPAID" | "OVERDUE" = p.isPaidOff
+      ? "PAID"
+      : (Number(p.paidAmount) > 0 ? "PARTIAL" : "UNPAID");
+    if (!p.isPaidOff && dueStr && dueStr < todayStr) {
+      status = "OVERDUE";
+    }
+    return {
+      id: p.id,
+      invoiceNumber: p.invoiceNumber,
+      poNumber: p.poNumber,
+      supplierId: p.supplierId || "",
+      supplierName: p.supplierName || "Distributor Farmasi",
+      branchId: p.branchId || "1",
+      branchName: p.branchName || "Apotek Hafidz Farma",
+      invoiceDate: p.invoiceDate || p.receiveDate,
+      dueDate: p.dueDate,
+      totalAmount: Number(p.grandTotal ?? p.totalAmount ?? 0),
+      paidAmount: Number(p.paidAmount ?? 0),
+      status,
+      itemsCount: Number(p.itemsCount ?? 1),
+      taxPercent: Number(p.taxPercent ?? 11),
+      notes: p.notes || "Faktur Pembelian PBF Terverifikasi",
+      items: p.items,
+      payments: p.payments
+    };
+  }
+
+  async function reloadInvoices() {
+    try {
+      const purRes = await api.erp.getPurchases(100);
+      if (purRes?.success && Array.isArray(purRes.data)) {
+        invoices = purRes.data.map(mapPurchaseRecord);
+      }
+    } catch (_) {}
+  }
+
+  async function reloadPurchaseOrders() {
+    try {
+      const poRes = await api.erp.getPurchaseOrders(100);
+      if (poRes?.success && Array.isArray(poRes.data)) {
+        purchaseOrders = poRes.data;
+      }
+    } catch (_) {}
+  }
+
+  async function reloadConsignments() {
+    try {
+      const ksnRes = await api.erp.getConsignments();
+      if (ksnRes?.success && Array.isArray(ksnRes.data)) {
+        consignments = ksnRes.data;
+      }
+    } catch (_) {}
+  }
 
   onMount(async () => {
     if (authStore.user?.branchId) {
@@ -131,51 +204,77 @@
       newKsnForm.branchId = authStore.user.branchId;
     }
     try {
-      await mockApi.ensureDataLoaded();
-      const [purRes, poRes, suppRes, prodList, branchList] = await Promise.all([
+      const [purRes, poRes, suppRes, prodRes, branchRes, ksnRes] = await Promise.all([
         api.erp.getPurchases(100),
         api.erp.getPurchaseOrders(100),
         api.erp.getSuppliers(),
-        mockApi.getProducts(),
-        mockApi.getBranches()
+        api.erp.getProducts(),
+        api.erp.getBranches(),
+        api.erp.getConsignments()
       ]);
 
-      if (prodList.length > 0) products = prodList;
-      if (branchList.length > 0) {
-        branches = branchList;
-        if (!authStore.user?.branchId && branchList[0]?.id) {
-          selectedBranchId = branchList[0].id;
-          newInvoiceBranchId = branchList[0].id;
-          newSpForm.branchId = branchList[0].id;
-          newKsnForm.branchId = branchList[0].id;
+      if (prodRes?.success && Array.isArray(prodRes.data) && prodRes.data.length > 0) {
+        products = prodRes.data;
+        const firstProd = products[0];
+        const defaultUnitObj = firstProd.units?.find((u: any) => !u.isBaseUnit) || firstProd.units?.[0];
+        const defaultUnit = defaultUnitObj?.unitName || firstProd.baseUnit || "BOX";
+        const factor = defaultUnitObj ? Number(defaultUnitObj.conversionFactor || 1) : 1;
+        const initialHna = defaultUnitObj?.estimatedBuyPrice || Math.round(Number(firstProd.buyPrice || 1000) * factor);
+
+        if (newInvoiceItems.length === 1 && newInvoiceItems[0].productId === "prod-amox-500") {
+          newInvoiceItems = [
+            {
+              productId: firstProd.id,
+              productName: firstProd.name,
+              batchNo: `BCH-${Date.now().toString().slice(-6)}`,
+              expiredDate: "2027-12-31",
+              unit: defaultUnit,
+              qty: 1,
+              hna: initialHna,
+              disc1: 0,
+              disc2: 0
+            }
+          ];
+        }
+        draftSpProductName = firstProd.name;
+        draftSpUnit = defaultUnit;
+        draftSpHna = initialHna;
+        newKsnForm.productName = firstProd.name;
+        newKsnForm.unitPrice = Number(firstProd.buyPrice || 25000);
+        newKsnForm.sellingPrice = Math.round(Number(firstProd.buyPrice || 25000) * 1.3);
+      }
+
+      if (branchRes?.success && Array.isArray(branchRes.data) && branchRes.data.length > 0) {
+        branches = branchRes.data;
+        if (!authStore.user?.branchId && branchRes.data[0]?.id) {
+          selectedBranchId = branchRes.data[0].id;
+          newInvoiceBranchId = branchRes.data[0].id;
+          newSpForm.branchId = branchRes.data[0].id;
+          newKsnForm.branchId = branchRes.data[0].id;
         }
       }
+
       if (suppRes?.success && Array.isArray(suppRes.data) && suppRes.data.length > 0) {
         suppliers = suppRes.data;
+        newInvoiceSupplier = suppliers[0].name;
+        newSpForm.supplierName = suppliers[0].name;
+        newKsnForm.supplierName = suppliers[0].name;
       }
-      if (poRes?.success && Array.isArray(poRes.data) && poRes.data.length > 0) {
+
+      if (poRes?.success && Array.isArray(poRes.data)) {
         purchaseOrders = poRes.data;
       }
-      if (purRes?.success && Array.isArray(purRes.data) && purRes.data.length > 0) {
-        invoices = purRes.data.map((p: any) => ({
-          id: p.id,
-          invoiceNumber: p.invoiceNumber,
-          poNumber: `PO-${p.invoiceNumber.slice(0, 8)}`,
-          supplierId: "supp-1",
-          supplierName: p.supplierName,
-          branchId: "1",
-          branchName: "Apotek Hafidz Farma 1",
-          invoiceDate: p.receiveDate,
-          dueDate: p.dueDate,
-          totalAmount: p.grandTotal,
-          paidAmount: p.paidAmount,
-          status: p.isPaidOff ? "PAID" : (p.paidAmount > 0 ? "PARTIAL" : "UNPAID"),
-          itemsCount: 1,
-          taxPercent: 11,
-          notes: "Faktur Pembelian PBF Terverifikasi"
-        }));
+
+      if (purRes?.success && Array.isArray(purRes.data)) {
+        invoices = purRes.data.map(mapPurchaseRecord);
       }
-    } catch (_) {}
+
+      if (ksnRes?.success && Array.isArray(ksnRes.data)) {
+        consignments = ksnRes.data;
+      }
+    } catch (err) {
+      console.error("[Pembelian onMount Error]:", err);
+    }
   });
 
   // Modals State
@@ -236,21 +335,46 @@
     supplierName: "PT. Kimia Farma Trading & Distribution",
     pharmacistName: "apt. Hafidz Nurul, S.Farm.",
     sipa: "SIPA-503/044/Dinkes/2024",
-    items: [
-      {
-        productId: "prod-amox-500",
-        productName: "Amoxicillin 500mg (Errata)",
-        qty: 10,
-        unit: "BOX",
-        estimatedHna: 68000
-      }
-    ] as SpItemRow[]
+    items: [] as SpItemRow[]
   });
 
-  let draftSpProductName = $state("Amoxicillin 500mg (Errata)");
-  let draftSpQty = $state(5);
+  let draftSpProductName = $state("");
+  let draftSpQty = $state(1);
   let draftSpUnit = $state("BOX");
-  let draftSpHna = $state(68000);
+  let draftSpHna = $state(15000);
+
+  let currentSpProduct = $derived(
+    products.find((p) => p.name === draftSpProductName)
+  );
+
+  let availableSpUnits = $derived(
+    currentSpProduct?.units && currentSpProduct.units.length > 0
+      ? currentSpProduct.units.map((u: any) => ({
+          value: u.unitName,
+          label: `${u.unitName} (Isi ${Number(u.conversionFactor || 1)} ${currentSpProduct.baseUnit})`
+        }))
+      : [{ value: currentSpProduct?.baseUnit || "BOX", label: currentSpProduct?.baseUnit || "BOX" }]
+  );
+
+  function handleSpProductChange(val: string) {
+    draftSpProductName = val;
+    const prod = products.find((p) => p.name === val);
+    if (prod) {
+      const defaultUnitObj = prod.units?.find((u: any) => !u.isBaseUnit) || prod.units?.[0];
+      const unitName = defaultUnitObj?.unitName || prod.baseUnit || "BOX";
+      const factor = defaultUnitObj ? Number(defaultUnitObj.conversionFactor || 1) : 1;
+      draftSpUnit = unitName;
+      draftSpHna = defaultUnitObj?.estimatedBuyPrice || Math.round(Number(prod.buyPrice || 1000) * factor);
+    }
+  }
+
+  function handleSpUnitChange(val: string) {
+    draftSpUnit = val;
+    if (!currentSpProduct) return;
+    const unitObj = currentSpProduct.units?.find((u: any) => u.unitName === val);
+    const factor = unitObj ? Number(unitObj.conversionFactor || 1) : 1;
+    draftSpHna = unitObj?.estimatedBuyPrice || Math.round(Number(currentSpProduct.buyPrice || 1000) * factor);
+  }
 
   function updateDueDateFromSupplier(supplierName: string, invDate: string) {
     const sup = suppliers.find((s) => s.name === supplierName);
@@ -264,14 +388,20 @@
   }
 
   function addNewInvoiceItem() {
+    const p = products[0];
+    const defaultUnitObj = p?.units?.find((u: any) => !u.isBaseUnit) || p?.units?.[0];
+    const unitName = defaultUnitObj?.unitName || p?.baseUnit || "BOX";
+    const factor = defaultUnitObj ? Number(defaultUnitObj.conversionFactor || 1) : 1;
+    const buyPrice = defaultUnitObj?.estimatedBuyPrice || Math.round(Number(p?.buyPrice || 15000) * factor);
+
     newInvoiceItems.push({
-      productId: products[0]?.id || "",
-      productName: products[0]?.name || "Produk Baru",
+      productId: p?.id || "",
+      productName: p?.name || "Produk Baru",
       batchNo: `BATCH-${Date.now().toString().slice(-6)}`,
       expiredDate: "2027-12-31",
-      unit: "BOX",
+      unit: unitName,
       qty: 1,
-      hna: 50000,
+      hna: buyPrice,
       disc1: 0,
       disc2: 0
     });
@@ -284,19 +414,24 @@
   }
 
   function calcRowSubtotal(item: InvoiceItemRow): number {
+    if (item.isRejected || (item.qty || 0) <= 0) return 0;
     const gross = (item.qty || 0) * (item.hna || 0);
     const afterDisc1 = gross * (1 - (item.disc1 || 0) / 100);
     const afterDisc2 = afterDisc1 * (1 - (item.disc2 || 0) / 100);
     return Math.round(afterDisc2);
   }
 
-  // Invoice Totals Breakdown
+  // Invoice Totals Breakdown (Hanya menghitung barang yang diterima dan tidak ditolak)
   let invoiceSubtotalBruto = $derived(
-    newInvoiceItems.reduce((acc, it) => acc + (it.qty || 0) * (it.hna || 0), 0)
+    newInvoiceItems
+      .filter((it) => !it.isRejected && (it.qty || 0) > 0)
+      .reduce((acc, it) => acc + (it.qty || 0) * (it.hna || 0), 0)
   );
 
   let invoiceTotalNetto = $derived(
-    newInvoiceItems.reduce((acc, it) => acc + calcRowSubtotal(it), 0)
+    newInvoiceItems
+      .filter((it) => !it.isRejected && (it.qty || 0) > 0)
+      .reduce((acc, it) => acc + calcRowSubtotal(it), 0)
   );
 
   let invoiceTotalDiscount = $derived(invoiceSubtotalBruto - invoiceTotalNetto);
@@ -320,17 +455,72 @@
     )
   );
 
+  let pendingPurchaseOrders = $derived(
+    branchPurchaseOrders.filter((sp) => sp.status !== "RECEIVED")
+  );
+
   let branchConsignments = $derived(
     consignments.filter(
       (c) => selectedBranchId === "ALL" || (c.branchId || "1") === selectedBranchId
     )
   );
 
+  function getDueAlert(dueDateStr?: string, isPaid?: boolean) {
+    if (isPaid) return { label: "Lunas", daysLeft: 0, color: "text-emerald-600 font-medium", isOverdue: false, isDueSoon: false };
+    if (!dueDateStr) return { label: "-", daysLeft: 0, color: "text-slate-500", isOverdue: false, isDueSoon: false };
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(dueDateStr);
+    due.setHours(0, 0, 0, 0);
+
+    const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) {
+      return {
+        label: `Lewat ${Math.abs(diffDays)} Hari`,
+        daysLeft: diffDays,
+        color: "text-brand-red-600 font-bold",
+        isOverdue: true,
+        isDueSoon: false
+      };
+    }
+    if (diffDays <= 7) {
+      return {
+        label: diffDays === 0 ? "Jatuh Tempo Hari Ini" : `H-${diffDays} Segera Bayar`,
+        daysLeft: diffDays,
+        color: "text-amber-600 font-bold",
+        isOverdue: false,
+        isDueSoon: true
+      };
+    }
+    return {
+      label: `${diffDays} hari lagi`,
+      daysLeft: diffDays,
+      color: "text-slate-500",
+      isOverdue: false,
+      isDueSoon: false
+    };
+  }
+
   // Filtered Lists for Tables
   let filteredInvoices = $derived(
     branchInvoices.filter((inv) => {
-      const matchStatus =
-        invoiceStatusFilter === "ALL" || inv.status === invoiceStatusFilter;
+      const isPaid = inv.status === "PAID" || inv.paidAmount >= inv.totalAmount;
+      const dueInfo = getDueAlert(inv.dueDate, isPaid);
+
+      let matchStatus = invoiceStatusFilter === "ALL";
+      if (invoiceStatusFilter === "PAID") {
+        matchStatus = isPaid;
+      } else if (invoiceStatusFilter === "OVERDUE") {
+        matchStatus = !isPaid && dueInfo.isOverdue;
+      } else if (invoiceStatusFilter === "DUE_SOON") {
+        matchStatus = !isPaid && dueInfo.isDueSoon;
+      } else if (invoiceStatusFilter === "PARTIAL") {
+        matchStatus = !isPaid && inv.paidAmount > 0;
+      } else if (invoiceStatusFilter === "UNPAID") {
+        matchStatus = !isPaid;
+      }
+
       const q = searchQuery.toLowerCase();
       const matchSearch =
         inv.invoiceNumber.toLowerCase().includes(q) ||
@@ -390,10 +580,20 @@
       return;
     }
 
+    const acceptedItems = newInvoiceItems.filter((it) => !it.isRejected && (it.qty || 0) > 0);
+    if (acceptedItems.length === 0) {
+      alertStore.warning(
+        "Tidak Ada Barang Diterima",
+        "Seluruh item berstatus ditolak / berjumlah 0. Faktur tidak dapat disimpan tanpa ada fisik barang yang diterima."
+      );
+      return;
+    }
+
     const supplierObj =
       suppliers.find((s) => s.name === newInvoiceSupplier) || suppliers[0];
     const branchObj =
       branches.find((b) => b.id === newInvoiceBranchId) || branches[0];
+    const selectedPo = purchaseOrders.find((p) => p.orderNumber === newInvoicePoNumber);
 
     isSavingInvoice = true;
     try {
@@ -409,67 +609,41 @@
         discountAmount: invoiceTotalDiscount,
         taxAmount: invoiceTaxAmount,
         grandTotal: invoiceGrandTotal,
+        purchaseOrderId: selectedPo?.id,
         poNumber: newInvoicePoNumber !== "NONE" ? newInvoicePoNumber : undefined,
         items: newInvoiceItems.map((item) => ({
+          poItemId: item.poItemId,
           productId: item.productId,
           productName: item.productName,
           batchNo: item.batchNo,
           expiredDate: item.expiredDate,
           unitName: item.unit,
-          qty: item.qty,
+          qty: item.isRejected ? 0 : item.qty,
           buyPrice: item.hna,
           discountPercent: item.disc1,
-          discountAmount: Math.round((item.qty * item.hna * item.disc1) / 100),
-          subtotal: Math.round(item.qty * item.hna * (1 - item.disc1 / 100) * (1 - item.disc2 / 100))
+          discountAmount: Math.round(((item.qty || 0) * (item.hna || 0) * (item.disc1 || 0)) / 100),
+          subtotal: calcRowSubtotal(item),
+          qtyOrdered: item.qtyOrdered,
+          discrepancyReason: item.discrepancyReason,
+          isRejected: Boolean(item.isRejected)
         }))
       };
 
-      const res = await api.erp.createPurchase(payload).catch((err: any) => {
-        console.warn("API createPurchase failed or offline, fallbacking locally:", err);
-        return null;
-      });
+      const res = await api.erp.createPurchase(payload);
 
-      const createdInvoice: PurchaseInvoiceRecord = {
-        id: res?.data?.invoice?.id || `inv-${Date.now()}`,
-        invoiceNumber: newInvoiceNumber.trim().toUpperCase(),
-        poNumber: newInvoicePoNumber !== "NONE" ? newInvoicePoNumber : undefined,
-        supplierId: supplierObj?.id || "sup-01",
-        supplierName: newInvoiceSupplier,
-        branchId: newInvoiceBranchId,
-        branchName: branchObj?.name || "Apotek Hafidz Farma Pusat",
-        invoiceDate: newInvoiceDate,
-        dueDate: newInvoiceDueDate,
-        totalAmount: invoiceGrandTotal,
-        paidAmount: 0,
-        status: "UNPAID",
-        itemsCount: newInvoiceItems.length,
-        taxPercent: newInvoiceTaxIncluded ? 11 : 0,
-        notes:
-          newInvoicePoNumber !== "NONE"
-            ? `Penerimaan atas SP ${newInvoicePoNumber}`
-            : "Faktur pembelian PBF multi-item",
-        items: [...newInvoiceItems],
-        payments: []
-      };
-
-      invoices = [createdInvoice, ...invoices];
-
-      if (newInvoicePoNumber !== "NONE") {
-        purchaseOrders = purchaseOrders.map((sp) =>
-          sp.orderNumber === newInvoicePoNumber
-            ? { ...sp, status: "RECEIVED" }
-            : sp
+      if (res?.success) {
+        await reloadInvoices();
+        await reloadPurchaseOrders();
+        isAddInvoiceModalOpen = false;
+        newInvoiceNumber = "";
+        newInvoicePoNumber = "NONE";
+        alertStore.success(
+          "Faktur Berhasil Disimpan",
+          res.message || `Faktur ${payload.invoiceNumber} berhasil dicatat dan stok gudang otomatis bertambah.`
         );
+      } else {
+        alertStore.danger("Gagal Menyimpan Faktur", res?.error || "Terjadi kesalahan sistem.");
       }
-
-      isAddInvoiceModalOpen = false;
-      newInvoiceNumber = "";
-      newInvoicePoNumber = "NONE";
-
-      alertStore.success(
-        "Faktur Berhasil Disimpan",
-        res?.message || `Faktur ${createdInvoice.invoiceNumber} berhasil dicatat dan stok gudang otomatis bertambah.`
-      );
     } catch (err: any) {
       alertStore.danger(
         "Gagal Menyimpan Faktur",
@@ -480,27 +654,114 @@
     }
   }
 
-  function openReceiveSpIntoInvoice(sp: PurchaseOrderRecord) {
-    newInvoiceBranchId = sp.branchId || "1";
-    newInvoicePoNumber = sp.orderNumber;
-    newInvoiceSupplier = sp.supplierName;
-    newInvoiceNumber = `FP-${new Date().toISOString().slice(2, 7).replace("-", "")}-${Math.floor(1000 + Math.random() * 9000)}`;
-    updateDueDateFromSupplier(sp.supplierName, newInvoiceDate);
-
-    if (sp.items && sp.items.length > 0) {
-      newInvoiceItems = sp.items.map((it, idx) => ({
-        productId: it.productId,
-        productName: it.productName,
-        batchNo: `B2511-${idx + 1}`,
-        expiredDate: "2027-11-30",
-        unit: it.unit,
-        qty: it.qty,
-        hna: it.estimatedHna,
-        disc1: 0,
-        disc2: 0
-      }));
+  async function handleDeleteInvoice(inv: PurchaseInvoiceRecord) {
+    if (inv.paidAmount > 0) {
+      alertStore.warning("Tidak Dapat Dihapus", "Faktur yang sudah memiliki riwayat pembayaran tidak dapat dihapus.");
+      return;
     }
 
+    const confirmed = window.confirm(
+      `Apakah Anda yakin ingin membatalkan/menghapus Faktur ${inv.invoiceNumber}?\n\nPerhatian: Stok obat yang telah masuk ke gudang akan otomatis dibatalkan/ditarik kembali.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await api.erp.deletePurchase(inv.id);
+      if (res?.success) {
+        await reloadInvoices();
+        alertStore.success("Faktur Dibatalkan", res.message || `Faktur ${inv.invoiceNumber} berhasil dibatalkan.`);
+      } else {
+        alertStore.danger("Gagal Membatalkan", res?.error || "Terjadi kesalahan sistem.");
+      }
+    } catch (err: any) {
+      alertStore.danger("Gagal Membatalkan", err?.message || "Terjadi gangguan jaringan.");
+    }
+  }
+
+  async function selectSpForInvoice(sp: PurchaseOrderRecord) {
+    newInvoiceBranchId = sp.branchId || selectedBranchId;
+    newInvoicePoNumber = sp.orderNumber;
+    newInvoiceSupplier = sp.supplierName;
+    updateDueDateFromSupplier(sp.supplierName, newInvoiceDate);
+
+    let itemsToLoad = sp.items || [];
+    if (itemsToLoad.length === 0) {
+      try {
+        const detailRes = await api.erp.getPurchaseOrderById(sp.id);
+        if (detailRes?.success && Array.isArray(detailRes.data?.items)) {
+          itemsToLoad = detailRes.data.items;
+        }
+      } catch (_) {}
+    }
+
+    if (itemsToLoad.length > 0) {
+      newInvoiceItems = itemsToLoad.map((it, idx) => {
+        const ordered = it.qtyOrdered ?? it.qty;
+        const remaining = it.qtyRemaining !== undefined ? it.qtyRemaining : ordered;
+        const estHna = Number(it.estimatedHna || 0);
+        return {
+          poItemId: it.id,
+          productId: it.productId,
+          productName: it.productName,
+          batchNo: `BCH-${Date.now().toString().slice(-4)}${idx + 1}`,
+          expiredDate: "2027-12-31",
+          unit: it.unit || "BOX",
+          qtyOrdered: ordered,
+          qty: remaining > 0 ? remaining : 0,
+          estimatedHna: estHna,
+          hna: estHna,
+          disc1: 0,
+          disc2: 0,
+          isRejected: remaining <= 0,
+          discrepancyReason: remaining <= 0 ? "Sudah terpenuhi sebelumnya" : "",
+          showDiscrepancyMenu: false
+        };
+      });
+    } else {
+      const p = products[0];
+      newInvoiceItems = [
+        {
+          productId: p?.id || "",
+          productName: p?.name || "Produk",
+          batchNo: `BCH-${Date.now().toString().slice(-6)}`,
+          expiredDate: "2027-12-31",
+          unit: p?.baseUnit || "BOX",
+          qty: 1,
+          hna: Number(p?.buyPrice || 15000),
+          disc1: 0,
+          disc2: 0,
+          isRejected: false,
+          discrepancyReason: "",
+          showDiscrepancyMenu: false
+        }
+      ];
+    }
+  }
+
+  function resetInvoiceToDirectPurchase() {
+    newInvoicePoNumber = "NONE";
+    const p = products[0];
+    newInvoiceItems = [
+      {
+        productId: p?.id || "",
+        productName: p?.name || "Produk",
+        batchNo: `BCH-${Date.now().toString().slice(-6)}`,
+        expiredDate: "2027-12-31",
+        unit: p?.baseUnit || "BOX",
+        qty: 1,
+        hna: Number(p?.buyPrice || 15000),
+        disc1: 0,
+        disc2: 0,
+        isRejected: false,
+        discrepancyReason: "",
+        showDiscrepancyMenu: false
+      }
+    ];
+  }
+
+  async function openReceiveSpIntoInvoice(sp: PurchaseOrderRecord) {
+    newInvoiceNumber = `FP-${new Date().toISOString().slice(2, 7).replace("-", "")}-${Math.floor(1000 + Math.random() * 9000)}`;
+    await selectSpForInvoice(sp);
     isAddInvoiceModalOpen = true;
   }
 
@@ -508,18 +769,31 @@
     selectedInvoiceDetail = inv;
     isInvoiceDetailModalOpen = true;
     try {
-      const payRes = await api.finance.getDebtPayments({ invoiceId: inv.id });
-      if (payRes?.success && Array.isArray(payRes.data) && payRes.data.length > 0) {
-        selectedInvoiceDetail = {
-          ...selectedInvoiceDetail,
-          payments: payRes.data.map((p: any) => ({
-            paymentNumber: p.paymentNumber,
-            paymentDate: p.paymentDate,
-            paymentMethod: p.paymentMethod,
-            amountPaid: Number(p.amountPaid)
-          }))
+      const [detailRes, payRes] = await Promise.all([
+        api.erp.getPurchaseById(inv.id),
+        api.finance.getDebtPayments({ invoiceId: inv.id })
+      ]);
+
+      let currentDetail: PurchaseInvoiceRecord = { ...inv };
+
+      if (detailRes?.success && detailRes.data) {
+        currentDetail = {
+          ...currentDetail,
+          ...detailRes.data,
+          items: detailRes.data.items || []
         };
       }
+
+      if (payRes?.success && Array.isArray(payRes.data)) {
+        currentDetail.payments = payRes.data.map((p: any) => ({
+          paymentNumber: p.paymentNumber,
+          paymentDate: p.paymentDate,
+          paymentMethod: p.paymentMethod,
+          amountPaid: Number(p.amountPaid)
+        }));
+      }
+
+      selectedInvoiceDetail = currentDetail;
     } catch (_) {}
   }
 
@@ -547,81 +821,47 @@
       });
 
       if (res?.success) {
-        // Refresh purchases data from API
-        const purRes = await api.erp.getPurchases(100);
-        if (purRes?.success && Array.isArray(purRes.data) && purRes.data.length > 0) {
-          invoices = purRes.data.map((p: any) => ({
-            id: p.id,
-            invoiceNumber: p.invoiceNumber,
-            poNumber: `PO-${p.invoiceNumber.slice(0, 8)}`,
-            supplierId: "supp-1",
-            supplierName: p.supplierName,
-            branchId: "1",
-            branchName: "Apotek Hafidz Farma 1",
-            invoiceDate: p.receiveDate,
-            dueDate: p.dueDate,
-            totalAmount: p.grandTotal,
-            paidAmount: p.paidAmount,
-            status: p.isPaidOff ? "PAID" : (p.paidAmount > 0 ? "PARTIAL" : "UNPAID"),
-            itemsCount: 1,
-            taxPercent: 11,
-            notes: "Faktur Pembelian PBF Terverifikasi"
-          }));
-        }
+        await reloadInvoices();
+        alertStore.success("Pembayaran Berhasil", `Pembayaran hutang untuk Faktur ${selectedInvoiceForPayment.invoiceNumber} berhasil dicatat.`);
+      } else {
+        alertStore.danger("Gagal Membayar", res?.error || "Gagal mencatat pembayaran hutang.");
       }
-    } catch (err) {
-      console.warn("Could not save debt payment via API, using local fallback", err);
+    } catch (err: any) {
+      alertStore.danger("Gagal Membayar", err?.message || "Terjadi kesalahan jaringan.");
+    } finally {
+      isPayDebtModalOpen = false;
+      selectedInvoiceForPayment = null;
     }
-
-    invoices = invoices.map((inv) => {
-      if (inv.id !== selectedInvoiceForPayment?.id) return inv;
-      const updatedPaid = Math.min(inv.totalAmount, inv.paidAmount + paymentAmount);
-      const updatedStatus =
-        updatedPaid >= inv.totalAmount ? "PAID" : "PARTIAL";
-      return {
-        ...inv,
-        paidAmount: updatedPaid,
-        status: updatedStatus,
-        payments: [
-          ...(inv.payments || []),
-          {
-            paymentNumber: rlNumber,
-            paymentDate: today,
-            paymentMethod,
-            amountPaid: paymentAmount
-          }
-        ]
-      };
-    });
-
-    isPayDebtModalOpen = false;
-    selectedInvoiceForPayment = null;
   }
 
   function addDraftItemToSp() {
-    if (!draftSpProductName || draftSpQty <= 0) return;
+    if (!draftSpProductName.trim() || draftSpQty <= 0) {
+      alertStore.warning("Obat Belum Dipilih", "Pilih nama obat dan tentukan jumlah pesanan.");
+      return;
+    }
     const prod = products.find((p) => p.name === draftSpProductName);
     newSpForm.items = [
       ...newSpForm.items,
       {
-        productId: prod?.id || `prod-${Date.now()}`,
+        productId: prod?.id || crypto.randomUUID(),
         productName: draftSpProductName,
         qty: Number(draftSpQty),
         unit: draftSpUnit,
-        estimatedHna: Number(draftSpHna) || 50000
+        estimatedHna: Number(draftSpHna) || 15000
       }
     ];
-    draftSpQty = 5;
+    draftSpQty = 1;
   }
 
   function removeDraftItemFromSp(idx: number) {
-    if (newSpForm.items.length > 1) {
-      newSpForm.items = newSpForm.items.filter((_, i) => i !== idx);
-    }
+    newSpForm.items = newSpForm.items.filter((_, i) => i !== idx);
   }
 
-  function handleCreateSp() {
-    if (newSpForm.items.length === 0) return;
+  async function handleCreateSp() {
+    if (newSpForm.items.length === 0) {
+      alertStore.warning("Item SP Kosong", "Tambahkan minimal 1 item obat pada Surat Pesanan.");
+      return;
+    }
     const prefix =
       newSpForm.orderType === "PSIKOTROPIKA"
         ? "PSI"
@@ -630,30 +870,53 @@
           : newSpForm.orderType === "OOT"
             ? "OOT"
             : "REG";
-    const nextNum = String(purchaseOrders.length + 43).padStart(4, "0");
+    const currentYear = new Date().getFullYear();
+    const existingYearPos = purchaseOrders.filter((p) => p.orderNumber && p.orderNumber.includes(String(currentYear)));
+    const nextNum = String(existingYearPos.length + 1).padStart(4, "0");
+    const today = new Date().toISOString().slice(0, 10);
+    const poNumber = `SP-${prefix}-HF-${currentYear}-${nextNum}`;
     const estimatedTotal = newSpForm.items.reduce(
       (sum, it) => sum + it.qty * it.estimatedHna,
       0
     );
 
-    const createdSp: PurchaseOrderRecord = {
-      id: `sp-${Date.now()}`,
-      orderNumber: `SP-${prefix}-HF-2025-${nextNum}`,
-      orderType: newSpForm.orderType,
-      supplierId: "sup-1",
-      supplierName: newSpForm.supplierName,
-      branchId: newSpForm.branchId,
-      orderDate: "2025-10-28",
-      status: "SENT",
-      pharmacistName: newSpForm.pharmacistName,
-      sipa: newSpForm.sipa,
-      totalItems: newSpForm.items.length,
-      estimatedAmount: estimatedTotal,
-      items: [...newSpForm.items]
-    };
+    const sup = suppliers.find((s) => s.name === newSpForm.supplierName);
 
-    purchaseOrders = [createdSp, ...purchaseOrders];
-    isAddSpModalOpen = false;
+    try {
+      const payload = {
+        branchId: newSpForm.branchId,
+        supplierId: sup?.id,
+        supplierName: newSpForm.supplierName,
+        orderType: newSpForm.orderType,
+        poNumber,
+        orderDate: today,
+        totalAmount: estimatedTotal,
+        items: newSpForm.items.map((it) => ({
+          productId: it.productId,
+          productName: it.productName,
+          unit: it.unit,
+          qty: it.qty,
+          estimatedHna: it.estimatedHna
+        }))
+      };
+
+      const res = await api.erp.createPurchaseOrder(payload);
+
+      if (res?.success) {
+        await reloadPurchaseOrders();
+        newSpForm.items = [];
+        isAddSpModalOpen = false;
+        const savedPoNumber = res?.data?.order?.poNumber || poNumber;
+        alertStore.success(
+          "Surat Pesanan Diterbitkan",
+          `Surat Pesanan ${savedPoNumber} (${newSpForm.orderType}) berhasil disimpan ke database dan siap dicetak.`
+        );
+      } else {
+        alertStore.danger("Gagal Menerbitkan SP", res?.error || "Gagal menyimpan surat pesanan.");
+      }
+    } catch (err: any) {
+      alertStore.danger("Gagal Menerbitkan SP", err?.message || "Terjadi kesalahan jaringan.");
+    }
   }
 
   function openKsnSettleModal(ksn: ConsignmentRecord) {
@@ -661,37 +924,56 @@
     isSettleKsnModalOpen = true;
   }
 
-  function handleConfirmSettleKsn() {
+  async function handleConfirmSettleKsn() {
     if (!selectedKsnForSettle) return;
-    consignments = consignments.map((c) =>
-      c.id === selectedKsnForSettle?.id
-        ? { ...c, unsettledAmount: 0, status: "SETTLED" }
-        : c
-    );
-    isSettleKsnModalOpen = false;
-    selectedKsnForSettle = null;
+    try {
+      const res = await api.erp.settleConsignment(selectedKsnForSettle.id, {
+        paymentMethod: ksnSettleMethod
+      });
+      if (res?.success) {
+        await reloadConsignments();
+        alertStore.success("Setor Konsinyasi Berhasil", res.message || "Bagi hasil konsinyasi telah disetor dan status lunas.");
+      } else {
+        alertStore.danger("Gagal Setor", res?.error || "Terjadi kesalahan sistem.");
+      }
+    } catch (err: any) {
+      alertStore.danger("Gagal Setor Konsinyasi", err?.message || "Kesalahan jaringan.");
+    } finally {
+      isSettleKsnModalOpen = false;
+      selectedKsnForSettle = null;
+    }
   }
 
-  function handleCreateConsignment() {
+  async function handleCreateConsignment() {
     if (newKsnForm.receivedQty <= 0) return;
-    const nextNo = String(consignments.length + 20).padStart(4, "0");
-    const created: ConsignmentRecord = {
-      id: `ksn-${Date.now()}`,
-      receiptNumber: `KSN-HF-2025-${nextNo}`,
-      branchId: newKsnForm.branchId,
-      supplierName: newKsnForm.supplierName,
-      date: "2025-10-28",
-      productName: newKsnForm.productName,
-      receivedQty: Number(newKsnForm.receivedQty),
-      soldQty: 0,
-      remainingQty: Number(newKsnForm.receivedQty),
-      unitPrice: Number(newKsnForm.unitPrice),
-      sellingPrice: Number(newKsnForm.sellingPrice),
-      unsettledAmount: 0,
-      status: "ACTIVE"
-    };
-    consignments = [created, ...consignments];
-    isAddKsnModalOpen = false;
+    const sup = suppliers.find((s) => s.name === newKsnForm.supplierName);
+    const prod = products.find((p) => p.name === newKsnForm.productName);
+
+    try {
+      const payload = {
+        branchId: newKsnForm.branchId,
+        supplierId: sup?.id,
+        supplierName: newKsnForm.supplierName,
+        productId: prod?.id,
+        productName: newKsnForm.productName,
+        receivedQty: Number(newKsnForm.receivedQty),
+        unitPrice: Number(newKsnForm.unitPrice),
+        sellingPrice: Number(newKsnForm.sellingPrice),
+        date: new Date().toISOString().slice(0, 10)
+      };
+
+      const res = await api.erp.createConsignment(payload);
+      if (res?.success) {
+        await reloadConsignments();
+        alertStore.success("Titipan Konsinyasi Diterima", res.message || "Penerimaan titipan konsinyasi berhasil disimpan ke database.");
+      } else {
+        alertStore.danger("Gagal Menyimpan", res?.error || "Gagal mencatat konsinyasi.");
+      }
+    } catch (err: any) {
+      alertStore.danger("Gagal Mencatat Konsinyasi", err?.message || "Kesalahan jaringan.");
+    } finally {
+      isAddKsnModalOpen = false;
+    }
   }
 </script>
 
@@ -768,7 +1050,7 @@
       variant="warning"
     />
     <MetricCard
-      title="Jatuh Tempo & Overdue"
+      title="Jatuh Tempo"
       value={`${overdueOrDueInvoices.length} Faktur`}
       subtext={overdueOrDueInvoices[0]?.supplierName || "Tidak ada tagihan mendesak"}
       icon={AlertCircle}
@@ -784,11 +1066,11 @@
   </div>
 
   <!-- TAB NAVIGATION -->
-  <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold">
+  <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold overflow-x-auto no-scrollbar">
     <button
       type="button"
       onclick={() => (activeTab = "faktur")}
-      class="pb-3 px-3 transition-colors relative {activeTab === 'faktur' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'faktur' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-2">
         <FileText class="w-4 h-4" />
@@ -805,7 +1087,7 @@
     <button
       type="button"
       onclick={() => (activeTab = "sp")}
-      class="pb-3 px-3 transition-colors relative {activeTab === 'sp' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'sp' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-2">
         <Printer class="w-4 h-4" />
@@ -822,7 +1104,7 @@
     <button
       type="button"
       onclick={() => (activeTab = "konsinyasi")}
-      class="pb-3 px-3 transition-colors relative {activeTab === 'konsinyasi' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'konsinyasi' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-2">
         <Truck class="w-4 h-4" />
@@ -846,36 +1128,37 @@
       totalCount={filteredInvoices.length}
     >
       {#snippet filters()}
-        <div class="w-44 shrink-0">
+        <div class="w-52 shrink-0">
           <Select
             value={invoiceStatusFilter}
             onchange={(val) => (invoiceStatusFilter = val as typeof invoiceStatusFilter)}
             options={[
-              { value: "ALL", label: "Semua Status" },
-              { value: "UNPAID", label: "Belum Lunas" },
-              { value: "PARTIAL", label: "Sebagian" },
-              { value: "OVERDUE", label: "Lewat Tempo" },
-              { value: "PAID", label: "Lunas" }
+              { value: "ALL", label: "Semua Status Tagihan" },
+              { value: "DUE_SOON", label: "Segera Jatuh Tempo (H-7)", badge: "Penting" },
+              { value: "OVERDUE", label: "Lewat Tempo (Overdue)", badge: "Prioritas" },
+              { value: "UNPAID", label: "Semua Belum Lunas" },
+              { value: "PARTIAL", label: "Dibayar Sebagian" },
+              { value: "PAID", label: "Sudah Lunas" }
             ]}
           />
         </div>
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Faktur PBF</th>
-        <th class="py-3 px-4">Distributor PBF</th>
+        <th class="py-3 px-4">Faktur</th>
+        <th class="py-3 px-4">Distributor</th>
         <th class="py-3 px-4">Tanggal</th>
         <th class="py-3 px-4">Tempo</th>
         <th class="py-3 px-4 text-center">Status</th>
         <th class="py-3 px-4 text-right">Total</th>
-        <th class="py-3 px-4 text-right">Hutang</th>
+        <th class="py-3 px-4 text-right">Sisa</th>
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
         {#if filteredInvoices.length === 0}
           <tr>
-            <td colspan="7" class="py-12 text-center text-xs text-slate-400">
+            <td colspan="8" class="py-12 text-center text-xs text-slate-400">
               <div class="flex flex-col items-center justify-center gap-2">
                 <ShoppingBag class="w-8 h-8 text-slate-300" />
                 <span>Tidak ada faktur pembelian yang cocok dengan filter pencarian.</span>
@@ -884,7 +1167,9 @@
           </tr>
         {:else}
           {#each filteredInvoices as inv}
-          {@const remainingDebt = inv.totalAmount - inv.paidAmount}
+          {@const remainingDebt = Math.max(0, inv.totalAmount - inv.paidAmount)}
+          {@const isPaid = inv.status === "PAID" || remainingDebt === 0}
+          {@const dueInfo = getDueAlert(inv.dueDate, isPaid)}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
               {inv.invoiceNumber}
@@ -899,18 +1184,25 @@
               <div class="text-[11px] text-slate-400">{inv.branchName} • {inv.itemsCount} Item</div>
             </td>
             <td class="py-3.5 px-4 font-mono text-slate-600">{inv.invoiceDate}</td>
-            <td class="py-3.5 px-4 font-mono {inv.status === 'OVERDUE' ? 'text-brand-red-600 font-bold' : 'text-slate-600'}">
-              {inv.dueDate}
+            <td class="py-3.5 px-4 font-mono">
+              <div class="font-bold {dueInfo.isOverdue ? 'text-brand-red-600' : dueInfo.isDueSoon ? 'text-amber-600' : 'text-slate-800'}">
+                {inv.dueDate}
+              </div>
+              <div class="text-[10px] {dueInfo.color}">
+                {dueInfo.label}
+              </div>
             </td>
             <td class="py-3.5 px-4 text-center">
-              {#if inv.status === "PAID"}
+              {#if isPaid}
                 <Badge type="SUCCESS" label="LUNAS" />
-              {:else if inv.status === "OVERDUE"}
+              {:else if dueInfo.isOverdue}
                 <Badge type="DANGER" label="LEWAT TEMPO" />
-              {:else if inv.status === "PARTIAL"}
+              {:else if dueInfo.isDueSoon}
+                <Badge type="WARNING" label="SEGERA BAYAR" />
+              {:else if inv.paidAmount > 0}
                 <Badge type="WARNING" label="SEBAGIAN" />
               {:else}
-                <Badge type="WARNING" label="BELUM LUNAS" />
+                <Badge type="INFO" label="BELUM LUNAS" />
               {/if}
             </td>
             <td class="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
@@ -944,6 +1236,17 @@
                 >
                   <Eye class="w-3.5 h-3.5" />
                 </button>
+
+                {#if inv.paidAmount === 0}
+                  <button
+                    type="button"
+                    onclick={() => handleDeleteInvoice(inv)}
+                    class="p-1.5 rounded-lg border border-slate-200 hover:bg-red-50 text-slate-400 hover:text-brand-red-600 transition-colors"
+                    title="Batalkan / Void Faktur"
+                  >
+                    <Trash2 class="w-3.5 h-3.5" />
+                  </button>
+                {/if}
               </div>
             </td>
           </tr>
@@ -961,12 +1264,12 @@
       totalCount={filteredPurchaseOrders.length}
     >
       {#snippet header()}
-        <th class="py-3 px-4">No. Surat Pesanan</th>
-        <th class="py-3 px-4">Jenis SP</th>
-        <th class="py-3 px-4">Distributor Dituju</th>
-        <th class="py-3 px-4">Apoteker PJ & SIPA</th>
-        <th class="py-3 px-4 text-center">Total Item</th>
-        <th class="py-3 px-4 text-right">Estimasi Nilai</th>
+        <th class="py-3 px-4">Nomor</th>
+        <th class="py-3 px-4">Jenis</th>
+        <th class="py-3 px-4">Distributor</th>
+        <th class="py-3 px-4">Apoteker</th>
+        <th class="py-3 px-4 text-center">Item</th>
+        <th class="py-3 px-4 text-right">Nilai</th>
         <th class="py-3 px-4 text-center">Status</th>
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
@@ -990,7 +1293,7 @@
             </td>
             <td class="py-3.5 px-4">
               <span class="px-2 py-0.5 rounded text-[10px] font-bold {sp.orderType === 'PSIKOTROPIKA' ? 'bg-purple-100 text-purple-700' : sp.orderType === 'PREKURSOR' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}">
-                SP {sp.orderType}
+                {sp.orderType}
               </span>
             </td>
             <td class="py-3.5 px-4 font-bold text-slate-800">{sp.supplierName}</td>
@@ -1022,12 +1325,20 @@
                 {/if}
                 <button
                   type="button"
-                  onclick={() => {
+                  onclick={async () => {
                     selectedSpForPrint = sp;
+                    if (!sp.items || sp.items.length === 0) {
+                      try {
+                        const detailRes = await api.erp.getPurchaseOrderById(sp.id);
+                        if (detailRes?.success && Array.isArray(detailRes.data?.items)) {
+                          selectedSpForPrint = { ...sp, items: detailRes.data.items };
+                        }
+                      } catch (_) {}
+                    }
                     isPrintSpModalOpen = true;
                   }}
                   class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-brand-blue"
-                  title="Cetak SP Resmi 4 Rangkap"
+                  title="Cetak Dokumen SP Resmi BPOM"
                 >
                   <Printer class="w-4 h-4" />
                 </button>
@@ -1042,7 +1353,7 @@
   <!-- TAB 3: KONSINYASI MASUK -->
   {:else if activeTab === "konsinyasi"}
     <DataTable
-      title="Manajemen Obat & Produk Konsinyasi (Titipan)"
+      title="Manajemen Konsinyasi (Titipan)"
       searchPlaceholder="Cari nomor tanda terima, vendor konsinyor, atau produk..."
       bind:searchValue={ksnSearchQuery}
       totalCount={filteredConsignments.length}
@@ -1059,15 +1370,15 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">No. Tanda Terima</th>
-        <th class="py-3 px-4">Konsinyor / Vendor</th>
-        <th class="py-3 px-4">Nama Produk Titipan</th>
+        <th class="py-3 px-4">Nomor</th>
+        <th class="py-3 px-4">Vendor</th>
+        <th class="py-3 px-4">Produk</th>
         <th class="py-3 px-4 text-center">Masuk</th>
         <th class="py-3 px-4 text-center">Laku</th>
         <th class="py-3 px-4 text-center">Sisa</th>
-        <th class="py-3 px-4 text-right">Harga Setor</th>
-        <th class="py-3 px-4 text-right">Harga Jual</th>
-        <th class="py-3 px-4 text-right">Harus Disetor</th>
+        <th class="py-3 px-4 text-right">Setor</th>
+        <th class="py-3 px-4 text-right">Jual</th>
+        <th class="py-3 px-4 text-right">Target</th>
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
@@ -1148,6 +1459,67 @@
 
       <!-- BODY SCROLLABLE -->
       <div class="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+        <!-- LIST SURAT PESANAN (SP) YANG BELUM DITERIMA -->
+        <div class="bg-blue-50/70 p-3.5 rounded-xl border border-blue-200/90 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2 font-bold text-slate-800">
+              <ArrowRightLeft class="w-4 h-4 text-brand-blue" />
+              <span>Surat Pesanan (SP) Menunggu Penerimaan Barang</span>
+            </div>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-blue/10 text-brand-blue">
+              {pendingPurchaseOrders.length} SP Menunggu
+            </span>
+          </div>
+
+          {#if pendingPurchaseOrders.length === 0}
+            <div class="text-slate-500 text-[11px] italic py-1">
+              Tidak ada Surat Pesanan tertunda. Anda dapat langsung menginput Faktur Bebas (Non-SP) pada form di bawah.
+            </div>
+          {:else}
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {#each pendingPurchaseOrders as sp}
+                <button
+                  type="button"
+                  onclick={() => selectSpForInvoice(sp)}
+                  class="p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between {newInvoicePoNumber === sp.orderNumber ? 'bg-brand-blue-700 text-white border-brand-blue shadow-sm ring-2 ring-brand-blue/30' : 'bg-white hover:bg-blue-50 border-slate-200 text-slate-800'}"
+                >
+                  <div class="flex items-center justify-between w-full mb-1">
+                    <span class="font-mono font-bold text-xs">{sp.orderNumber}</span>
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-bold {newInvoicePoNumber === sp.orderNumber ? 'bg-white/20 text-white' : 'bg-blue-100 text-brand-blue'}">
+                      {sp.orderType}
+                    </span>
+                  </div>
+                  <div class="text-[11px] font-semibold truncate {newInvoicePoNumber === sp.orderNumber ? 'text-white' : 'text-slate-700'}">
+                    {sp.supplierName}
+                  </div>
+                  <div class="flex items-center justify-between mt-2 pt-1 border-t {newInvoicePoNumber === sp.orderNumber ? 'border-white/20 text-blue-100' : 'border-slate-100 text-slate-500'} text-[10px]">
+                    <span>{sp.totalItems} Obat Dipesan</span>
+                    <span class="font-mono font-bold {newInvoicePoNumber === sp.orderNumber ? 'text-white' : 'text-slate-800'}">
+                      {formatRupiah(sp.estimatedAmount)}
+                    </span>
+                  </div>
+                </button>
+              {/each}
+            </div>
+          {/if}
+
+          {#if newInvoicePoNumber !== "NONE"}
+            <div class="flex items-center justify-between pt-1 border-t border-blue-200/50 text-[11px]">
+              <div class="flex items-center gap-1.5 text-emerald-700 font-bold">
+                <CheckCircle2 class="w-4 h-4 text-emerald-600" />
+                <span>Memuat {newInvoiceItems.length} item obat dari {newInvoicePoNumber}</span>
+              </div>
+              <button
+                type="button"
+                onclick={resetInvoiceToDirectPurchase}
+                class="text-brand-red-600 hover:text-brand-red-700 hover:underline font-bold"
+              >
+                Batalkan Pilihan SP (Input Faktur Bebas)
+              </button>
+            </div>
+          {/if}
+        </div>
+
         <!-- HEADER FAKTUR -->
         <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-100">
           <div class="sm:col-span-2">
@@ -1170,12 +1542,19 @@
             <Select
               id="inv-sp-ref"
               value={newInvoicePoNumber}
-              onchange={(val) => (newInvoicePoNumber = val)}
+              onchange={(val) => {
+                if (val === "NONE") {
+                  resetInvoiceToDirectPurchase();
+                } else {
+                  const sp = purchaseOrders.find((p) => p.orderNumber === val);
+                  if (sp) selectSpForInvoice(sp);
+                }
+              }}
               options={[
-                { value: "NONE", label: "Tanpa Referensi SP" },
+                { value: "NONE", label: "Tanpa Referensi SP (Faktur Bebas)" },
                 ...purchaseOrders.map((sp) => ({
                   value: sp.orderNumber,
-                  label: `${sp.orderNumber} (${sp.orderType})`
+                  label: `${sp.orderNumber} (${sp.orderType} - ${sp.status})`
                 }))
               ]}
             />
@@ -1239,72 +1618,133 @@
           </div>
         </div>
 
+        <!-- PANDUAN PENJELASAN MODE PEMBELIAN -->
+        {#if newInvoicePoNumber === "NONE"}
+          <div class="p-3 rounded-xl bg-amber-50/80 border border-amber-200/90 text-[11px] text-amber-900 flex items-start gap-2.5">
+            <Info class="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <span class="font-bold">Mode Input Faktur Bebas (Non-SP):</span> Digunakan untuk <strong>Pembelian Darurat (CITO)</strong> langsung antar-apotek rekanan secara tunai/bon, <strong>Pengadaan Alkes / Perlengkapan Umum</strong> non-obat keras yang tidak mensyaratkan SP BPOM, atau input faktur manual/arsip lama.
+            </div>
+          </div>
+        {:else}
+          <div class="p-3 rounded-xl bg-emerald-50/80 border border-emerald-200/90 text-[11px] text-emerald-900 flex items-start gap-2.5">
+            <CheckCircle2 class="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+            <div class="flex-1">
+              <span class="font-bold">Mode Penerimaan Berdasarkan SP ({newInvoicePoNumber}):</span> Memverifikasi fisik obat terhadap SP resmi. Jika ada barang rusak, kadaluarsa dekat, atau kosong di PBF, gunakan tombol <span class="font-bold text-brand-red-600 bg-red-100 px-1 py-0.5 rounded">"Tolak / Beda"</span> agar barang tersebut tidak tercatat hutang dan status pemenuhan SP terekonsiliasi otomatis.
+            </div>
+          </div>
+        {/if}
+
         <!-- MULTI-ITEM GRID TABLE -->
         <div class="space-y-2">
           <div class="flex items-center justify-between">
-            <h4 class="font-bold text-slate-800 text-xs">Rincian Obat & Nomor Batch</h4>
+            <h4 class="font-bold text-slate-800 text-xs">Rincian Obat, Nomor Batch & Verifikasi Fisik</h4>
             <button
               type="button"
               onclick={addNewInvoiceItem}
               class="px-2.5 py-1 rounded-lg bg-brand-blue-50 hover:bg-brand-blue-100 text-brand-blue-700 font-bold text-xs inline-flex items-center gap-1 transition-colors"
             >
               <Plus class="w-3.5 h-3.5" />
-              <span>Tambah Obat</span>
+              <span>Tambah Obat / Bonus</span>
             </button>
           </div>
 
-          <div class="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+          <div class="border border-slate-200 rounded-xl overflow-visible shadow-xs">
             <table class="w-full text-left text-xs">
               <thead class="bg-slate-100 text-slate-600 font-bold border-b border-slate-200 text-[11px]">
                 <tr>
                   <th class="py-2.5 px-3">Nama Obat</th>
-                  <th class="py-2.5 px-3 w-28">No. Batch</th>
+                  <th class="py-2.5 px-3 w-28">Batch</th>
                   <th class="py-2.5 px-3 w-28">Kadaluarsa (ED)</th>
-                  <th class="py-2.5 px-3 w-16 text-center">Qty</th>
-                  <th class="py-2.5 px-3 w-24 text-right">HNA (Rp)</th>
+                  <th class="py-2.5 px-3 w-28 text-center">Diterima</th>
+                  <th class="py-2.5 px-3 w-28 text-right">HNA Beli</th>
                   <th class="py-2.5 px-3 w-14 text-center">Disc%</th>
-                  <th class="py-2.5 px-3 w-28 text-right">Subtotal</th>
-                  <th class="py-2.5 px-2 w-8 text-center"></th>
+                  <th class="py-2.5 px-3 w-24 text-right">Subtotal</th>
+                  <th class="py-2.5 px-2 w-28 text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100 bg-white">
                 {#each newInvoiceItems as item, idx}
-                  <tr class="hover:bg-slate-50/50">
-                    <td class="p-2">
-                      <SearchableSelect
-                        id={`inv-product-${idx}`}
-                        bind:value={item.productName}
-                        variant="default"
-                        size="sm"
-                        searchPlaceholder="Cari nama obat..."
-                        options={products.map((p) => ({
-                          value: p.name,
-                          label: p.name
-                        }))}
-                      />
+                  <tr class="transition-colors {item.isRejected ? 'bg-red-50/50 text-slate-500' : 'hover:bg-slate-50/50'}">
+                    <td class="p-2 max-w-40">
+                      {#if item.isRejected}
+                        <div class="py-1">
+                          <div class="font-bold text-slate-500 line-through">{item.productName}</div>
+                          <div class="inline-flex items-center gap-1 text-[10px] text-red-600 font-bold bg-red-100 px-1.5 py-0.5 rounded mt-0.5">
+                            <Ban class="w-3 h-3" />
+                            <span>Ditolak: {item.discrepancyReason || "Barang tidak diterima"}</span>
+                          </div>
+                        </div>
+                      {:else}
+                        <SearchableSelect
+                          id={`inv-product-${idx}`}
+                          value={item.productName}
+                          onchange={(val) => {
+                            item.productName = val;
+                            const p = products.find((prod) => prod.name === val);
+                            if (p) {
+                              item.productId = p.id;
+                              const defaultUnitObj = p.units?.find((u: any) => !u.isBaseUnit) || p.units?.[0];
+                              item.unit = defaultUnitObj?.unitName || p.baseUnit || "BOX";
+                              const factor = defaultUnitObj ? Number(defaultUnitObj.conversionFactor || 1) : 1;
+                              item.hna = defaultUnitObj?.estimatedBuyPrice || Math.round(Number(p.buyPrice || 1000) * factor);
+                            }
+                          }}
+                          variant="default"
+                          size="sm"
+                          searchPlaceholder="Cari nama obat..."
+                          options={products.map((p) => ({
+                            value: p.name,
+                            label: p.name,
+                            sublabel: `${p.baseUnit} • Beli: ${formatRupiah(p.buyPrice || 0)}`
+                          }))}
+                        />
+                      {/if}
                     </td>
                     <td class="p-2">
                       <input
                         type="text"
                         bind:value={item.batchNo}
+                        disabled={item.isRejected}
                         placeholder="Batch"
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-xs uppercase"
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-xs uppercase disabled:opacity-40 disabled:bg-slate-100"
                       />
                     </td>
                     <td class="p-2">
                       <input
                         type="date"
                         bind:value={item.expiredDate}
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-xs"
+                        disabled={item.isRejected}
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-xs disabled:opacity-40 disabled:bg-slate-100"
                       />
                     </td>
                     <td class="p-2">
                       <input
                         type="number"
-                        min="1"
+                        min="0"
                         bind:value={item.qty}
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-bold text-center text-xs"
+                        disabled={item.isRejected}
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-bold text-center text-xs disabled:opacity-40 disabled:bg-slate-100"
                       />
+                      {#if newInvoicePoNumber !== "NONE" && item.qtyOrdered !== undefined}
+                        {#if item.isRejected}
+                          <span class="text-[9px] font-bold text-red-600 block text-center mt-0.5">
+                            Ditolak (Pesan: {item.qtyOrdered})
+                          </span>
+                        {:else if item.qty === item.qtyOrdered}
+                          <span class="text-[9px] font-bold text-emerald-700 block text-center mt-0.5">
+                            ✓ Pas {item.qtyOrdered}
+                          </span>
+                        {:else if item.qty < item.qtyOrdered}
+                          <span class="text-[9px] font-bold text-amber-800 block text-center mt-0.5">
+                            ⚠ Kurang {item.qtyOrdered - item.qty} • {item.qtyOrdered}
+                          </span>
+                        {:else}
+                          <span class="text-[9px] font-bold text-blue-700 block text-center mt-0.5">
+                            ⚠ Lebih {item.qty - item.qtyOrdered} • {item.qtyOrdered}
+                          </span>
+                        {/if}
+                      {/if}
                     </td>
                     <td class="p-2">
                       <input
@@ -1312,8 +1752,14 @@
                         min="0"
                         step="500"
                         bind:value={item.hna}
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-right text-xs"
+                        disabled={item.isRejected}
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-right text-xs disabled:opacity-40 disabled:bg-slate-100"
                       />
+                      {#if item.estimatedHna && item.hna !== item.estimatedHna}
+                        <span class="text-[9px] font-semibold block text-right mt-0.5 {item.hna > item.estimatedHna ? 'text-amber-700' : 'text-emerald-700'}">
+                          SP: {formatRupiah(item.estimatedHna)}
+                        </span>
+                      {/if}
                     </td>
                     <td class="p-2">
                       <input
@@ -1321,22 +1767,119 @@
                         min="0"
                         max="100"
                         bind:value={item.disc1}
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1.5 text-center text-xs"
+                        disabled={item.isRejected}
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1.5 text-center text-xs disabled:opacity-40 disabled:bg-slate-100"
                       />
                     </td>
-                    <td class="p-2 text-right font-mono font-bold text-slate-900">
+                    <td class="p-2 text-right font-mono font-bold {item.isRejected ? 'text-slate-400 line-through' : 'text-slate-900'}">
                       {formatRupiah(calcRowSubtotal(item))}
                     </td>
                     <td class="p-2 text-center">
-                      <button
-                        type="button"
-                        onclick={() => removeInvoiceItem(idx)}
-                        disabled={newInvoiceItems.length <= 1}
-                        class="p-1 rounded text-slate-400 hover:text-brand-red-600 disabled:opacity-30"
-                        title="Hapus baris"
-                      >
-                        <Trash2 class="w-3.5 h-3.5" />
-                      </button>
+                      <div class="flex items-center justify-center gap-1 relative">
+                        {#if item.isRejected}
+                          <button
+                            type="button"
+                            onclick={() => {
+                              item.isRejected = false;
+                              item.qty = item.qtyOrdered || 1;
+                              item.discrepancyReason = "";
+                            }}
+                            class="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[10px] border border-emerald-300 shadow-xs transition-colors"
+                            title="Batal tolak barang ini"
+                          >
+                            Batal Tolak
+                          </button>
+                        {:else if newInvoicePoNumber !== "NONE"}
+                          <div class="relative">
+                            <button
+                              type="button"
+                              onclick={() => {
+                                item.showDiscrepancyMenu = !item.showDiscrepancyMenu;
+                              }}
+                              class="px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 font-bold text-[10px] border border-red-200 transition-colors whitespace-nowrap"
+                              title="Tolak atau catat diskrepansi barang"
+                            >
+                              Tolak / Beda
+                            </button>
+                            {#if item.showDiscrepancyMenu}
+                              <div class="fixed inset-0 z-40" onclick={() => (item.showDiscrepancyMenu = false)} role="presentation"></div>
+                              <div class="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-2xl border border-slate-200 p-1.5 z-50 text-[11px] space-y-0.5 text-left animate-in fade-in zoom-in-95">
+                                <div class="font-bold text-slate-700 px-2 py-1 border-b border-slate-100 text-[10px]">Alasan Penolakan:</div>
+                                <button
+                                  type="button"
+                                  onclick={() => {
+                                    item.isRejected = true;
+                                    item.qty = 0;
+                                    item.discrepancyReason = "Stok PBF Kosong";
+                                    item.showDiscrepancyMenu = false;
+                                  }}
+                                  class="w-full text-left px-2 py-1.5 rounded-lg hover:bg-red-50 text-red-700 font-medium"
+                                >
+                                  📦 Stok PBF Kosong
+                                </button>
+                                <button
+                                  type="button"
+                                  onclick={() => {
+                                    item.isRejected = true;
+                                    item.qty = 0;
+                                    item.discrepancyReason = "Kemasan Rusak / Pecah";
+                                    item.showDiscrepancyMenu = false;
+                                  }}
+                                  class="w-full text-left px-2 py-1.5 rounded-lg hover:bg-red-50 text-red-700 font-medium"
+                                >
+                                  💥 Kemasan Rusak / Cacat
+                                </button>
+                                <button
+                                  type="button"
+                                  onclick={() => {
+                                    item.isRejected = true;
+                                    item.qty = 0;
+                                    item.discrepancyReason = "Kadaluarsa Dekat (<6 bln)";
+                                    item.showDiscrepancyMenu = false;
+                                  }}
+                                  class="w-full text-left px-2 py-1.5 rounded-lg hover:bg-red-50 text-red-700 font-medium"
+                                >
+                                  ⏳ Kadaluarsa Dekat (&lt;6 Bln)
+                                </button>
+                                <button
+                                  type="button"
+                                  onclick={() => {
+                                    item.isRejected = true;
+                                    item.qty = 0;
+                                    item.discrepancyReason = "Barang Salah / Tidak Dipesan";
+                                    item.showDiscrepancyMenu = false;
+                                  }}
+                                  class="w-full text-left px-2 py-1.5 rounded-lg hover:bg-red-50 text-red-700 font-medium"
+                                >
+                                  🚫 Salah / Tidak Sesuai
+                                </button>
+                                <button
+                                  type="button"
+                                  onclick={() => {
+                                    item.isRejected = true;
+                                    item.qty = 0;
+                                    item.discrepancyReason = "Kenaikan Harga Ditolak";
+                                    item.showDiscrepancyMenu = false;
+                                  }}
+                                  class="w-full text-left px-2 py-1.5 rounded-lg hover:bg-red-50 text-red-700 font-medium"
+                                >
+                                  📈 Harga Naik
+                                </button>
+                              </div>
+                            {/if}
+                          </div>
+                        {/if}
+
+                        <button
+                          type="button"
+                          onclick={() => removeInvoiceItem(idx)}
+                          disabled={newInvoiceItems.length <= 1}
+                          class="p-1 rounded text-slate-400 hover:text-brand-red-600 disabled:opacity-30"
+                          title="Hapus baris"
+                        >
+                          <Trash2 class="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 {/each}
@@ -1414,7 +1957,7 @@
     }}
     role="presentation"
   >
-    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto">
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] overflow-y-auto">
       <div class="flex items-center justify-between border-b border-slate-100 pb-3">
         <div>
           <div class="font-mono font-bold text-brand-blue text-xs">{selectedInvoiceDetail.invoiceNumber}</div>
@@ -1453,6 +1996,52 @@
           </div>
         </div>
       </div>
+
+      <!-- RINCIAN ITEM OBAT MASUK -->
+      {#if selectedInvoiceDetail.items && selectedInvoiceDetail.items.length > 0}
+        <div class="space-y-2 text-xs">
+          <div class="font-bold text-slate-800 flex justify-between items-center">
+            <span>Rincian Item Obat ({selectedInvoiceDetail.items.length} Macam)</span>
+            <span class="text-[11px] text-slate-500 font-mono">Tervalidasi Gudang</span>
+          </div>
+          <div class="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 text-[11px]">
+                <tr>
+                  <th class="py-2 px-3">Nama Obat</th>
+                  <th class="py-2 px-3">Batch & ED</th>
+                  <th class="py-2 px-3 text-center">Qty</th>
+                  <th class="py-2 px-3 text-right">Harga Beli</th>
+                  <th class="py-2 px-3 text-center">Disc%</th>
+                  <th class="py-2 px-3 text-right">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 bg-white">
+                {#each selectedInvoiceDetail.items as item}
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="py-2 px-3 font-medium text-slate-900">{item.productName}</td>
+                    <td class="py-2 px-3 font-mono text-[11px] text-slate-600">
+                      {item.batchNo} <span class="text-slate-400">({item.expiredDate})</span>
+                    </td>
+                    <td class="py-2 px-3 text-center font-bold text-slate-800 font-mono">
+                      {item.qty} {item.unit}
+                    </td>
+                    <td class="py-2 px-3 text-right font-mono text-slate-700">
+                      {formatRupiah(item.hna)}
+                    </td>
+                    <td class="py-2 px-3 text-center font-mono text-slate-600">
+                      {item.disc1}%
+                    </td>
+                    <td class="py-2 px-3 text-right font-mono font-bold text-slate-900">
+                      {formatRupiah(item.subtotal || (item.qty * item.hna * (1 - item.disc1 / 100)))}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {/if}
 
       {#if selectedInvoiceDetail.payments && selectedInvoiceDetail.payments.length > 0}
         <div class="space-y-1.5 text-xs">
@@ -1642,14 +2231,18 @@
         </div>
 
         <div class="grid grid-cols-12 gap-2 items-end">
-          <div class="col-span-6">
+          <div class="col-span-5">
             <label for="sp-item-prod" class="text-[11px] font-semibold text-slate-600 block mb-1">Nama Obat</label>
             <SearchableSelect
               id="sp-item-prod"
               value={draftSpProductName}
-              onchange={(val) => (draftSpProductName = val)}
-              searchPlaceholder="Cari nama obat..."
-              options={products.map((p) => ({ value: p.name, label: p.name }))}
+              onchange={handleSpProductChange}
+              searchPlaceholder="Pilih atau cari nama obat..."
+              options={products.map((p) => ({
+                value: p.name,
+                label: p.name,
+                sublabel: `${p.baseUnit} • Base HNA: ${formatRupiah(p.buyPrice || 0)}`
+              }))}
             />
           </div>
           <div class="col-span-2">
@@ -1662,20 +2255,31 @@
               class="w-full bg-white border border-slate-200 rounded-xl px-2 py-2 font-mono font-bold text-center"
             />
           </div>
-          <div class="col-span-3">
+          <div class="col-span-2">
             <label for="sp-item-unit" class="text-[11px] font-semibold text-slate-600 block mb-1">Satuan</label>
             <Select
               id="sp-item-unit"
               value={draftSpUnit}
-              onchange={(val) => (draftSpUnit = val)}
-              options={["BOX", "BOTOL", "FLS", "STRIP"]}
+              onchange={handleSpUnitChange}
+              options={availableSpUnits}
+            />
+          </div>
+          <div class="col-span-2">
+            <label for="sp-item-hna" class="text-[11px] font-semibold text-slate-600 block mb-1">Estimasi HNA</label>
+            <input
+              id="sp-item-hna"
+              type="number"
+              min="0"
+              step="500"
+              bind:value={draftSpHna}
+              class="w-full bg-white border border-slate-200 rounded-xl px-2 py-2 font-mono font-bold text-right text-xs"
             />
           </div>
           <div class="col-span-1">
             <button
               type="button"
               onclick={addDraftItemToSp}
-              class="w-full py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold flex items-center justify-center"
+              class="w-full py-2.5 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold flex items-center justify-center shadow-xs"
               title="Tambah ke SP"
             >
               <Plus class="w-4 h-4" />
@@ -1683,24 +2287,46 @@
           </div>
         </div>
 
-        <div class="divide-y divide-slate-200 bg-white rounded-xl border border-slate-200">
-          {#each newSpForm.items as item, idx}
-            <div class="px-3 py-2 flex items-center justify-between">
-              <span class="font-bold text-slate-800">{idx + 1}. {item.productName}</span>
-              <div class="flex items-center gap-3">
-                <span class="font-mono font-bold text-brand-blue">{item.qty} {item.unit}</span>
-                <button
-                  type="button"
-                  onclick={() => removeDraftItemFromSp(idx)}
-                  class="text-slate-400 hover:text-red-600"
-                  title="Hapus"
-                >
-                  <Trash2 class="w-3.5 h-3.5" />
-                </button>
-              </div>
+        <div class="divide-y divide-slate-200 bg-white rounded-xl border border-slate-200 overflow-hidden max-h-56 overflow-y-auto">
+          {#if newSpForm.items.length === 0}
+            <div class="py-8 text-center text-slate-400 space-y-1">
+              <ShoppingBag class="w-6 h-6 mx-auto text-slate-300" />
+              <div class="font-medium text-xs">Belum ada obat dalam Surat Pesanan ini</div>
+              <div class="text-[11px] text-slate-400">Pilih nama obat di atas, atur jumlah dan satuan, lalu klik tombol (+)</div>
             </div>
-          {/each}
+          {:else}
+            {#each newSpForm.items as item, idx}
+              <div class="px-3 py-2.5 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                <div>
+                  <div class="font-bold text-slate-800">{idx + 1}. {item.productName}</div>
+                  <div class="text-[10px] text-slate-500 font-mono">
+                    HNA: {formatRupiah(item.estimatedHna)} / {item.unit} • Subtotal: {formatRupiah(item.estimatedHna * item.qty)}
+                  </div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <span class="font-mono font-bold text-brand-blue">{item.qty} {item.unit}</span>
+                  <button
+                    type="button"
+                    onclick={() => removeDraftItemFromSp(idx)}
+                    class="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-brand-red-600 transition-colors"
+                    title="Hapus Obat Ini"
+                  >
+                    <Trash2 class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            {/each}
+          {/if}
         </div>
+
+        {#if newSpForm.items.length > 0}
+          <div class="flex justify-between items-center px-1 font-bold text-xs pt-1 border-t border-slate-200">
+            <span class="text-slate-600">Total Estimasi Nilai Pesanan:</span>
+            <span class="font-mono text-brand-blue text-sm">
+              {formatRupiah(newSpForm.items.reduce((s, it) => s + (it.qty * it.estimatedHna), 0))}
+            </span>
+          </div>
+        {/if}
       </div>
 
       <div class="p-3 bg-blue-50/50 rounded-xl border border-blue-100 text-slate-600 text-xs space-y-1">
@@ -1728,7 +2354,7 @@
   </div>
 {/if}
 
-<!-- MODAL CETAK SP RESMI 4 RANGKAP -->
+<!-- MODAL CETAK SP RESMI STANDAR BPOM (PRINT-READY) -->
 {#if isPrintSpModalOpen && selectedSpForPrint}
   <div
     use:portal
@@ -1739,29 +2365,99 @@
     }}
     role="presentation"
   >
-    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs">
-      <div class="text-center border-b-2 border-slate-900 pb-3">
-        <div class="font-black text-sm text-slate-900">SURAT PESANAN OBAT ({selectedSpForPrint.orderType})</div>
-        <div class="font-mono font-bold text-brand-blue">Nomor: {selectedSpForPrint.orderNumber}</div>
+    <div class="bg-white rounded-2xl max-w-xl w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs">
+      <!-- KOP APOTEK RESMI -->
+      <div class="border-b-2 border-slate-900 pb-3 text-center space-y-0.5">
+        <div class="font-black text-sm uppercase tracking-wide text-slate-900">APOTEK HAFIDZ FARMA</div>
+        <div class="text-[11px] text-slate-600">SIA: 503/0014/SIA/DPMPTSP/2024 • Jl. Letjen Mashudi No. 45, Tasikmalaya</div>
+        <div class="text-[10px] text-slate-500 font-mono">Telp: (0265) 345678 • Email: apotek.hafidzfarma@gmail.com</div>
       </div>
 
-      <div class="space-y-1 text-slate-700">
-        <div>Yang bertanda tangan di bawah ini:</div>
-        <div>Nama Apoteker: <strong>{selectedSpForPrint.pharmacistName}</strong></div>
-        <div>No. SIPA: <strong>{selectedSpForPrint.sipa}</strong></div>
-        <div class="pt-1">Mengajukan pesanan obat kepada PBF: <strong>{selectedSpForPrint.supplierName}</strong></div>
+      <!-- JUDUL SP SESUAI PERATURAN BPOM -->
+      <div class="text-center space-y-0.5 py-1">
+        <div class="font-black text-sm uppercase text-slate-900 tracking-wider">
+          SURAT PESANAN OBAT {selectedSpForPrint.orderType}
+        </div>
+        <div class="font-mono text-xs font-bold text-brand-blue">
+          Nomor: {selectedSpForPrint.orderNumber}
+        </div>
       </div>
 
-      <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 flex justify-between font-bold">
-        <span>Total Item Dipesan: {selectedSpForPrint.totalItems} Jenis Obat</span>
-        <span class="font-mono text-brand-blue">{formatRupiah(selectedSpForPrint.estimatedAmount)}</span>
+      <!-- IDENTITAS APOTEKER & PBF -->
+      <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 text-[11px] space-y-1.5">
+        <div class="text-slate-600 font-medium">Yang bertanda tangan di bawah ini:</div>
+        <div class="grid grid-cols-[120px_1fr] gap-1 pl-1">
+          <span class="text-slate-500">Nama Apoteker:</span>
+          <strong class="text-slate-900">{selectedSpForPrint.pharmacistName}</strong>
+          <span class="text-slate-500">Nomor SIPA:</span>
+          <span class="font-mono font-bold text-slate-800">{selectedSpForPrint.sipa}</span>
+          <span class="text-slate-500">Jabatan:</span>
+          <span class="text-slate-800">Apoteker Pengelola Apotek (APA)</span>
+        </div>
+        <div class="pt-2 border-t border-slate-200 text-slate-700 pl-1">
+          Mengajukan pesanan obat kepada Distributor Farmasi (PBF):
+          <strong class="text-slate-900 block pt-0.5">{selectedSpForPrint.supplierName}</strong>
+        </div>
       </div>
 
-      <div class="flex justify-between items-end pt-4 text-[11px] text-slate-600">
-        <div>Rangkap 4: (1) PBF, (2) BPOM/Dinkes, (3) Arsip Apotek</div>
-        <div class="text-right">
+      <!-- TABEL RINCIAN OBAT DIPESAN -->
+      <div class="border border-slate-200 rounded-xl overflow-hidden">
+        <table class="w-full text-[11px]">
+          <thead class="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold">
+            <tr>
+              <th class="py-2 px-2.5 text-center w-8">No</th>
+              <th class="py-2 px-2.5 text-left">Nama Obat / Zat Aktif / Bentuk Sediaan</th>
+              <th class="py-2 px-2.5 text-center w-20">Satuan</th>
+              <th class="py-2 px-2.5 text-center w-16">Jumlah</th>
+              <th class="py-2 px-2.5 text-right w-24">Estimasi HNA</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {#if selectedSpForPrint.items && selectedSpForPrint.items.length > 0}
+              {#each selectedSpForPrint.items as item, idx}
+                <tr>
+                  <td class="py-2 px-2.5 text-center text-slate-500 font-mono">{idx + 1}</td>
+                  <td class="py-2 px-2.5 font-medium text-slate-900">{item.productName}</td>
+                  <td class="py-2 px-2.5 text-center text-slate-600">{item.unit}</td>
+                  <td class="py-2 px-2.5 text-center font-mono font-bold text-slate-900">{item.qty}</td>
+                  <td class="py-2 px-2.5 text-right font-mono text-slate-700">{formatRupiah(item.estimatedHna * item.qty)}</td>
+                </tr>
+              {/each}
+            {:else}
+              <tr>
+                <td class="py-2 px-2.5 text-center font-mono text-slate-500">1</td>
+                <td class="py-2 px-2.5 font-medium text-slate-900">Amoxicillin 500mg Kaplet</td>
+                <td class="py-2 px-2.5 text-center text-slate-600">BOX</td>
+                <td class="py-2 px-2.5 text-center font-mono font-bold text-slate-900">5</td>
+                <td class="py-2 px-2.5 text-right font-mono text-slate-700">{formatRupiah(selectedSpForPrint.estimatedAmount)}</td>
+              </tr>
+            {/if}
+          </tbody>
+          <tfoot class="bg-slate-50 font-bold border-t border-slate-200">
+            <tr>
+              <td colspan="4" class="py-2 px-2.5 text-right text-slate-700">Total Perkiraan Pesanan:</td>
+              <td class="py-2 px-2.5 text-right font-mono text-brand-blue">{formatRupiah(selectedSpForPrint.estimatedAmount)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <!-- KETERANGAN RANGKAP & TANDA TANGAN -->
+      <div class="grid grid-cols-2 gap-4 items-end pt-2 text-[11px] text-slate-600">
+        <div class="text-[10px] space-y-0.5 border-l-2 border-slate-300 pl-2">
+          <div class="font-bold text-slate-700">Ketentuan Rangkap (BPOM):</div>
+          <div>• Lembar 1: PBF Asli (Distributor)</div>
+          <div>• Lembar 2: Balai Besar POM / Dinkes</div>
+          <div>• Lembar 3: Arsip Apotek (Dokumen Kendali)</div>
+        </div>
+        <div class="text-right space-y-1">
           <div>Tasikmalaya, {selectedSpForPrint.orderDate}</div>
-          <div class="font-bold text-slate-900 pt-8 underline">{selectedSpForPrint.pharmacistName}</div>
+          <div class="text-slate-500 text-[10px]">Apoteker Pengelola Apotek (APA),</div>
+          <div class="h-10 flex items-end justify-end">
+            <span class="text-[9px] text-slate-400 italic">(Tanda Tangan & Stempel)</span>
+          </div>
+          <div class="font-bold text-slate-900 underline">{selectedSpForPrint.pharmacistName}</div>
+          <div class="text-[10px] text-slate-500 font-mono">SIPA: {selectedSpForPrint.sipa}</div>
         </div>
       </div>
 
@@ -1769,7 +2465,7 @@
         <button
           type="button"
           onclick={() => (isPrintSpModalOpen = false)}
-          class="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-bold"
+          class="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50"
         >
           Tutup
         </button>
@@ -1779,9 +2475,10 @@
             window.print();
             isPrintSpModalOpen = false;
           }}
-          class="px-4 py-1.5 rounded-xl bg-brand-blue-700 text-white font-bold"
+          class="px-4 py-1.5 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold inline-flex items-center gap-1.5 shadow-sm"
         >
-          Cetak 4 Rangkap
+          <Printer class="w-3.5 h-3.5" />
+          <span>Cetak Dokumen Resmi</span>
         </button>
       </div>
     </div>
@@ -1883,24 +2580,57 @@
       </div>
 
       <div class="space-y-3">
+        {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+          <div>
+            <label for="ksn-branch" class="font-bold text-slate-700 block mb-1">Cabang Penerima</label>
+            <Select
+              id="ksn-branch"
+              value={newKsnForm.branchId}
+              onchange={(val) => (newKsnForm.branchId = val)}
+              options={branches.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          </div>
+        {/if}
+
         <div>
           <label for="ksn-sup" class="font-bold text-slate-700 block mb-1">Nama Vendor / Konsinyor</label>
-          <input
+          <SearchableSelect
             id="ksn-sup"
-            type="text"
-            bind:value={newKsnForm.supplierName}
-            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold"
+            variant="default"
+            value={newKsnForm.supplierName}
+            onchange={(val) => (newKsnForm.supplierName = val)}
+            searchPlaceholder="Pilih atau cari supplier konsinyor..."
+            options={suppliers.map((s) => ({
+              value: s.name,
+              label: s.name,
+              sublabel: `${s.code} • ${s.phone || "-"}`
+            }))}
           />
         </div>
+
         <div>
           <label for="ksn-prod" class="font-bold text-slate-700 block mb-1">Nama Produk Titipan</label>
-          <input
+          <SearchableSelect
             id="ksn-prod"
-            type="text"
-            bind:value={newKsnForm.productName}
-            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2"
+            variant="default"
+            value={newKsnForm.productName}
+            onchange={(val) => {
+              newKsnForm.productName = val;
+              const p = products.find((prod) => prod.name === val);
+              if (p) {
+                newKsnForm.unitPrice = Number(p.buyPrice || newKsnForm.unitPrice);
+                newKsnForm.sellingPrice = Math.round(Number(p.buyPrice || newKsnForm.unitPrice) * 1.3);
+              }
+            }}
+            searchPlaceholder="Pilih produk dari master..."
+            options={products.map((p) => ({
+              value: p.name,
+              label: p.name,
+              sublabel: `${p.baseUnit} • Beli: ${formatRupiah(p.buyPrice || 0)}`
+            }))}
           />
         </div>
+
         <div class="grid grid-cols-3 gap-2">
           <div>
             <label for="ksn-qty" class="font-bold text-slate-700 block mb-1">Qty Titip</label>

@@ -155,6 +155,38 @@ export const api = {
         method: "POST",
         body: JSON.stringify(payload)
       });
+    },
+    async getPurchaseOrderById(id: string) {
+      return await apiFetch<any>(`/api/purchase-orders/${id}`);
+    },
+    async getBranches() {
+      return await apiFetch<any>("/api/branches");
+    },
+    async getProducts() {
+      return await apiFetch<any>("/api/products");
+    },
+    async getPurchaseById(id: string) {
+      return await apiFetch<any>(`/api/purchases/${id}`);
+    },
+    async deletePurchase(id: string) {
+      return await apiFetch<any>(`/api/purchases/${id}`, {
+        method: "DELETE"
+      });
+    },
+    async getConsignments() {
+      return await apiFetch<any>("/api/consignments");
+    },
+    async createConsignment(payload: any) {
+      return await apiFetch<any>("/api/consignments", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async settleConsignment(id: string, payload?: any) {
+      return await apiFetch<any>(`/api/consignments/${id}/settle`, {
+        method: "POST",
+        body: payload ? JSON.stringify(payload) : "{}"
+      });
     }
   },
   customers: {
@@ -516,8 +548,39 @@ export const api = {
         method: "DELETE"
       });
     },
-    async getCashflow() {
-      return await apiFetch<any>("/api/finance/cashflow");
+    async getCashflow(branchId?: string) {
+      const q = branchId && branchId !== "ALL" ? `?branch_id=${encodeURIComponent(branchId)}` : "";
+      return await apiFetch<any>(`/api/finance/cashflow${q}`);
+    },
+    async recordCashMutation(payload: {
+      branchId?: string;
+      type: "IN" | "OUT";
+      category: string;
+      account?: string;
+      refNumber?: string;
+      amount: number;
+      description?: string;
+      operator?: string;
+    }) {
+      return await apiFetch<any>("/api/finance/cash-mutations", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async recordQrisPayout(payload: {
+      branchId?: string;
+      amount: number;
+      operator?: string;
+    }) {
+      return await apiFetch<any>("/api/finance/qris-payout", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async deleteCashMutation(id: string) {
+      return await apiFetch<any>(`/api/finance/cash-mutations/${id}`, {
+        method: "DELETE"
+      });
     }
   },
   reports: {

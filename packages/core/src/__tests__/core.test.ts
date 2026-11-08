@@ -95,6 +95,18 @@ describe("currency formatters & parsers", () => {
     expect(str).toContain("Rp");
   });
 
+  it("formats numbers without Rp symbol when withSymbol is false", () => {
+    // Via boolean argument
+    const withoutSymbolBool = formatRupiah(150000, false);
+    expect(withoutSymbolBool).toBe("150.000");
+    expect(withoutSymbolBool).not.toContain("Rp");
+
+    // Via options object
+    const withoutSymbolObj = formatRupiah(2750000, { withSymbol: false });
+    expect(withoutSymbolObj).toBe("2.750.000");
+    expect(withoutSymbolObj).not.toContain("Rp");
+  });
+
   it("parses currency strings back to integers", () => {
     expect(parseRupiah("Rp 150.000")).toBe(150000);
     expect(parseRupiah("25.500")).toBe(25500);

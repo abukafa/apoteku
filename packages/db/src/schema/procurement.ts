@@ -67,6 +67,30 @@ export const purchaseOrders = pgTable(
   ]
 );
 
+export const purchaseOrderItems = pgTable(
+  "purchase_order_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    purchaseOrderId: uuid("purchase_order_id")
+      .references(() => purchaseOrders.id, { onDelete: "cascade" })
+      .notNull(),
+    productId: uuid("product_id")
+      .references(() => products.id)
+      .notNull(),
+    lineNo: integer("line_no").notNull(),
+    unitName: varchar("unit_name", { length: 50 }).notNull(),
+    qtyOrdered: numeric("qty_ordered", { precision: 24, scale: 8 }).notNull(),
+    qtyReceived: numeric("qty_received", { precision: 24, scale: 8 }).default("0").notNull(),
+    estimatedPrice: numeric("estimated_price", { precision: 24, scale: 8 }).default("0").notNull(),
+    subtotal: numeric("subtotal", { precision: 24, scale: 8 }).default("0").notNull(),
+    notes: text("notes")
+  },
+  (t) => [
+    uniqueIndex("uq_po_item_line").on(t.purchaseOrderId, t.lineNo),
+    index("idx_po_item_product").on(t.productId)
+  ]
+);
+
 export const purchaseInvoices = pgTable(
   "purchase_invoices",
   {
@@ -262,5 +286,32 @@ export const consignmentSettlementItems = pgTable(
   },
   (t) => [
     uniqueIndex("uq_consignment_settlement_line").on(t.settlementId, t.lineNo)
+  ]
+);
+
+// 13. MUTASI KAS KECIL & OPERASIONAL APOTEK (CASH MUTATIONS)
+export const cashMutations = pgTable(
+  "cash_mutations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .references(() => tenants.id, { onDelete: "cascade" })
+      .notNull(),
+    branchId: uuid("branch_id")
+      .references(() => branches.id, { onDelete: "cascade" })
+      .notNull(),
+    type: varchar("type", { length: 10 }).notNull(), // 'IN' | 'OUT'
+    category: varchar("category", { length: 100 }).notNull(),
+    account: varchar("account", { length: 50 }).default("KAS_LACI").notNull(), // 'KAS_LACI' | 'KAS_BRANKAS' | 'BANK_BCA'
+    refNumber: varchar("ref_number", { length: 100 }).notNull(),
+    amount: numeric("amount", { precision: 24, scale: 8 }).notNull(),
+    description: text("description"),
+    operator: varchar("operator", { length: 100 }),
+    transactionDate: timestamp("transaction_date", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (t) => [
+    index("idx_cash_mutation_branch").on(t.branchId, t.transactionDate),
+    index("idx_cash_mutation_tenant").on(t.tenantId)
   ]
 );

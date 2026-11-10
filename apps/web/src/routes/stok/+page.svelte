@@ -728,6 +728,7 @@
   let formProdInitialExpiry = $state("2027-12-31");
   let formProdInitialStock = $state(100);
   let formProdBuyPrice = $state(1000);
+  let formProdIsConsignment = $state(false);
 
   interface FormProductUnit {
     unitName: string;
@@ -785,6 +786,7 @@
     formProdInitialExpiry = "2028-06-30";
     formProdInitialStock = 100;
     formProdBuyPrice = 950;
+    formProdIsConsignment = false;
     formProdUnits = [
       {
         unitName: "TABLET",
@@ -815,6 +817,7 @@
     formProdInitialExpiry = prod.batches[0]?.expiryDate || "2027-12-31";
     formProdInitialStock = getProductTotalStock(prod);
     formProdBuyPrice = prod.batches[0]?.buyPrice || 500;
+    formProdIsConsignment = Boolean(prod.isConsignment);
 
     if (prod.units && Array.isArray(prod.units) && prod.units.length > 0) {
       formProdUnits = prod.units.map((u: any, idx: number) => ({
@@ -907,7 +910,8 @@
             wholesale: Number(formProdPriceWholesale) || 0
           },
           units: unitsPayload,
-          buyPrice: Number(formProdBuyPrice) || 0
+          buyPrice: Number(formProdBuyPrice) || 0,
+          isConsignment: formProdIsConsignment
         };
 
         try {
@@ -928,6 +932,7 @@
           existing.categoryName = categoryName;
           existing.drugClass = formProdDrugClass;
           existing.baseUnit = formProdBaseUnit;
+          existing.isConsignment = formProdIsConsignment;
           existing.units = mappedUnitsForMemory;
           if (existing.batches && existing.batches[0]) {
             existing.batches[0].buyPrice = Number(formProdBuyPrice) || existing.batches[0].buyPrice;
@@ -961,7 +966,8 @@
           initialExpiry: formProdInitialExpiry || "2028-01-01",
           initialStock: initStock,
           buyPrice,
-          branchId: selectedBranchId
+          branchId: selectedBranchId,
+          isConsignment: formProdIsConsignment
         };
 
         let backendCreated: any = null;
@@ -984,7 +990,7 @@
           categoryName,
           drugClass: formProdDrugClass,
           requiresPrescription: formProdDrugClass === "ETHICAL" || formProdDrugClass === "PSYCHOTROPIC" || formProdDrugClass === "NARCOTICS",
-          isConsignment: false,
+          isConsignment: formProdIsConsignment,
           manufacturer: formProdManufacturer.trim() || "PBF Umum",
           description: "Produk baru ditambahkan dari katalog master.",
           indication: "-",
@@ -1330,8 +1336,13 @@
           {@const prescriptionPrice = p.units[0]?.prices.prescription || 0}
           <tr class="hover:bg-blue-50/40 transition-colors group">
             <td class="py-3.5 px-4">
-              <div class="font-bold text-slate-900 group-hover:text-brand-blue transition-colors">
-                {p.name}
+              <div class="font-bold text-slate-900 group-hover:text-brand-blue transition-colors flex items-center gap-1.5 flex-wrap">
+                <span>{p.name}</span>
+                {#if p.isConsignment}
+                  <span class="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-200 font-bold text-[10px]">
+                    KONSINYASI
+                  </span>
+                {/if}
               </div>
               <div class="text-[11px] text-slate-400 font-normal">
                 {p.genericName || p.manufacturer}
@@ -2219,7 +2230,7 @@
 
       <div class="grid grid-cols-2 gap-3 text-xs">
         <div class="col-span-2">
-          <label for="prod-name" class="font-bold text-slate-700 block mb-1">Nama Obat & Kekuatan Sediaan</label>
+          <label for="prod-name" class="font-bold text-slate-700 block mb-1">Nama Obat / Barang</label>
           <input
             id="prod-name"
             type="text"
@@ -2281,6 +2292,20 @@
               { value: "NARCOTICS", label: "Narkotika" }
             ]}
           />
+        </div>
+        <div class="col-span-2 sm:col-span-1 flex items-center pt-4">
+          <label for="prod-consignment" class="w-full bg-purple-50/70 border border-purple-200 rounded-xl p-2.5 flex items-start gap-2 cursor-pointer select-none">
+            <input
+              id="prod-consignment"
+              type="checkbox"
+              bind:checked={formProdIsConsignment}
+              class="w-4 h-4 rounded text-purple-600 mt-0.5"
+            />
+            <div>
+              <div class="font-bold text-purple-900 text-xs">Produk Konsinyasi (Titipan Vendor)</div>
+              <div class="text-[10px] text-purple-700">Tandai sebagai barang titip jual dari supplier.</div>
+            </div>
+          </label>
         </div>
 
         <!-- SEKSI MULTI-SATUAN (product_units) -->

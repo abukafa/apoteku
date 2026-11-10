@@ -443,7 +443,7 @@
           categoryName: "Obat Bebas & Terbatas",
           drugClass: (lp.drugClass as any) || "OTC",
           requiresPrescription: lp.drugClass === "ETHICAL" || lp.drugClass === "KERAS",
-          isConsignment: false,
+          isConsignment: Boolean(lp.isConsignment),
           manufacturer: "Generik",
           baseUnit: lp.baseUnit,
           description: lp.activeSubstance || "",
@@ -489,6 +489,10 @@
           activeShift = d.cashierShifts;
           shiftInitialCash = d.cashierShifts.initialCash || 0;
           shiftActualCash = d.cashierShifts.expectedCash || d.cashierShifts.initialCash || 0;
+        } else {
+          activeShift = null;
+          shiftInitialCash = 0;
+          shiftActualCash = 0;
         }
         if (d.locations && d.locations.length > 0) {
           const defLoc = d.locations.find((l: any) => l.isDefault) || d.locations[0];
@@ -508,12 +512,17 @@
               rackLocation: p.rackLocation || "RAK-01",
               drugClass: p.drugClass,
               baseUnit: p.baseUnit,
+              isConsignment: Boolean(p.isConsignment),
               isActive: p.isActive,
               units: p.units || [],
               updatedAt: new Date().toISOString()
             }));
             await localDb.products.bulkPut(dexieProds);
           }
+
+          // Selalu bersihkan stok batch dan saldo cabang lokal agar selalu sinkron penuh dengan server
+          await localDb.batchStocks.clear();
+          await localDb.branchStocks.clear();
 
           if (d.branchBatches && d.branchBatches.length > 0) {
             const dexieBatches = d.branchBatches.map((b: any) => ({
@@ -590,11 +599,13 @@
           activeShift = res.shift;
           shiftInitialCash = res.shift.initialCash || 0;
           shiftActualCash = res.shift.expectedCash || res.shift.initialCash || 0;
+        } else {
+          activeShift = null;
         }
       }).catch(() => {});
     }
 
-    // 3. JIKA LOKAL MASIH KOSONG (Hanya saat pertama kali buka web di browser baru):
+    // 3. Sinkronisasi data katalog & stok:
     if (!hasLocal) {
       isLoading = true;
       try {
@@ -607,6 +618,9 @@
       } finally {
         isLoading = false;
       }
+    } else if (networkStore.effectiveOnline) {
+      // Jalankan background sync agar saldo stok lokal langsung mutakhir dengan snapshot server
+      syncFullBootstrapFromServer(false);
     }
   });
 
@@ -1181,7 +1195,10 @@
       {#if networkStore.effectiveOnline}
         <button
           type="button"
-          onclick={() => syncFullBootstrapFromServer(true)}
+          onclick={async () => {
+            await syncFullBootstrapFromServer(true);
+            alertStore.toast("Katalog & saldo stok berhasil disinkronkan dengan server cloud.", "success", "Update Berhasil");
+          }}
           disabled={isSyncingCatalog}
           class="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-medium bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer"
           title="Tarik pembaruan master obat terbaru dari server cloud"
@@ -1310,9 +1327,16 @@
                 <div>
                   <!-- Badge row -->
                   <div class="flex items-center justify-between gap-1 mb-1.5">
-                    <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded border {badge.bg}">
-                      {badge.text.charAt(badge.text.length - 2)}
-                    </span>
+                    <div class="flex items-center gap-1">
+                      <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded border {badge.bg}">
+                        {badge.text.charAt(badge.text.length - 2)}
+                      </span>
+                      {#if prod.isConsignment || prod.batches.some((b) => (b.batchNumber || "").startsWith("KSN-"))}
+                        <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-200">
+                          Titipan
+                        </span>
+                      {/if}
+                    </div>
                     <span
                       class="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded border {stock > 10
                         ? 'text-emerald-700 bg-emerald-50 border-emerald-200'

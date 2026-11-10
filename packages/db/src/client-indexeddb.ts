@@ -11,6 +11,7 @@ export interface LocalProduct {
   rackLocation?: string | null;
   drugClass: string;
   baseUnit: string;
+  isConsignment?: boolean;
   isActive: boolean;
   units: Array<{
     unitName: string;

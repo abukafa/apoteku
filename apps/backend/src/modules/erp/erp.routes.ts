@@ -2,6 +2,7 @@ import { Elysia } from "elysia";
 import { db, schema } from "@apoteku/db";
 import { desc, count, sql, eq, and } from "drizzle-orm";
 import { generateOrderNumber } from "@apoteku/core";
+import { consignmentService } from "./consignment.service.js";
 
 export const erpRoutes = new Elysia({ prefix: "/api" })
   // 1. STATISTIK SISTEM & DASHBOARD
@@ -61,7 +62,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         .from(schema.products)
         .where(eq(schema.products.isActive, true))
         .orderBy(schema.products.name)
-        .limit(500);
+        .limit(5000);
 
       const prodIds = prods.map((p) => p.id);
       const unitsMap = new Map<string, any[]>();
@@ -133,8 +134,12 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             sku: p.sku,
             barcode: p.barcode || "",
             name: p.name,
+            activeSubstance: p.activeSubstance || "",
+            dosageForm: p.dosageForm || "",
+            rackLocation: p.rackLocation || "",
             drugClass: p.drugClass,
             baseUnit: p.baseUnit,
+            isConsignment: Boolean(p.isConsignment),
             buyPrice: defaultBuyPrice,
             units: formattedUnits
           };
@@ -142,6 +147,298 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
       };
     } catch (err: any) {
       return { success: false, error: err.message, data: [] };
+    }
+  })
+
+  // 1D. TAMBAH MASTER PRODUK BARU
+  .post("/products", async ({ body }: { body: any }) => {
+    try {
+      if (!body.name || !String(body.name).trim()) {
+        return { success: false, error: "Nama obat wajib diisi" };
+      }
+      const [tenant] = await db.select({ id: schema.tenants.id }).from(schema.tenants).limit(1);
+      if (!tenant) throw new Error("Tenant aktif tidak ditemukan");
+
+      let sku = (body.sku || "").trim();
+      if (!sku) {
+        sku = `SKU-${Date.now().toString().slice(-6)}`;
+      }
+      const [dupSku] = await db
+        .select({ id: schema.products.id })
+        .from(schema.products)
+        .where(and(eq(schema.products.tenantId, tenant.id), eq(schema.products.sku, sku)))
+        .limit(1);
+      if (dupSku) {
+        sku = `${sku}-${Date.now().toString().slice(-3)}`;
+      }
+
+      const baseUnit = String(body.baseUnit || body.units?.[0]?.unitName || "PCS").trim().toUpperCase();
+      const prodId = crypto.randomUUID();
+      const now = new Date();
+
+      const created = await db.transaction(async (tx) => {
+        const [p] = await tx
+          .insert(schema.products)
+          .values({
+            id: prodId,
+            tenantId: tenant.id,
+            sku,
+            barcode: body.barcode ? String(body.barcode).trim() : null,
+            name: String(body.name).trim(),
+            activeSubstance: body.genericName || body.activeSubstance || null,
+            dosageForm: body.dosageForm || null,
+            drugClass: body.drugClass || "BEBAS",
+            baseUnit,
+            isConsignment: Boolean(body.isConsignment),
+            isActive: body.isActive ?? true,
+            updatedAt: now
+          })
+          .returning();
+
+        const rawUnits =
+          Array.isArray(body.units) && body.units.length > 0
+            ? body.units
+            : [
+                {
+                  unitName: baseUnit,
+                  conversionFactor: 1,
+                  salePriceGeneral: Number(body.unitPrices?.general || 0),
+                  salePriceResep: Number(body.unitPrices?.prescription || 0),
+                  salePriceGrosir: Number(body.unitPrices?.wholesale || 0),
+                  salePriceDelivery: Number(body.unitPrices?.general || 0),
+                  salePriceMember: Number(body.unitPrices?.wholesale || 0),
+                  isBaseUnit: true
+                }
+              ];
+
+        const seenUnitNames = new Set<string>();
+        for (let i = 0; i < rawUnits.length; i++) {
+          const u = rawUnits[i];
+          const unitName = String(u.unitName || (i === 0 ? baseUnit : `UNIT${i + 1}`)).trim().toUpperCase();
+          if (seenUnitNames.has(unitName)) continue;
+          seenUnitNames.add(unitName);
+
+          await tx.insert(schema.productUnits).values({
+            id: crypto.randomUUID(),
+            tenantId: tenant.id,
+            productId: prodId,
+            unitName,
+            conversionFactor: String(i === 0 ? 1 : Math.max(1, Number(u.conversionFactor || 1))),
+            salePriceGeneral: String(Number(u.salePriceGeneral || 0)),
+            salePriceResep: String(Number(u.salePriceResep || u.salePriceGeneral || 0)),
+            salePriceGrosir: String(Number(u.salePriceGrosir || u.salePriceGeneral || 0)),
+            salePriceDelivery: String(Number(u.salePriceDelivery || u.salePriceGeneral || 0)),
+            salePriceMember: String(Number(u.salePriceMember || u.salePriceGrosir || u.salePriceGeneral || 0)),
+            isBaseUnit: i === 0 || Boolean(u.isBaseUnit)
+          });
+        }
+
+        const initStock = Number(body.initialStock || 0);
+        if (initStock > 0) {
+          let branchId = body.branchId;
+          if (!branchId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(branchId)) {
+            const [b] = await tx.select({ id: schema.branches.id }).from(schema.branches).limit(1);
+            branchId = b?.id;
+          }
+          if (branchId) {
+            let [loc] = await tx
+              .select({ id: schema.inventoryLocations.id })
+              .from(schema.inventoryLocations)
+              .where(eq(schema.inventoryLocations.branchId, branchId))
+              .limit(1);
+            if (!loc) {
+              const newLocId = crypto.randomUUID();
+              await tx.insert(schema.inventoryLocations).values({
+                id: newLocId,
+                tenantId: tenant.id,
+                branchId,
+                code: "DEPO-UTAMA",
+                name: "Etalase Depo Utama",
+                isDefault: true,
+                isActive: true
+              });
+              loc = { id: newLocId };
+            }
+
+            const batchId = crypto.randomUUID();
+            await tx.insert(schema.productBatches).values({
+              id: batchId,
+              tenantId: tenant.id,
+              productId: prodId,
+              batchNo: String(body.initialBatch || `BCH-${Date.now().toString().slice(-6)}`).trim().toUpperCase(),
+              expiredDate: body.initialExpiry || "2028-01-01"
+            });
+
+            await tx.insert(schema.branchBatchStocks).values({
+              id: crypto.randomUUID(),
+              tenantId: tenant.id,
+              branchId,
+              locationId: loc.id,
+              productId: prodId,
+              batchId,
+              qtyBase: String(initStock),
+              buyPrice: String(Number(body.buyPrice || 0)),
+              updatedAt: now
+            });
+
+            await tx.insert(schema.branchStocks).values({
+              id: crypto.randomUUID(),
+              tenantId: tenant.id,
+              branchId,
+              locationId: loc.id,
+              productId: prodId,
+              totalQtyBase: String(initStock),
+              unbatchedQtyBase: "0",
+              updatedAt: now
+            });
+          }
+        }
+
+        return p;
+      });
+
+      return {
+        success: true,
+        message: `Produk "${created.name}" berhasil ditambahkan ke database.`,
+        data: {
+          ...created,
+          isConsignment: Boolean(created.isConsignment)
+        }
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  })
+
+  // 1E. UPDATE MASTER PRODUK
+  .put("/products/:id", async ({ params, body }: { params: { id: string }; body: any }) => {
+    try {
+      const [existing] = await db
+        .select()
+        .from(schema.products)
+        .where(eq(schema.products.id, params.id))
+        .limit(1);
+
+      if (!existing) {
+        return { success: false, error: "Produk tidak ditemukan di database" };
+      }
+
+      const now = new Date();
+      const updated = await db.transaction(async (tx) => {
+        const updateFields: any = { updatedAt: now };
+        if (body.name !== undefined) updateFields.name = String(body.name).trim();
+        if (body.sku !== undefined) updateFields.sku = String(body.sku).trim();
+        if (body.barcode !== undefined) updateFields.barcode = body.barcode ? String(body.barcode).trim() : null;
+        if (body.genericName !== undefined || body.activeSubstance !== undefined) {
+          updateFields.activeSubstance = body.genericName ?? body.activeSubstance ?? null;
+        }
+        if (body.drugClass !== undefined) updateFields.drugClass = body.drugClass;
+        if (body.baseUnit !== undefined) updateFields.baseUnit = String(body.baseUnit).trim().toUpperCase();
+        if (body.isConsignment !== undefined) updateFields.isConsignment = Boolean(body.isConsignment);
+        if (body.isActive !== undefined) updateFields.isActive = Boolean(body.isActive);
+
+        const [p] = await tx
+          .update(schema.products)
+          .set(updateFields)
+          .where(eq(schema.products.id, params.id))
+          .returning();
+
+        if (Array.isArray(body.units) && body.units.length > 0) {
+          await tx
+            .delete(schema.productUnits)
+            .where(eq(schema.productUnits.productId, params.id));
+
+          const seenUnits = new Set<string>();
+          for (let i = 0; i < body.units.length; i++) {
+            const u = body.units[i];
+            const unitName = String(u.unitName || u.unit || (i === 0 ? p.baseUnit : `UNIT${i + 1}`))
+              .trim()
+              .toUpperCase();
+            if (seenUnits.has(unitName)) continue;
+            seenUnits.add(unitName);
+
+            await tx.insert(schema.productUnits).values({
+              id: crypto.randomUUID(),
+              tenantId: existing.tenantId,
+              productId: params.id,
+              unitName,
+              conversionFactor: String(i === 0 ? 1 : Math.max(1, Number(u.conversionFactor || 1))),
+              salePriceGeneral: String(Number(u.salePriceGeneral || 0)),
+              salePriceResep: String(Number(u.salePriceResep || u.salePriceGeneral || 0)),
+              salePriceGrosir: String(Number(u.salePriceGrosir || u.salePriceGeneral || 0)),
+              salePriceDelivery: String(Number(u.salePriceDelivery || u.salePriceGeneral || 0)),
+              salePriceMember: String(Number(u.salePriceMember || u.salePriceGrosir || u.salePriceGeneral || 0)),
+              isBaseUnit: i === 0 || Boolean(u.isBaseUnit)
+            });
+          }
+        }
+
+        return p;
+      });
+
+      return {
+        success: true,
+        message: `Produk "${updated.name}" berhasil diperbarui.`,
+        data: {
+          ...updated,
+          isConsignment: Boolean(updated.isConsignment)
+        }
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  })
+
+  // 1F. HAPUS / NONAKTIFKAN PRODUK
+  .delete("/products/:id", async ({ params }: { params: { id: string } }) => {
+    try {
+      const [existing] = await db
+        .select()
+        .from(schema.products)
+        .where(eq(schema.products.id, params.id))
+        .limit(1);
+
+      if (!existing) {
+        return { success: false, error: "Produk tidak ditemukan" };
+      }
+
+      const [saleRef] = await db
+        .select({ count: sql<number>`COUNT(*)::int` })
+        .from(schema.salesTransactionItems)
+        .where(eq(schema.salesTransactionItems.productId, params.id));
+      const [purRef] = await db
+        .select({ count: sql<number>`COUNT(*)::int` })
+        .from(schema.purchaseInvoiceItems)
+        .where(eq(schema.purchaseInvoiceItems.productId, params.id));
+      const [ksnRef] = await db
+        .select({ count: sql<number>`COUNT(*)::int` })
+        .from(schema.consignmentReceiptItems)
+        .where(eq(schema.consignmentReceiptItems.productId, params.id));
+
+      const hasHistory =
+        Number(saleRef?.count || 0) + Number(purRef?.count || 0) + Number(ksnRef?.count || 0) > 0;
+
+      if (hasHistory) {
+        await db
+          .update(schema.products)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(eq(schema.products.id, params.id));
+
+        return {
+          success: true,
+          action: "soft_deleted",
+          message: `Produk "${existing.name}" dinonaktifkan karena sudah memiliki riwayat transaksi.`
+        };
+      }
+
+      await db.delete(schema.products).where(eq(schema.products.id, params.id));
+      return {
+        success: true,
+        action: "hard_deleted",
+        message: `Produk "${existing.name}" berhasil dihapus.`
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
     }
   })
 
@@ -167,6 +464,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           paymentTermDays: s.paymentTermDays,
           contactPerson: s.contactPerson || "",
           pbfLicense: s.code,
+          isConsignment: Boolean(s.isConsignment),
           isActive: s.isActive
         }))
       };
@@ -214,6 +512,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           contactPerson: body.contactPerson ? body.contactPerson.trim() : null,
           paymentTermDays: Number(body.paymentTermDays ?? body.topDays ?? 30),
           leadTimeDays: Number(body.leadTimeDays ?? 3),
+          isConsignment: Boolean(body.isConsignment),
           isActive: body.isActive ?? true
         })
         .returning();
@@ -232,6 +531,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           paymentTermDays: created.paymentTermDays,
           contactPerson: created.contactPerson || "",
           pbfLicense: created.code,
+          isConsignment: Boolean(created.isConsignment),
           isActive: created.isActive
         }
       };
@@ -264,6 +564,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         updateData.paymentTermDays = Number(body.paymentTermDays ?? body.topDays);
       }
       if (body.leadTimeDays !== undefined) updateData.leadTimeDays = Number(body.leadTimeDays);
+      if (body.isConsignment !== undefined) updateData.isConsignment = Boolean(body.isConsignment);
       if (body.isActive !== undefined) updateData.isActive = Boolean(body.isActive);
 
       const [updated] = await db
@@ -286,6 +587,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           paymentTermDays: updated.paymentTermDays,
           contactPerson: updated.contactPerson || "",
           pbfLicense: updated.code,
+          isConsignment: Boolean(updated.isConsignment),
           isActive: updated.isActive
         }
       };
@@ -317,7 +619,13 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         .from(schema.purchaseOrders)
         .where(eq(schema.purchaseOrders.supplierId, params.id));
 
-      const hasHistory = (Number(invoiceUsage?.count || 0) + Number(poUsage?.count || 0)) > 0;
+      const [ksnUsage] = await db
+        .select({ count: sql<number>`COUNT(*)::int` })
+        .from(schema.consignmentReceipts)
+        .where(eq(schema.consignmentReceipts.supplierId, params.id));
+
+      const hasHistory =
+        (Number(invoiceUsage?.count || 0) + Number(poUsage?.count || 0) + Number(ksnUsage?.count || 0)) > 0;
 
       if (hasHistory) {
         await db
@@ -811,7 +1119,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
     }
   })
 
-  // 5A-2. BATALKAN / VOID FAKTUR PEMBELIAN (REVERSI STOK & AUDIT TRAIL)
+  // 5A-2. BATALKAN / VOID FAKTUR PEMBELIAN (REVERSI STOK, PULIHKAN SP, & AUDIT TRAIL)
   .delete("/purchases/:id", async ({ params }) => {
     try {
       const [invoice] = await db
@@ -824,12 +1132,21 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         return { success: false, error: "Faktur pembelian tidak ditemukan" };
       }
 
-      if (Number(invoice.paidAmount) > 0) {
+      const [paymentCount] = await db
+        .select({ count: sql<number>`COUNT(*)::int` })
+        .from(schema.debtPayments)
+        .where(eq(schema.debtPayments.purchaseInvoiceId, invoice.id));
+
+      if (Number(invoice.paidAmount) > 0 || Number(paymentCount?.count || 0) > 0) {
         return {
           success: false,
           error: "Faktur yang sudah memiliki riwayat pembayaran tidak dapat dihapus langsung. Batalkan pembayaran terlebih dahulu."
         };
       }
+
+      const now = new Date();
+      let restoredPoStatus: string | null = null;
+      let restoredPoNumber: string | null = null;
 
       await db.transaction(async (tx) => {
         const items = await tx
@@ -837,8 +1154,11 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           .from(schema.purchaseInvoiceItems)
           .where(eq(schema.purchaseInvoiceItems.invoiceId, invoice.id));
 
+        // 1. Validasi stok batch mencukupi sebelum menarik stok (cegah void faktur yang sudah terjual)
         for (const item of items) {
-          const qtyBase = Number(item.qtyBase);
+          const qtyBase = Number(item.qtyBase || 0);
+          if (qtyBase <= 0) continue;
+
           if (item.batchId) {
             const [batchStock] = await tx
               .select()
@@ -846,6 +1166,33 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
               .where(
                 and(
                   eq(schema.branchBatchStocks.branchId, invoice.branchId),
+                  eq(schema.branchBatchStocks.locationId, item.locationId),
+                  eq(schema.branchBatchStocks.productId, item.productId),
+                  eq(schema.branchBatchStocks.batchId, item.batchId)
+                )
+              )
+              .limit(1);
+
+            const availableBatch = Number(batchStock?.qtyBase || 0);
+            if (!batchStock || availableBatch < qtyBase - 0.0001) {
+              throw new Error(
+                `Faktur ${invoice.invoiceNumber} tidak dapat dibatalkan karena sebagian stok batch dari faktur ini sudah berkurang atau terjual (tersedia ${availableBatch}, dibutuhkan ${qtyBase}).`
+              );
+            }
+          }
+        }
+
+        // 2. Reversi stok fisik per item, tulis stock_ledger, dan sentuh updatedAt produk
+        for (const item of items) {
+          const qtyBase = Number(item.qtyBase || 0);
+          if (item.batchId) {
+            const [batchStock] = await tx
+              .select()
+              .from(schema.branchBatchStocks)
+              .where(
+                and(
+                  eq(schema.branchBatchStocks.branchId, invoice.branchId),
+                  eq(schema.branchBatchStocks.locationId, item.locationId),
                   eq(schema.branchBatchStocks.productId, item.productId),
                   eq(schema.branchBatchStocks.batchId, item.batchId)
                 )
@@ -853,11 +1200,17 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
               .limit(1);
 
             if (batchStock) {
-              const newQty = Math.max(0, Number(batchStock.qtyBase) - qtyBase);
-              await tx
-                .update(schema.branchBatchStocks)
-                .set({ qtyBase: String(newQty), updatedAt: new Date() })
-                .where(eq(schema.branchBatchStocks.id, batchStock.id));
+              const newQty = Number(batchStock.qtyBase) - qtyBase;
+              if (newQty <= 0.0001) {
+                await tx
+                  .delete(schema.branchBatchStocks)
+                  .where(eq(schema.branchBatchStocks.id, batchStock.id));
+              } else {
+                await tx
+                  .update(schema.branchBatchStocks)
+                  .set({ qtyBase: String(newQty), updatedAt: now })
+                  .where(eq(schema.branchBatchStocks.id, batchStock.id));
+              }
             }
           }
 
@@ -866,7 +1219,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             .from(schema.branchStocks)
             .where(
               and(
-                eq(schema.branchStocks.branchId, invoice.branchId),
+                eq(schema.branchStocks.locationId, item.locationId),
                 eq(schema.branchStocks.productId, item.productId)
               )
             )
@@ -876,9 +1229,12 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             const newTotal = Math.max(0, Number(branchStock.totalQtyBase) - qtyBase);
             await tx
               .update(schema.branchStocks)
-              .set({ totalQtyBase: String(newTotal), updatedAt: new Date() })
+              .set({ totalQtyBase: String(newTotal), updatedAt: now })
               .where(eq(schema.branchStocks.id, branchStock.id));
           }
+
+          const voidFactor = Math.max(1, Number(item.conversionFactor || 1));
+          const voidCostPerBase = Number(item.buyPrice || 0) / voidFactor;
 
           await tx.insert(schema.stockLedger).values({
             id: crypto.randomUUID(),
@@ -887,23 +1243,124 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             locationId: item.locationId,
             productId: item.productId,
             batchId: item.batchId,
-            mutationType: "DEFICIT_OVERSELL",
+            mutationType: "PURCHASE_VOID",
             quantityBase: String(-qtyBase),
-            costPerUnit: String(item.buyPrice),
+            costPerUnit: String(voidCostPerBase),
             referenceId: invoice.id,
             notes: `Pembatalan / Void Faktur Pembelian ${invoice.invoiceNumber}`,
             createdBy: invoice.receivedBy || invoice.tenantId,
-            createdAt: new Date()
+            createdAt: now
           });
+
+          await tx
+            .update(schema.products)
+            .set({ updatedAt: now })
+            .where(eq(schema.products.id, item.productId));
         }
 
+        // 3. Cari SP terkait (via purchaseOrderId atau fallback tag catatan faktur di purchase_order_items)
+        let targetPoId = invoice.purchaseOrderId || null;
+        if (!targetPoId) {
+          const noteNeedle = `%[Faktur ${invoice.invoiceNumber}:%`;
+          const [matchedPoItem] = await tx
+            .select({ purchaseOrderId: schema.purchaseOrderItems.purchaseOrderId })
+            .from(schema.purchaseOrderItems)
+            .where(sql`${schema.purchaseOrderItems.notes} ILIKE ${noteNeedle}`)
+            .limit(1);
+          if (matchedPoItem) {
+            targetPoId = matchedPoItem.purchaseOrderId;
+          }
+        }
+
+        // 4. Hapus item faktur & header faktur
         await tx.delete(schema.purchaseInvoiceItems).where(eq(schema.purchaseInvoiceItems.invoiceId, invoice.id));
         await tx.delete(schema.purchaseInvoices).where(eq(schema.purchaseInvoices.id, invoice.id));
+
+        // 5. Pulihkan qtyReceived, catatan, dan status Surat Pesanan (PO) terkait
+        if (targetPoId) {
+          const [poHeader] = await tx
+            .select()
+            .from(schema.purchaseOrders)
+            .where(eq(schema.purchaseOrders.id, targetPoId))
+            .limit(1);
+
+          if (poHeader) {
+            restoredPoNumber = poHeader.poNumber;
+            const remainingInvoices = await tx
+              .select({ id: schema.purchaseInvoices.id })
+              .from(schema.purchaseInvoices)
+              .where(eq(schema.purchaseInvoices.purchaseOrderId, targetPoId));
+
+            const remainingQtyByProduct = new Map<string, number>();
+            if (remainingInvoices.length > 0) {
+              const remInvIds = remainingInvoices.map((r) => r.id);
+              const remInvItems = await tx
+                .select({
+                  productId: schema.purchaseInvoiceItems.productId,
+                  qty: schema.purchaseInvoiceItems.qty
+                })
+                .from(schema.purchaseInvoiceItems)
+                .where(sql`${schema.purchaseInvoiceItems.invoiceId} IN ${remInvIds}`);
+
+              for (const rit of remInvItems) {
+                remainingQtyByProduct.set(
+                  rit.productId,
+                  (remainingQtyByProduct.get(rit.productId) || 0) + Number(rit.qty || 0)
+                );
+              }
+            }
+
+            const poItems = await tx
+              .select()
+              .from(schema.purchaseOrderItems)
+              .where(eq(schema.purchaseOrderItems.purchaseOrderId, targetPoId))
+              .orderBy(schema.purchaseOrderItems.lineNo);
+
+            let allFulfilled = poItems.length > 0;
+            let anyReceived = false;
+
+            for (let idx = 0; idx < poItems.length; idx++) {
+              const pit = poItems[idx];
+              const ordered = Number(pit.qtyOrdered || 0);
+              const availForProd = remainingQtyByProduct.get(pit.productId) || 0;
+              const isLastRowForProd = !poItems.slice(idx + 1).some((x) => x.productId === pit.productId);
+              const newReceived = isLastRowForProd ? availForProd : Math.min(ordered, availForProd);
+              remainingQtyByProduct.set(pit.productId, Math.max(0, availForProd - newReceived));
+
+              if (newReceived > 0) anyReceived = true;
+              if (newReceived < ordered) allFulfilled = false;
+
+              const cleanedNotes = (pit.notes || "")
+                .split(" | ")
+                .map((s) => s.trim())
+                .filter((s) => s && !s.startsWith(`[Faktur ${invoice.invoiceNumber}:`))
+                .join(" | ");
+
+              await tx
+                .update(schema.purchaseOrderItems)
+                .set({
+                  qtyReceived: String(newReceived),
+                  notes: cleanedNotes || null
+                })
+                .where(eq(schema.purchaseOrderItems.id, pit.id));
+            }
+
+            restoredPoStatus = allFulfilled ? "RECEIVED" : anyReceived ? "PARTIAL" : "ORDERED";
+            await tx
+              .update(schema.purchaseOrders)
+              .set({ status: restoredPoStatus })
+              .where(eq(schema.purchaseOrders.id, targetPoId));
+          }
+        }
       });
+
+      const poSuffix = restoredPoNumber
+        ? ` dan status ${restoredPoNumber} dikembalikan ke ${restoredPoStatus}.`
+        : ".";
 
       return {
         success: true,
-        message: `Faktur Pembelian ${invoice.invoiceNumber} berhasil dibatalkan dan stok dikembalikan.`
+        message: `Faktur Pembelian ${invoice.invoiceNumber} berhasil dibatalkan, stok ditarik kembali${poSuffix}`
       };
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -997,6 +1454,24 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
 
       // Jalankan transaksi database atomik
       const result = await db.transaction(async (tx) => {
+        // Resolve Surat Pesanan (PO) lebih awal agar purchaseOrderId pada faktur selalu terisi konsisten
+        let targetPoId: string | null = null;
+        if (body.purchaseOrderId && isUuid(body.purchaseOrderId)) {
+          targetPoId = body.purchaseOrderId;
+        } else if (body.poNumber && body.poNumber !== "NONE") {
+          const [foundPo] = await tx
+            .select({ id: schema.purchaseOrders.id })
+            .from(schema.purchaseOrders)
+            .where(
+              and(
+                eq(schema.purchaseOrders.tenantId, tenantId),
+                eq(schema.purchaseOrders.poNumber, body.poNumber)
+              )
+            )
+            .limit(1);
+          if (foundPo) targetPoId = foundPo.id;
+        }
+
         // A. Insert ke purchase_invoices
         const [createdInvoice] = await tx
           .insert(schema.purchaseInvoices)
@@ -1005,7 +1480,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             tenantId,
             branchId,
             supplierId,
-            purchaseOrderId: isUuid(body.purchaseOrderId) ? body.purchaseOrderId : null,
+            purchaseOrderId: targetPoId,
             invoiceNumber,
             receiveDate,
             invoiceDate,
@@ -1050,10 +1525,31 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
 
           const batchNo = (item.batchNo || item.batchNumber || `BCH-${Date.now().toString().slice(-4)}`).trim().toUpperCase();
           const expDate = item.expiredDate || item.expiryDate || "2027-12-31";
-          const conversionFactor = Math.max(1, Number(item.conversionFactor || 1));
+          const rawUnitName = String(item.unitName || item.unit || "").trim().toUpperCase();
+
+          // Resolve authoritative conversionFactor dari product_units sesuai satuan faktur (mis. BOX = 100 TABLET)
+          const prodUnits = await tx
+            .select()
+            .from(schema.productUnits)
+            .where(eq(schema.productUnits.productId, productId));
+          const matchedUnit =
+            prodUnits.find((pu) => String(pu.unitName || "").trim().toUpperCase() === rawUnitName) ||
+            prodUnits.find((pu) => pu.isBaseUnit) ||
+            prodUnits[0];
+
+          const unitName = matchedUnit?.unitName || rawUnitName || "BOX";
+          const dbFactor = matchedUnit ? Number(matchedUnit.conversionFactor || 1) : 1;
+          const conversionFactor = Math.max(
+            1,
+            dbFactor > 1 ? dbFactor : Number(item.conversionFactor || dbFactor || 1)
+          );
           const qty = Number(item.qty || 1);
-          const qtyBase = Number(item.qtyBase || (qty * conversionFactor));
+          const qtyBase =
+            item.qtyBase && Number(item.qtyBase) >= qty * conversionFactor
+              ? Number(item.qtyBase)
+              : qty * conversionFactor;
           const buyPrice = Number(item.buyPrice || 0);
+          const costPerBase = conversionFactor > 0 ? buyPrice / conversionFactor : buyPrice;
           const itemDiscountPercent = Number(item.discountPercent || 0);
           const itemDiscountAmount = Number(item.discountAmount || 0);
           const itemSubtotal = Number(item.subtotal || (qty * buyPrice - itemDiscountAmount));
@@ -1084,7 +1580,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             });
           }
 
-          // C. Insert ke purchase_invoice_items
+          // C. Insert ke purchase_invoice_items (buyPrice = harga beli per unitName faktur)
           const itemId = crypto.randomUUID();
           await tx.insert(schema.purchaseInvoiceItems).values({
             id: itemId,
@@ -1093,7 +1589,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             locationId,
             batchId,
             lineNo: lineNo++,
-            unitName: item.unitName || item.unit || "BOX",
+            unitName,
             conversionFactor: String(conversionFactor),
             qty: String(qty),
             qtyBase: String(qtyBase),
@@ -1103,7 +1599,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             subtotal: String(itemSubtotal)
           });
 
-          // D. Update or Insert ke branch_batch_stocks (Saldo Fisik Obat per Batch)
+          // D. Update or Insert ke branch_batch_stocks (buyPrice = harga pokok per satuan dasar)
           const [existingBatchStock] = await tx
             .select({ id: schema.branchBatchStocks.id, qtyBase: schema.branchBatchStocks.qtyBase })
             .from(schema.branchBatchStocks)
@@ -1123,7 +1619,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
               .update(schema.branchBatchStocks)
               .set({
                 qtyBase: String(newBatchQty),
-                buyPrice: String(buyPrice),
+                buyPrice: String(costPerBase),
                 updatedAt: new Date()
               })
               .where(eq(schema.branchBatchStocks.id, existingBatchStock.id));
@@ -1136,7 +1632,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
               productId,
               batchId,
               qtyBase: String(qtyBase),
-              buyPrice: String(buyPrice),
+              buyPrice: String(costPerBase),
               updatedAt: new Date()
             });
           }
@@ -1185,9 +1681,9 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             batchId,
             mutationType: "PURCHASE_RECEIPT",
             quantityBase: String(qtyBase),
-            costPerUnit: String(buyPrice),
+            costPerUnit: String(costPerBase),
             referenceId: invoiceId,
-            notes: `Penerimaan Faktur ${invoiceNumber} dari PBF`,
+            notes: `Penerimaan Faktur ${invoiceNumber} dari PBF (${qty} ${unitName} = ${qtyBase} satuan dasar)`,
             createdBy: receivedBy,
             createdAt: now
           });
@@ -1210,23 +1706,6 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         }
 
         // H. Rekonsiliasi Pesanan (Discrepancy Resolution) jika terkait Surat Pesanan (PO)
-        let targetPoId: string | null = null;
-        if (body.purchaseOrderId && isUuid(body.purchaseOrderId)) {
-          targetPoId = body.purchaseOrderId;
-        } else if (body.poNumber && body.poNumber !== "NONE") {
-          const [foundPo] = await tx
-            .select({ id: schema.purchaseOrders.id })
-            .from(schema.purchaseOrders)
-            .where(
-              and(
-                eq(schema.purchaseOrders.tenantId, tenantId),
-                eq(schema.purchaseOrders.poNumber, body.poNumber)
-              )
-            )
-            .limit(1);
-          if (foundPo) targetPoId = foundPo.id;
-        }
-
         if (targetPoId) {
           const poItems = await tx
             .select()
@@ -1533,7 +2012,12 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
       const createdBy = adminUser ? adminUser.id : crypto.randomUUID();
       const poId = crypto.randomUUID();
 
-      let poNumber = (body.poNumber || generateOrderNumber(body.orderType || "REGULER")).trim();
+      let poNumber = (
+        body.poNumber ||
+        (body.orderType === "KONSINYASI"
+          ? `SP-KSN-HF-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`
+          : generateOrderNumber(body.orderType || "REGULER"))
+      ).trim();
       let isDuplicate = true;
       let counter = 1;
       const basePoNumber = poNumber;
@@ -1637,82 +2121,10 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
     }
   })
 
-  // 8. LIST KONSINYASI MASUK
-  .get("/consignments", async () => {
+  // 8. LIST KONSINYASI MASUK (TERINTEGRASI DENGAN STOK & PENJUALAN POS RIIL)
+  .get("/consignments", async ({ query }) => {
     try {
-      const receipts = await db
-        .select({
-          id: schema.consignmentReceipts.id,
-          receiptNumber: schema.consignmentReceipts.receiptNumber,
-          branchId: schema.consignmentReceipts.branchId,
-          branchName: schema.branches.name,
-          supplierId: schema.consignmentReceipts.supplierId,
-          supplierName: schema.suppliers.name,
-          receiptDate: schema.consignmentReceipts.receiptDate,
-          notes: schema.consignmentReceipts.notes
-        })
-        .from(schema.consignmentReceipts)
-        .leftJoin(schema.suppliers, eq(schema.consignmentReceipts.supplierId, schema.suppliers.id))
-        .leftJoin(schema.branches, eq(schema.consignmentReceipts.branchId, schema.branches.id))
-        .orderBy(desc(schema.consignmentReceipts.receiptDate), desc(schema.consignmentReceipts.createdAt));
-
-      const receiptIds = receipts.map((r) => r.id);
-      const itemsMap = new Map<string, any[]>();
-
-      if (receiptIds.length > 0) {
-        const items = await db
-          .select({
-            id: schema.consignmentReceiptItems.id,
-            receiptId: schema.consignmentReceiptItems.receiptId,
-            productId: schema.consignmentReceiptItems.productId,
-            productName: schema.products.name,
-            qtyReceived: schema.consignmentReceiptItems.qtyReceived,
-            costPrice: schema.consignmentReceiptItems.costPrice,
-            subtotalCost: schema.consignmentReceiptItems.subtotalCost
-          })
-          .from(schema.consignmentReceiptItems)
-          .leftJoin(schema.products, eq(schema.consignmentReceiptItems.productId, schema.products.id))
-          .where(sql`${schema.consignmentReceiptItems.receiptId} IN ${receiptIds}`);
-
-        for (const it of items) {
-          const list = itemsMap.get(it.receiptId) || [];
-          list.push(it);
-          itemsMap.set(it.receiptId, list);
-        }
-      }
-
-      const list: any[] = [];
-      for (const r of receipts) {
-        const rItems = itemsMap.get(r.id) || [];
-        for (const it of rItems) {
-          const received = Number(it.qtyReceived);
-          const cost = Number(it.costPrice);
-          const selling = Math.round(cost * 1.3);
-          const isSettled = (r.notes || "").includes("[SETTLED]");
-          const sold = isSettled ? received : Math.round(received * 0.4);
-          const remaining = received - sold;
-          const unsettled = isSettled ? 0 : (sold * cost);
-
-          list.push({
-            id: it.id,
-            receiptId: r.id,
-            receiptNumber: r.receiptNumber,
-            branchId: r.branchId,
-            branchName: r.branchName || "Apotek Hafidz Farma",
-            supplierName: r.supplierName || "Vendor Titipan",
-            date: r.receiptDate,
-            productName: it.productName || "Obat Titipan",
-            receivedQty: received,
-            soldQty: sold,
-            remainingQty: remaining,
-            unitPrice: cost,
-            sellingPrice: selling,
-            unsettledAmount: unsettled,
-            status: isSettled ? "SETTLED" : "ACTIVE"
-          });
-        }
-      }
-
+      const list = await consignmentService.listConsignments(query?.branchId);
       return {
         success: true,
         data: list
@@ -1722,148 +2134,54 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
     }
   })
 
-  // 8B. PENERIMAAN KONSINYASI TITIPAN BARU
-  .post("/consignments", async ({ body }: { body: any }) => {
+  // 8A. RIWAYAT SETORAN & RETUR KONSINYASI
+  .get("/consignments/settlements", async ({ query }) => {
     try {
-      const isUuid = (val?: string) =>
-        Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
-
-      const [tenant] = await db.select({ id: schema.tenants.id }).from(schema.tenants).limit(1);
-      if (!tenant) throw new Error("Tenant aktif tidak ditemukan");
-
-      let branchId = isUuid(body.branchId) ? body.branchId : undefined;
-      if (!branchId) {
-        const [b] = await db.select({ id: schema.branches.id }).from(schema.branches).limit(1);
-        branchId = b ? b.id : crypto.randomUUID();
-      }
-
-      let locationId = isUuid(body.locationId) ? body.locationId : undefined;
-      if (!locationId) {
-        const [loc] = await db
-          .select({ id: schema.inventoryLocations.id })
-          .from(schema.inventoryLocations)
-          .where(eq(schema.inventoryLocations.branchId, branchId))
-          .limit(1);
-        locationId = loc ? loc.id : crypto.randomUUID();
-      }
-
-      let supplierId = isUuid(body.supplierId) ? body.supplierId : undefined;
-      if (!supplierId && body.supplierName) {
-        const [s] = await db
-          .select({ id: schema.suppliers.id })
-          .from(schema.suppliers)
-          .where(sql`${schema.suppliers.name} ILIKE ${body.supplierName}`)
-          .limit(1);
-        if (s) supplierId = s.id;
-      }
-      if (!supplierId) {
-        const [anySup] = await db.select({ id: schema.suppliers.id }).from(schema.suppliers).limit(1);
-        supplierId = anySup ? anySup.id : crypto.randomUUID();
-      }
-
-      const [user] = await db.select({ id: schema.users.id }).from(schema.users).limit(1);
-      const receivedBy = user ? user.id : crypto.randomUUID();
-
-      let productId = isUuid(body.productId) ? body.productId : undefined;
-      if (!productId && body.productName) {
-        const [p] = await db
-          .select({ id: schema.products.id })
-          .from(schema.products)
-          .where(sql`${schema.products.name} ILIKE ${body.productName}`)
-          .limit(1);
-        if (p) productId = p.id;
-      }
-      if (!productId) {
-        const [firstP] = await db.select({ id: schema.products.id }).from(schema.products).limit(1);
-        productId = firstP ? firstP.id : crypto.randomUUID();
-      }
-
-      const receiptId = crypto.randomUUID();
-      const receiptNumber = body.receiptNumber || `KSN-HF-${Date.now().toString().slice(-4)}`;
-      const receiptDate = body.date || new Date().toISOString().slice(0, 10);
-      const qty = Number(body.receivedQty || 1);
-      const unitPrice = Number(body.unitPrice || 0);
-
-      const batchId = crypto.randomUUID();
-      await db.insert(schema.productBatches).values({
-        id: batchId,
-        tenantId: tenant.id,
-        productId,
-        batchNo: `KSN-${Date.now().toString().slice(-4)}`,
-        expiredDate: "2027-12-31"
-      });
-
-      await db.insert(schema.consignmentReceipts).values({
-        id: receiptId,
-        tenantId: tenant.id,
-        branchId,
-        supplierId,
-        locationId,
-        receiptNumber,
-        receiptDate,
-        notes: body.notes || "Penerimaan barang konsinyasi",
-        receivedBy
-      });
-
-      const itemId = crypto.randomUUID();
-      await db.insert(schema.consignmentReceiptItems).values({
-        id: itemId,
-        receiptId,
-        productId,
-        batchId,
-        lineNo: 1,
-        qtyReceived: String(qty),
-        costPrice: String(unitPrice),
-        subtotalCost: String(qty * unitPrice)
-      });
-
+      const data = await consignmentService.listSettlements(query?.branchId);
       return {
         success: true,
-        message: `Penerimaan titipan konsinyasi ${receiptNumber} berhasil disimpan.`,
-        data: {
-          id: itemId,
-          receiptId,
-          receiptNumber,
-          branchId,
-          supplierName: body.supplierName,
-          productName: body.productName,
-          receivedQty: qty,
-          unitPrice,
-          sellingPrice: Number(body.sellingPrice || (unitPrice * 1.3)),
-          remainingQty: qty,
-          soldQty: 0,
-          unsettledAmount: 0,
-          status: "ACTIVE"
-        }
+        data
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message, data: [] };
+    }
+  })
+
+  // 8B. PENERIMAAN KONSINYASI TITIPAN BARU (+ TAMBAH STOK BATCH & KARTU STOK)
+  .post("/consignments", async ({ body }: { body: any }) => {
+    try {
+      const result = await consignmentService.createConsignment(body);
+      return {
+        success: true,
+        message: `Penerimaan titipan konsinyasi ${result.receiptNumber} (${result.itemsCount} item) berhasil disimpan & stok jual langsung bertambah.`,
+        data: result
       };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
   })
 
-  // 8C. PENYETORAN BAGI HASIL KONSINYASI
-  .post("/consignments/:id/settle", async ({ params }) => {
+  // 8C. PENYETORAN BAGI HASIL & RETUR SISA KONSINYASI (+ CATAT KE /keuangan)
+  .post("/consignments/:id/settle", async ({ params, body }: { params: { id: string }; body: any }) => {
     try {
-      const [item] = await db
-        .select()
-        .from(schema.consignmentReceiptItems)
-        .where(eq(schema.consignmentReceiptItems.id, params.id))
-        .limit(1);
-
-      if (!item) {
-        return { success: false, error: "Barang titipan konsinyasi tidak ditemukan" };
-      }
-
-      await db
-        .update(schema.consignmentReceipts)
-        .set({
-          notes: sql`CONCAT(COALESCE(notes, ''), ' [SETTLED]')`
-        })
-        .where(eq(schema.consignmentReceipts.id, item.receiptId));
-
+      const result = await consignmentService.settleConsignment(params.id, body || {});
       return {
         success: true,
-        message: "Penyetoran bagi hasil konsinyasi berhasil dicatat dan lunas setor."
+        message: `Setoran konsinyasi ${result.settlementNumber} berhasil dicatat (${result.soldQtySettled} terjual dibayar${result.returnedQty > 0 ? `, ${result.returnedQty} diretur` : ""}).`,
+        data: result
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  })
+
+  // 8D. BATALKAN / HAPUS PENERIMAAN KONSINYASI (JIKA BELUM ADA PENJUALAN/SETORAN)
+  .delete("/consignments/:id", async ({ params }: { params: { id: string } }) => {
+    try {
+      const result = await consignmentService.deleteConsignment(params.id);
+      return {
+        success: true,
+        message: `Titipan konsinyasi ${result.receiptNumber} berhasil dibatalkan & saldo stok telah ditarik kembali.`
       };
     } catch (err: any) {
       return { success: false, error: err.message };

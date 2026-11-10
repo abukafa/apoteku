@@ -148,6 +148,7 @@ export class PosService {
           drugClass: p.drugClass,
           baseUnit: p.baseUnit,
           minStock: Number(p.minStock || 0),
+          isConsignment: Boolean(p.isConsignment),
           isActive: p.isActive,
           units: unitsByProductId.get(p.id) || []
         }));
@@ -781,6 +782,7 @@ export class PosService {
         rackLocation: p.rackLocation,
         drugClass: p.drugClass,
         baseUnit: p.baseUnit,
+        isConsignment: Boolean(p.isConsignment),
         isActive: p.isActive,
         updatedAt: p.updatedAt.toISOString(),
         units: updatedUnits

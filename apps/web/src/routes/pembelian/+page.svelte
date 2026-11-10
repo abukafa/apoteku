@@ -11,6 +11,7 @@
     Truck,
     Building2,
     Trash2,
+    BanIcon,
     CreditCard,
     Eye,
     ArrowRightLeft,
@@ -37,6 +38,8 @@
     batchNo: string;
     expiredDate: string;
     unit: string;
+    conversionFactor?: number;
+    baseUnit?: string;
     qty: number;
     hna: number;
     disc1: number;
@@ -109,24 +112,78 @@
     id: string;
     receiptId?: string;
     receiptNumber: string;
+    purchaseOrderId?: string | null;
+    poNumber?: string | null;
     branchId?: string;
     branchName?: string;
+    supplierId?: string;
     supplierName: string;
     date: string;
+    productId?: string;
     productName: string;
+    baseUnit?: string;
+    unitName?: string;
+    conversionFactor?: number;
+    batchNo?: string;
+    expiredDate?: string;
+    receivedUnitQty?: number;
     receivedQty: number;
     soldQty: number;
+    settledQty?: number;
+    unsettledSoldQty?: number;
+    returnedQty?: number;
+    lostQty?: number;
     remainingQty: number;
     unitPrice: number;
     sellingPrice: number;
     unsettledAmount: number;
+    totalPaidAmount?: number;
     status: string;
+  }
+
+  interface ConsignmentSettlementRecord {
+    id: string;
+    settlementNumber: string;
+    settlementDate: string;
+    branchId: string;
+    branchName: string;
+    supplierName: string;
+    totalSoldAmount: number;
+    discountAmount: number;
+    totalPaidAmount: number;
+    paymentMethod: string;
+    notes: string;
+    items: Array<{
+      id: string;
+      productName: string;
+      baseUnit: string;
+      batchNo: string;
+      soldQty: number;
+      returnedQty: number;
+      lostQty: number;
+      unitCost: number;
+      subtotalPayable: number;
+    }>;
+  }
+
+  interface KsnItemRow {
+    poItemId?: string;
+    productId: string;
+    productName: string;
+    unitName: string;
+    batchNo: string;
+    expiredDate: string;
+    receivedQty: number;
+    unitPrice: number;
+    sellingPrice: number;
   }
 
   // Master Data & State
   let invoices = $state<PurchaseInvoiceRecord[]>([]);
   let purchaseOrders = $state<PurchaseOrderRecord[]>([]);
   let consignments = $state<ConsignmentRecord[]>([]);
+  let consignmentSettlements = $state<ConsignmentSettlementRecord[]>([]);
+  let ksnSubView = $state<"titipan" | "riwayat">("titipan");
   let suppliers = $state<any[]>([]);
   let products = $state<any[]>([]);
   let branches = $state<any[]>([]);
@@ -189,9 +246,15 @@
 
   async function reloadConsignments() {
     try {
-      const ksnRes = await api.erp.getConsignments();
+      const [ksnRes, stlRes] = await Promise.all([
+        api.erp.getConsignments(),
+        api.erp.getConsignmentSettlements()
+      ]);
       if (ksnRes?.success && Array.isArray(ksnRes.data)) {
         consignments = ksnRes.data;
+      }
+      if (stlRes?.success && Array.isArray(stlRes.data)) {
+        consignmentSettlements = stlRes.data;
       }
     } catch (_) {}
   }
@@ -204,17 +267,19 @@
       newKsnForm.branchId = authStore.user.branchId;
     }
     try {
-      const [purRes, poRes, suppRes, prodRes, branchRes, ksnRes] = await Promise.all([
+      const [purRes, poRes, suppRes, prodRes, branchRes, ksnRes, stlRes] = await Promise.all([
         api.erp.getPurchases(100),
         api.erp.getPurchaseOrders(100),
         api.erp.getSuppliers(),
         api.erp.getProducts(),
         api.erp.getBranches(),
-        api.erp.getConsignments()
+        api.erp.getConsignments(),
+        api.erp.getConsignmentSettlements()
       ]);
 
       if (prodRes?.success && Array.isArray(prodRes.data) && prodRes.data.length > 0) {
         products = prodRes.data;
+        const preferredConsignProd = products.find((p: any) => p.isConsignment) || products[0];
         const firstProd = products[0];
         const defaultUnitObj = firstProd.units?.find((u: any) => !u.isBaseUnit) || firstProd.units?.[0];
         const defaultUnit = defaultUnitObj?.unitName || firstProd.baseUnit || "BOX";
@@ -239,9 +304,23 @@
         draftSpProductName = firstProd.name;
         draftSpUnit = defaultUnit;
         draftSpHna = initialHna;
-        newKsnForm.productName = firstProd.name;
-        newKsnForm.unitPrice = Number(firstProd.buyPrice || 25000);
-        newKsnForm.sellingPrice = Math.round(Number(firstProd.buyPrice || 25000) * 1.3);
+        if (preferredConsignProd) {
+          const kUnit = preferredConsignProd.units?.[0];
+          const kFactor = Number(kUnit?.conversionFactor || 1);
+          const kBuy = Number(preferredConsignProd.buyPrice || 1000) * kFactor;
+          newKsnForm.items = [
+            {
+              productId: preferredConsignProd.id,
+              productName: preferredConsignProd.name,
+              unitName: kUnit?.unitName || preferredConsignProd.baseUnit || "PCS",
+              batchNo: `KSN-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-01`,
+              expiredDate: "2027-12-31",
+              receivedQty: 10,
+              unitPrice: Math.round(kBuy),
+              sellingPrice: Math.round(kBuy * 1.3)
+            }
+          ];
+        }
       }
 
       if (branchRes?.success && Array.isArray(branchRes.data) && branchRes.data.length > 0) {
@@ -258,7 +337,8 @@
         suppliers = suppRes.data;
         newInvoiceSupplier = suppliers[0].name;
         newSpForm.supplierName = suppliers[0].name;
-        newKsnForm.supplierName = suppliers[0].name;
+        const preferredConsignSup = suppliers.find((s: any) => s.isConsignment) || suppliers[0];
+        newKsnForm.supplierName = preferredConsignSup.name;
       }
 
       if (poRes?.success && Array.isArray(poRes.data)) {
@@ -271,6 +351,10 @@
 
       if (ksnRes?.success && Array.isArray(ksnRes.data)) {
         consignments = ksnRes.data;
+      }
+
+      if (stlRes?.success && Array.isArray(stlRes.data)) {
+        consignmentSettlements = stlRes.data;
       }
     } catch (err) {
       console.error("[Pembelian onMount Error]:", err);
@@ -294,15 +378,24 @@
   let isSettleKsnModalOpen = $state(false);
   let selectedKsnForSettle = $state<ConsignmentRecord | null>(null);
   let ksnSettleMethod = $state("KAS_KASIR");
+  let ksnSettleSoldQty = $state(0);
+  let ksnSettleReturnedQty = $state(0);
+  let ksnSettleLostQty = $state(0);
+  let ksnSettleDiscount = $state(0);
+  let ksnSettleNotes = $state("");
+  let isSettlingKsn = $state(false);
 
   let isAddKsnModalOpen = $state(false);
+  let isSavingKsn = $state(false);
   let newKsnForm = $state({
     branchId: authStore.user?.branchId || "1",
+    poNumber: "NONE",
+    purchaseOrderId: "",
     supplierName: "PT. Herbal Alam Sehat (Titipan)",
-    productName: "Madu Habbatussauda Extra Propolis 250ml",
-    receivedQty: 30,
-    unitPrice: 45000,
-    sellingPrice: 65000
+    receiptNumber: "",
+    date: new Date().toISOString().slice(0, 10),
+    notes: "",
+    items: [] as KsnItemRow[]
   });
 
   // New Invoice Form State (Multi-Item Grid)
@@ -387,21 +480,34 @@
     }
   }
 
+  function resolveInvoiceUnitMeta(productIdOrName: string, unitName?: string) {
+    const prod = products.find((p) => p.id === productIdOrName || p.name === productIdOrName);
+    const targetUpper = String(unitName || "").trim().toUpperCase();
+    const matched =
+      prod?.units?.find((u: any) => String(u.unitName || "").trim().toUpperCase() === targetUpper) ||
+      prod?.units?.find((u: any) => !u.isBaseUnit) ||
+      prod?.units?.[0];
+    const unit = matched?.unitName || targetUpper || prod?.baseUnit || "BOX";
+    const factor = Math.max(1, Number(matched?.conversionFactor || 1));
+    const baseUnit = prod?.baseUnit || "PCS";
+    const buyPrice = matched?.estimatedBuyPrice || Math.round(Number(prod?.buyPrice || 15000) * factor);
+    return { prod, unit, factor, baseUnit, buyPrice };
+  }
+
   function addNewInvoiceItem() {
     const p = products[0];
-    const defaultUnitObj = p?.units?.find((u: any) => !u.isBaseUnit) || p?.units?.[0];
-    const unitName = defaultUnitObj?.unitName || p?.baseUnit || "BOX";
-    const factor = defaultUnitObj ? Number(defaultUnitObj.conversionFactor || 1) : 1;
-    const buyPrice = defaultUnitObj?.estimatedBuyPrice || Math.round(Number(p?.buyPrice || 15000) * factor);
+    const meta = resolveInvoiceUnitMeta(p?.id || "");
 
     newInvoiceItems.push({
       productId: p?.id || "",
       productName: p?.name || "Produk Baru",
       batchNo: `BATCH-${Date.now().toString().slice(-6)}`,
       expiredDate: "2027-12-31",
-      unit: unitName,
+      unit: meta.unit,
+      conversionFactor: meta.factor,
+      baseUnit: meta.baseUnit,
       qty: 1,
-      hna: buyPrice,
+      hna: meta.buyPrice,
       disc1: 0,
       disc2: 0
     });
@@ -456,7 +562,11 @@
   );
 
   let pendingPurchaseOrders = $derived(
-    branchPurchaseOrders.filter((sp) => sp.status !== "RECEIVED")
+    branchPurchaseOrders.filter((sp) => sp.status !== "RECEIVED" && sp.orderType !== "KONSINYASI")
+  );
+
+  let pendingConsignmentPurchaseOrders = $derived(
+    branchPurchaseOrders.filter((sp) => sp.status !== "RECEIVED" && sp.orderType === "KONSINYASI")
   );
 
   let branchConsignments = $derived(
@@ -464,6 +574,35 @@
       (c) => selectedBranchId === "ALL" || (c.branchId || "1") === selectedBranchId
     )
   );
+
+  let branchSettlements = $derived(
+    consignmentSettlements.filter(
+      (s) => selectedBranchId === "ALL" || (s.branchId || "1") === selectedBranchId
+    )
+  );
+
+  let sortedSuppliersForKsn = $derived(
+    [...suppliers].sort((a, b) => Number(Boolean(b.isConsignment)) - Number(Boolean(a.isConsignment)))
+  );
+
+  let sortedProductsForKsn = $derived(
+    [...products].sort((a, b) => Number(Boolean(b.isConsignment)) - Number(Boolean(a.isConsignment)))
+  );
+
+  let invoiceConsignmentWarning = $derived.by(() => {
+    const sup = suppliers.find((s) => s.name === newInvoiceSupplier);
+    const consignProd = newInvoiceItems.find((it) => {
+      const p = products.find((prod) => prod.id === it.productId || prod.name === it.productName);
+      return Boolean(p?.isConsignment);
+    });
+    if (sup?.isConsignment) {
+      return `Supplier "${sup.name}" bertanda Vendor Konsinyasi. Jika ini barang titip jual (bayar sesuai laku), gunakan Tab "Konsinyasi Masuk (Titipan)" agar tidak menjadi hutang dagang PBF.`;
+    }
+    if (consignProd) {
+      return `Produk "${consignProd.productName}" bertanda Konsinyasi di Master Obat. Pastikan transaksi ini memang beli putus (bukan titipan).`;
+    }
+    return "";
+  });
 
   function getDueAlert(dueDateStr?: string, isPaid?: boolean) {
     if (isPaid) return { label: "Lunas", daysLeft: 0, color: "text-emerald-600 font-medium", isOverdue: false, isDueSoon: false };
@@ -546,7 +685,19 @@
       return (
         c.receiptNumber.toLowerCase().includes(q) ||
         c.supplierName.toLowerCase().includes(q) ||
-        c.productName.toLowerCase().includes(q)
+        c.productName.toLowerCase().includes(q) ||
+        (c.batchNo || "").toLowerCase().includes(q)
+      );
+    })
+  );
+
+  let filteredSettlements = $derived(
+    branchSettlements.filter((s) => {
+      const q = ksnSearchQuery.toLowerCase();
+      return (
+        s.settlementNumber.toLowerCase().includes(q) ||
+        s.supplierName.toLowerCase().includes(q) ||
+        s.items.some((it) => it.productName.toLowerCase().includes(q))
       );
     })
   );
@@ -611,22 +762,29 @@
         grandTotal: invoiceGrandTotal,
         purchaseOrderId: selectedPo?.id,
         poNumber: newInvoicePoNumber !== "NONE" ? newInvoicePoNumber : undefined,
-        items: newInvoiceItems.map((item) => ({
-          poItemId: item.poItemId,
-          productId: item.productId,
-          productName: item.productName,
-          batchNo: item.batchNo,
-          expiredDate: item.expiredDate,
-          unitName: item.unit,
-          qty: item.isRejected ? 0 : item.qty,
-          buyPrice: item.hna,
-          discountPercent: item.disc1,
-          discountAmount: Math.round(((item.qty || 0) * (item.hna || 0) * (item.disc1 || 0)) / 100),
-          subtotal: calcRowSubtotal(item),
-          qtyOrdered: item.qtyOrdered,
-          discrepancyReason: item.discrepancyReason,
-          isRejected: Boolean(item.isRejected)
-        }))
+        items: newInvoiceItems.map((item) => {
+          const meta = resolveInvoiceUnitMeta(item.productId || item.productName, item.unit);
+          const factor = Math.max(1, Number(item.conversionFactor || meta.factor || 1));
+          const finalQty = item.isRejected ? 0 : Number(item.qty || 0);
+          return {
+            poItemId: item.poItemId,
+            productId: item.productId,
+            productName: item.productName,
+            batchNo: item.batchNo,
+            expiredDate: item.expiredDate,
+            unitName: item.unit,
+            conversionFactor: factor,
+            qty: finalQty,
+            qtyBase: finalQty * factor,
+            buyPrice: item.hna,
+            discountPercent: item.disc1,
+            discountAmount: Math.round(((item.qty || 0) * (item.hna || 0) * (item.disc1 || 0)) / 100),
+            subtotal: calcRowSubtotal(item),
+            qtyOrdered: item.qtyOrdered,
+            discrepancyReason: item.discrepancyReason,
+            isRejected: Boolean(item.isRejected)
+          };
+        })
       };
 
       const res = await api.erp.createPurchase(payload);
@@ -660,15 +818,19 @@
       return;
     }
 
-    const confirmed = window.confirm(
-      `Apakah Anda yakin ingin membatalkan/menghapus Faktur ${inv.invoiceNumber}?\n\nPerhatian: Stok obat yang telah masuk ke gudang akan otomatis dibatalkan/ditarik kembali.`
-    );
+    const confirmed = await alertStore.confirm({
+      type: "danger",
+      title: "Batalkan / Void Faktur Pembelian",
+      message: `Apakah Anda yakin ingin membatalkan Faktur ${inv.invoiceNumber}?\n\nStok obat yang masuk dari faktur ini akan ditarik kembali dan status Surat Pesanan (SP) terkait akan dipulihkan otomatis.`,
+      confirmText: "Ya, Batalkan Faktur",
+      cancelText: "Kembali"
+    });
     if (!confirmed) return;
 
     try {
       const res = await api.erp.deletePurchase(inv.id);
       if (res?.success) {
-        await reloadInvoices();
+        await Promise.all([reloadInvoices(), reloadPurchaseOrders()]);
         alertStore.success("Faktur Dibatalkan", res.message || `Faktur ${inv.invoiceNumber} berhasil dibatalkan.`);
       } else {
         alertStore.danger("Gagal Membatalkan", res?.error || "Terjadi kesalahan sistem.");
@@ -699,13 +861,17 @@
         const ordered = it.qtyOrdered ?? it.qty;
         const remaining = it.qtyRemaining !== undefined ? it.qtyRemaining : ordered;
         const estHna = Number(it.estimatedHna || 0);
+        const unitStr = it.unit || "BOX";
+        const meta = resolveInvoiceUnitMeta(it.productId || it.productName, unitStr);
         return {
           poItemId: it.id,
           productId: it.productId,
           productName: it.productName,
           batchNo: `BCH-${Date.now().toString().slice(-4)}${idx + 1}`,
           expiredDate: "2027-12-31",
-          unit: it.unit || "BOX",
+          unit: unitStr,
+          conversionFactor: meta.factor,
+          baseUnit: meta.baseUnit,
           qtyOrdered: ordered,
           qty: remaining > 0 ? remaining : 0,
           estimatedHna: estHna,
@@ -719,15 +885,18 @@
       });
     } else {
       const p = products[0];
+      const meta = resolveInvoiceUnitMeta(p?.id || "");
       newInvoiceItems = [
         {
           productId: p?.id || "",
           productName: p?.name || "Produk",
           batchNo: `BCH-${Date.now().toString().slice(-6)}`,
           expiredDate: "2027-12-31",
-          unit: p?.baseUnit || "BOX",
+          unit: meta.unit,
+          conversionFactor: meta.factor,
+          baseUnit: meta.baseUnit,
           qty: 1,
-          hna: Number(p?.buyPrice || 15000),
+          hna: meta.buyPrice,
           disc1: 0,
           disc2: 0,
           isRejected: false,
@@ -869,7 +1038,9 @@
           ? "PRE"
           : newSpForm.orderType === "OOT"
             ? "OOT"
-            : "REG";
+            : newSpForm.orderType === "KONSINYASI"
+              ? "KSN"
+              : "REG";
     const currentYear = new Date().getFullYear();
     const existingYearPos = purchaseOrders.filter((p) => p.orderNumber && p.orderNumber.includes(String(currentYear)));
     const nextNum = String(existingYearPos.length + 1).padStart(4, "0");
@@ -919,60 +1090,230 @@
     }
   }
 
+  function openAddKsnModal(prefillSp?: PurchaseOrderRecord) {
+    const dateTag = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+    newKsnForm.branchId =
+      prefillSp?.branchId ||
+      (selectedBranchId !== "ALL" ? selectedBranchId : branches[0]?.id || "1");
+    newKsnForm.receiptNumber = `KSN-HF-${dateTag.slice(0, 4)}-${Math.floor(1000 + Math.random() * 9000)}`;
+    newKsnForm.date = new Date().toISOString().slice(0, 10);
+    newKsnForm.notes = "";
+
+    if (prefillSp) {
+      selectSpForConsignment(prefillSp);
+    } else {
+      newKsnForm.poNumber = "NONE";
+      newKsnForm.purchaseOrderId = "";
+      const preferredSup = suppliers.find((s) => s.isConsignment) || suppliers[0];
+      if (preferredSup) newKsnForm.supplierName = preferredSup.name;
+
+      const preferredProd = products.find((p) => p.isConsignment) || products[0];
+      if (preferredProd) {
+        const defaultUnitObj = preferredProd.units?.[0];
+        const factor = Number(defaultUnitObj?.conversionFactor || 1);
+        const buy = Math.round(Number(preferredProd.buyPrice || 1000) * factor);
+        newKsnForm.items = [
+          {
+            productId: preferredProd.id,
+            productName: preferredProd.name,
+            unitName: defaultUnitObj?.unitName || preferredProd.baseUnit || "PCS",
+            batchNo: `KSN-${dateTag}-01`,
+            expiredDate: "2027-12-31",
+            receivedQty: 10,
+            unitPrice: buy,
+            sellingPrice: Math.round(buy * 1.3)
+          }
+        ];
+      }
+    }
+    isAddKsnModalOpen = true;
+  }
+
+  async function selectSpForConsignment(sp: PurchaseOrderRecord) {
+    newKsnForm.branchId = sp.branchId || newKsnForm.branchId;
+    newKsnForm.poNumber = sp.orderNumber;
+    newKsnForm.purchaseOrderId = sp.id;
+    newKsnForm.supplierName = sp.supplierName;
+
+    let itemsToLoad = sp.items || [];
+    if (itemsToLoad.length === 0) {
+      try {
+        const detailRes = await api.erp.getPurchaseOrderById(sp.id);
+        if (detailRes?.success && Array.isArray(detailRes.data?.items)) {
+          itemsToLoad = detailRes.data.items;
+        }
+      } catch (_) {}
+    }
+
+    const dateTag = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+    if (itemsToLoad.length > 0) {
+      newKsnForm.items = itemsToLoad.map((it, idx) => {
+        const remaining = it.qtyRemaining !== undefined ? it.qtyRemaining : (it.qtyOrdered ?? it.qty);
+        const estHna = Number(it.estimatedHna || 0);
+        return {
+          poItemId: it.id,
+          productId: it.productId,
+          productName: it.productName,
+          unitName: it.unit || "PCS",
+          batchNo: `KSN-${dateTag}-0${idx + 1}`,
+          expiredDate: "2027-12-31",
+          receivedQty: Math.max(1, Number(remaining || 1)),
+          unitPrice: estHna,
+          sellingPrice: Math.round(estHna * 1.3)
+        };
+      });
+    }
+  }
+
+  function addNewKsnItem() {
+    const p = sortedProductsForKsn[0];
+    const defaultUnitObj = p?.units?.[0];
+    const factor = Number(defaultUnitObj?.conversionFactor || 1);
+    const buy = Math.round(Number(p?.buyPrice || 1000) * factor);
+    const dateTag = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+    newKsnForm.items = [
+      ...newKsnForm.items,
+      {
+        productId: p?.id || "",
+        productName: p?.name || "",
+        unitName: defaultUnitObj?.unitName || p?.baseUnit || "PCS",
+        batchNo: `KSN-${dateTag}-${String(newKsnForm.items.length + 1).padStart(2, "0")}`,
+        expiredDate: "2027-12-31",
+        receivedQty: 1,
+        unitPrice: buy,
+        sellingPrice: Math.round(buy * 1.3)
+      }
+    ];
+  }
+
+  function removeKsnItem(index: number) {
+    if (newKsnForm.items.length > 1) {
+      newKsnForm.items = newKsnForm.items.filter((_, i) => i !== index);
+    }
+  }
+
   function openKsnSettleModal(ksn: ConsignmentRecord) {
     selectedKsnForSettle = ksn;
+    ksnSettleSoldQty = Number(ksn.unsettledSoldQty ?? 0);
+    ksnSettleReturnedQty = 0;
+    ksnSettleLostQty = 0;
+    ksnSettleDiscount = 0;
+    ksnSettleNotes = "";
     isSettleKsnModalOpen = true;
   }
 
   async function handleConfirmSettleKsn() {
     if (!selectedKsnForSettle) return;
+    if (ksnSettleSoldQty <= 0 && ksnSettleReturnedQty <= 0 && ksnSettleLostQty <= 0) {
+      alertStore.warning(
+        "Belum Ada Qty Diproses",
+        "Masukkan jumlah terjual yang disetor atau jumlah retur kembali ke vendor."
+      );
+      return;
+    }
+
+    isSettlingKsn = true;
     try {
       const res = await api.erp.settleConsignment(selectedKsnForSettle.id, {
-        paymentMethod: ksnSettleMethod
+        soldQty: Number(ksnSettleSoldQty || 0),
+        returnedQty: Number(ksnSettleReturnedQty || 0),
+        lostQty: Number(ksnSettleLostQty || 0),
+        discountAmount: Number(ksnSettleDiscount || 0),
+        paymentMethod: ksnSettleMethod,
+        notes: ksnSettleNotes.trim() || undefined,
+        operator: authStore.user?.fullName || "Staf Keuangan"
       });
       if (res?.success) {
         await reloadConsignments();
-        alertStore.success("Setor Konsinyasi Berhasil", res.message || "Bagi hasil konsinyasi telah disetor dan status lunas.");
+        alertStore.success(
+          "Setor & Rekonsiliasi Berhasil",
+          res.message || "Bagi hasil konsinyasi berhasil disetor dan tercatat di Keuangan."
+        );
+        isSettleKsnModalOpen = false;
+        selectedKsnForSettle = null;
       } else {
         alertStore.danger("Gagal Setor", res?.error || "Terjadi kesalahan sistem.");
       }
     } catch (err: any) {
       alertStore.danger("Gagal Setor Konsinyasi", err?.message || "Kesalahan jaringan.");
     } finally {
-      isSettleKsnModalOpen = false;
-      selectedKsnForSettle = null;
+      isSettlingKsn = false;
     }
   }
 
   async function handleCreateConsignment() {
-    if (newKsnForm.receivedQty <= 0) return;
-    const sup = suppliers.find((s) => s.name === newKsnForm.supplierName);
-    const prod = products.find((p) => p.name === newKsnForm.productName);
+    const validItems = newKsnForm.items.filter((it) => Number(it.receivedQty) > 0);
+    if (validItems.length === 0) {
+      alertStore.warning("Item Kosong", "Minimal 1 produk konsinyasi dengan Qty > 0 wajib diisi.");
+      return;
+    }
 
+    const sup = suppliers.find((s) => s.name === newKsnForm.supplierName);
+    isSavingKsn = true;
     try {
       const payload = {
         branchId: newKsnForm.branchId,
         supplierId: sup?.id,
         supplierName: newKsnForm.supplierName,
-        productId: prod?.id,
-        productName: newKsnForm.productName,
-        receivedQty: Number(newKsnForm.receivedQty),
-        unitPrice: Number(newKsnForm.unitPrice),
-        sellingPrice: Number(newKsnForm.sellingPrice),
-        date: new Date().toISOString().slice(0, 10)
+        purchaseOrderId: newKsnForm.purchaseOrderId || undefined,
+        poNumber: newKsnForm.poNumber !== "NONE" ? newKsnForm.poNumber : undefined,
+        receiptNumber: newKsnForm.receiptNumber.trim() || undefined,
+        date: newKsnForm.date || new Date().toISOString().slice(0, 10),
+        notes: newKsnForm.notes.trim() || undefined,
+        items: validItems.map((it) => {
+          const prod = products.find((p) => p.id === it.productId || p.name === it.productName);
+          return {
+            poItemId: it.poItemId,
+            productId: prod?.id || it.productId,
+            productName: it.productName,
+            unitName: it.unitName,
+            batchNo: it.batchNo,
+            expiredDate: it.expiredDate,
+            receivedQty: Number(it.receivedQty),
+            unitPrice: Number(it.unitPrice),
+            sellingPrice: Number(it.sellingPrice)
+          };
+        })
       };
 
       const res = await api.erp.createConsignment(payload);
       if (res?.success) {
-        await reloadConsignments();
-        alertStore.success("Titipan Konsinyasi Diterima", res.message || "Penerimaan titipan konsinyasi berhasil disimpan ke database.");
+        await Promise.all([reloadConsignments(), reloadPurchaseOrders()]);
+        isAddKsnModalOpen = false;
+        alertStore.success(
+          "Titipan Konsinyasi Diterima",
+          res.message || "Penerimaan titipan konsinyasi berhasil disimpan & stok bertambah di POS."
+        );
       } else {
         alertStore.danger("Gagal Menyimpan", res?.error || "Gagal mencatat konsinyasi.");
       }
     } catch (err: any) {
       alertStore.danger("Gagal Mencatat Konsinyasi", err?.message || "Kesalahan jaringan.");
     } finally {
-      isAddKsnModalOpen = false;
+      isSavingKsn = false;
+    }
+  }
+
+  async function handleDeleteConsignment(ksn: ConsignmentRecord) {
+    const confirmed = await alertStore.confirm({
+      type: "danger",
+      title: "Batalkan Penerimaan Konsinyasi",
+      message: `Yakin ingin membatalkan tanda terima "${ksn.receiptNumber}" (${ksn.productName})? Stok batch titipan akan ditarik kembali.`,
+      confirmText: "Ya, Batalkan",
+      cancelText: "Kembali"
+    });
+    if (!confirmed) return;
+
+    try {
+      const res = await api.erp.deleteConsignment(ksn.receiptId || ksn.id);
+      if (res?.success) {
+        await Promise.all([reloadConsignments(), reloadPurchaseOrders()]);
+        alertStore.toast(res.message || "Titipan konsinyasi berhasil dibatalkan.", "success");
+      } else {
+        alertStore.danger("Gagal Membatalkan", res?.error || "Tidak dapat menghapus titipan.");
+      }
+    } catch (err: any) {
+      alertStore.danger("Gagal Membatalkan", err?.message || "Kesalahan jaringan.");
     }
   }
 </script>
@@ -1057,9 +1398,9 @@
       variant="danger"
     />
     <MetricCard
-      title="Konsinyasi"
+      title="Setoran Konsinyasi"
       value={formatRupiah(totalConsignmentUnsettled)}
-      subtext={`${branchConsignments.length} Produk konsinyasi aktif`}
+      subtext={`${branchConsignments.filter((c) => c.status !== "SETTLED").length} item titipan aktif`}
       icon={Building2}
       variant="default"
     />
@@ -1292,7 +1633,7 @@
               <div class="text-[10px] text-slate-400 font-normal">{sp.orderDate}</div>
             </td>
             <td class="py-3.5 px-4">
-              <span class="px-2 py-0.5 rounded text-[10px] font-bold {sp.orderType === 'PSIKOTROPIKA' ? 'bg-purple-100 text-purple-700' : sp.orderType === 'PREKURSOR' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}">
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold {sp.orderType === 'PSIKOTROPIKA' ? 'bg-purple-100 text-purple-700' : sp.orderType === 'PREKURSOR' ? 'bg-amber-100 text-amber-700' : sp.orderType === 'KONSINYASI' ? 'bg-fuchsia-100 text-fuchsia-700' : 'bg-blue-100 text-blue-700'}">
                 {sp.orderType}
               </span>
             </td>
@@ -1313,15 +1654,27 @@
             <td class="py-3.5 px-4 text-center">
               <div class="flex items-center justify-center gap-1.5">
                 {#if sp.status !== "RECEIVED"}
-                  <button
-                    type="button"
-                    onclick={() => openReceiveSpIntoInvoice(sp)}
-                    class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition-colors inline-flex items-center gap-1"
-                    title="Konversi SP menjadi Faktur Penerimaan PBF"
-                  >
-                    <ArrowRightLeft class="w-3 h-3" />
-                    <span>Terima Faktur</span>
-                  </button>
+                  {#if sp.orderType === "KONSINYASI"}
+                    <button
+                      type="button"
+                      onclick={() => openAddKsnModal(sp)}
+                      class="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-bold transition-colors inline-flex items-center gap-1"
+                      title="Terima barang titipan konsinyasi berdasarkan SP ini"
+                    >
+                      <Truck class="w-3 h-3" />
+                      <span>Terima Titipan</span>
+                    </button>
+                  {:else}
+                    <button
+                      type="button"
+                      onclick={() => openReceiveSpIntoInvoice(sp)}
+                      class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition-colors inline-flex items-center gap-1"
+                      title="Konversi SP menjadi Faktur Penerimaan PBF"
+                    >
+                      <ArrowRightLeft class="w-3 h-3" />
+                      <span>Terima Faktur</span>
+                    </button>
+                  {/if}
                 {/if}
                 <button
                   type="button"
@@ -1352,16 +1705,39 @@
 
   <!-- TAB 3: KONSINYASI MASUK -->
   {:else if activeTab === "konsinyasi"}
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div class="inline-flex rounded-xl bg-slate-100 p-1 text-xs font-bold">
+        <button
+          type="button"
+          onclick={() => (ksnSubView = "titipan")}
+          class="px-3 py-1.5 rounded-lg transition-all {ksnSubView === 'titipan' ? 'bg-white text-brand-blue-700 shadow-2xs' : 'text-slate-500 hover:text-slate-700'}"
+        >
+          Daftar Titipan Barang ({filteredConsignments.length})
+        </button>
+        <button
+          type="button"
+          onclick={() => (ksnSubView = "riwayat")}
+          class="px-3 py-1.5 rounded-lg transition-all {ksnSubView === 'riwayat' ? 'bg-white text-brand-blue-700 shadow-2xs' : 'text-slate-500 hover:text-slate-700'}"
+        >
+          Riwayat Setoran & Retur ({filteredSettlements.length})
+        </button>
+      </div>
+      <div class="text-[11px] text-slate-500 font-medium">
+        Penjualan POS pada batch konsinyasi (<span class="font-mono font-bold text-purple-700">KSN-*</span>) otomatis terhitung riil untuk setor bagi hasil.
+      </div>
+    </div>
+
+    {#if ksnSubView === "titipan"}
     <DataTable
       title="Manajemen Konsinyasi (Titipan)"
-      searchPlaceholder="Cari nomor tanda terima, vendor konsinyor, atau produk..."
+      searchPlaceholder="Cari nomor tanda terima, batch, vendor konsinyor, atau produk..."
       bind:searchValue={ksnSearchQuery}
       totalCount={filteredConsignments.length}
     >
       {#snippet actions()}
         <button
           type="button"
-          onclick={() => (isAddKsnModalOpen = true)}
+          onclick={() => openAddKsnModal()}
           class="px-3 py-1.5 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-xs shrink-0"
         >
           <Plus class="w-3.5 h-3.5" />
@@ -1370,22 +1746,22 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Nomor</th>
+        <th class="py-3 px-4">Nomor & Batch</th>
         <th class="py-3 px-4">Vendor</th>
         <th class="py-3 px-4">Produk</th>
-        <th class="py-3 px-4 text-center">Masuk</th>
+        <th class="py-3 px-4 text-center">Titip</th>
         <th class="py-3 px-4 text-center">Laku</th>
         <th class="py-3 px-4 text-center">Sisa</th>
         <th class="py-3 px-4 text-right">Setor</th>
-        <th class="py-3 px-4 text-right">Jual</th>
-        <th class="py-3 px-4 text-right">Target</th>
+        <th class="py-3 px-4 text-right">Belum</th>
+        <th class="py-3 px-4 text-center">Status</th>
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
         {#if filteredConsignments.length === 0}
           <tr>
-            <td colspan="8" class="py-12 text-center text-xs text-slate-400">
+            <td colspan="10" class="py-12 text-center text-xs text-slate-400">
               <div class="flex flex-col items-center justify-center gap-2">
                 <Truck class="w-8 h-8 text-slate-300" />
                 <span>Belum ada titipan barang konsinyasi aktif.</span>
@@ -1394,39 +1770,151 @@
           </tr>
         {:else}
           {#each filteredConsignments as ksn}
+          {@const canSettle = (ksn.unsettledSoldQty ?? 0) > 0 || ksn.remainingQty > 0}
+          {@const canDelete = ksn.soldQty === 0 && (ksn.settledQty ?? 0) === 0 && (ksn.returnedQty ?? 0) === 0}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
               {ksn.receiptNumber}
-              <div class="text-[10px] text-slate-400 font-normal">{ksn.date}</div>
+              <div class="text-[10px] text-slate-400 font-normal">{ksn.date} • Batch: {ksn.batchNo || "-"}</div>
+              {#if ksn.poNumber}
+                <div class="text-[10px] text-purple-600 font-sans font-semibold">Ref: {ksn.poNumber}</div>
+              {/if}
             </td>
-            <td class="py-3.5 px-4 font-bold text-slate-800">{ksn.supplierName}</td>
-            <td class="py-3.5 px-4 font-semibold text-slate-900">{ksn.productName}</td>
-            <td class="py-3.5 px-4 text-center font-bold text-slate-700">{ksn.receivedQty}</td>
-            <td class="py-3.5 px-4 text-center font-black text-emerald-600">{ksn.soldQty}</td>
-            <td class="py-3.5 px-4 text-center font-bold text-amber-600">{ksn.remainingQty}</td>
-            <td class="py-3.5 px-4 text-right font-mono text-slate-600">{formatRupiah(ksn.unitPrice)}</td>
-            <td class="py-3.5 px-4 text-right font-mono font-bold text-slate-900">{formatRupiah(ksn.sellingPrice)}</td>
-            <td class="py-3.5 px-4 text-right font-mono font-black text-brand-blue">
+            <td class="py-3.5 px-4 font-bold text-slate-800">
+              {ksn.supplierName}
+              <div class="text-[10px] text-slate-400 font-normal">{ksn.branchName || "Pusat"}</div>
+            </td>
+            <td class="py-3.5 px-4 font-semibold text-slate-900">
+              {ksn.productName}
+              <div class="text-[10px] text-slate-400 font-normal">
+                ED: {ksn.expiredDate || "-"} • Satuan Dasar: {ksn.baseUnit || "PCS"}
+              </div>
+            </td>
+            <td class="py-3.5 px-4 text-center font-bold text-slate-700 font-mono">
+              {ksn.receivedQty}
+              <div class="text-[10px] text-slate-400 font-normal">{ksn.baseUnit || "PCS"}</div>
+            </td>
+            <td class="py-3.5 px-4 text-center font-mono">
+              <span class="font-black text-emerald-600">{ksn.soldQty}</span>
+              {#if (ksn.settledQty ?? 0) > 0}
+                <div class="text-[10px] text-slate-400">Disetor: {ksn.settledQty}</div>
+              {/if}
+            </td>
+            <td class="py-3.5 px-4 text-center font-mono">
+              <span class="font-bold text-amber-600">{ksn.remainingQty}</span>
+              {#if (ksn.returnedQty ?? 0) > 0}
+                <div class="text-[10px] text-slate-400">Retur: {ksn.returnedQty}</div>
+              {/if}
+            </td>
+            <td class="py-3.5 px-4 text-right font-mono text-slate-600">
+              {formatRupiah(ksn.unitPrice)}
+              <div class="text-[10px] text-slate-400">Jual: {formatRupiah(ksn.sellingPrice)}</div>
+            </td>
+            <td class="py-3.5 px-4 text-right font-mono font-black {ksn.unsettledAmount > 0 ? 'text-brand-blue' : 'text-slate-400'}">
               {formatRupiah(ksn.unsettledAmount)}
+              {#if (ksn.totalPaidAmount ?? 0) > 0}
+                <div class="text-[10px] text-emerald-600 font-normal">Terbayar: {formatRupiah(ksn.totalPaidAmount || 0)}</div>
+              {/if}
             </td>
             <td class="py-3.5 px-4 text-center">
-              {#if ksn.unsettledAmount > 0}
-                <button
-                  type="button"
-                  onclick={() => openKsnSettleModal(ksn)}
-                  class="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[11px] transition-colors"
-                >
-                  Setor
-                </button>
+              {#if ksn.status === "SETTLED"}
+                <Badge type="SUCCESS" label="LUNAS SELESAI" />
+              {:else if ksn.status === "READY_TO_SETTLE"}
+                <Badge type="WARNING" label="SIAP SETOR" />
               {:else}
-                <span class="text-emerald-600 font-bold text-[11px]">Lunas Setor</span>
+                <Badge type="INFO" label="DITITIP" />
               {/if}
+            </td>
+            <td class="py-3.5 px-4 text-center">
+              <div class="flex items-center justify-center gap-1.5">
+                {#if canSettle && ksn.status !== "SETTLED"}
+                  <button
+                    type="button"
+                    onclick={() => openKsnSettleModal(ksn)}
+                    class="px-2.5 py-1 rounded-lg font-bold text-[11px] transition-colors {ksn.unsettledAmount > 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'}"
+                  >
+                    {ksn.unsettledAmount > 0 ? "Setor" : "Retur / Tutup"}
+                  </button>
+                {:else}
+                  <span class="text-emerald-600 font-bold text-[11px] inline-flex items-center gap-1">
+                    <CheckCircle2 class="w-3.5 h-3.5" /> Selesai
+                  </span>
+                {/if}
+                {#if canDelete}
+                  <button
+                    type="button"
+                    onclick={() => handleDeleteConsignment(ksn)}
+                    class="p-1.5 rounded-lg border border-slate-200 hover:bg-red-50 text-slate-400 hover:text-brand-red-600 transition-colors"
+                    title="Batalkan / Hapus Penerimaan Konsinyasi"
+                  >
+                    <Trash2 class="w-3.5 h-3.5" />
+                  </button>
+                {/if}
+              </div>
             </td>
           </tr>
         {/each}
       {/if}
       {/snippet}
     </DataTable>
+    {:else}
+    <DataTable
+      title="Riwayat Setoran Bagi Hasil & Retur Konsinyasi"
+      searchPlaceholder="Cari nomor bukti setor, vendor konsinyor, atau produk..."
+      bind:searchValue={ksnSearchQuery}
+      totalCount={filteredSettlements.length}
+    >
+      {#snippet header()}
+        <th class="py-3 px-4">No. Setoran</th>
+        <th class="py-3 px-4">Vendor Konsinyor</th>
+        <th class="py-3 px-4">Rincian Item</th>
+        <th class="py-3 px-4 text-center">Qty Laku</th>
+        <th class="py-3 px-4 text-center">Qty Retur</th>
+        <th class="py-3 px-4">Metode / Akun</th>
+        <th class="py-3 px-4 text-right">Total Disetor</th>
+      {/snippet}
+
+      {#snippet rows()}
+        {#if filteredSettlements.length === 0}
+          <tr>
+            <td colspan="7" class="py-12 text-center text-xs text-slate-400">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <CheckCircle2 class="w-8 h-8 text-slate-300" />
+                <span>Belum ada riwayat setoran bagi hasil maupun retur konsinyasi.</span>
+              </div>
+            </td>
+          </tr>
+        {:else}
+          {#each filteredSettlements as stl}
+            {@const totalSold = stl.items.reduce((a, b) => a + b.soldQty, 0)}
+            {@const totalRet = stl.items.reduce((a, b) => a + b.returnedQty, 0)}
+            <tr class="hover:bg-blue-50/40 transition-colors">
+              <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
+                {stl.settlementNumber}
+                <div class="text-[10px] text-slate-400 font-normal">{stl.settlementDate}</div>
+              </td>
+              <td class="py-3.5 px-4 font-bold text-slate-800">
+                {stl.supplierName}
+                <div class="text-[10px] text-slate-400 font-normal">{stl.branchName}</div>
+              </td>
+              <td class="py-3.5 px-4 text-slate-700">
+                {#each stl.items as it}
+                  <div class="font-semibold text-xs">{it.productName}</div>
+                  <div class="text-[10px] text-slate-400 font-mono">Batch: {it.batchNo} • {formatRupiah(it.unitCost)}/{it.baseUnit}</div>
+                {/each}
+              </td>
+              <td class="py-3.5 px-4 text-center font-mono font-bold text-emerald-700">{totalSold}</td>
+              <td class="py-3.5 px-4 text-center font-mono font-bold text-amber-600">{totalRet}</td>
+              <td class="py-3.5 px-4 font-mono text-[11px] text-slate-600">{stl.paymentMethod}</td>
+              <td class="py-3.5 px-4 text-right font-mono font-black text-brand-blue">
+                {formatRupiah(stl.totalPaidAmount)}
+              </td>
+            </tr>
+          {/each}
+        {/if}
+      {/snippet}
+    </DataTable>
+    {/if}
   {/if}
 </div>
 
@@ -1441,7 +1929,7 @@
     }}
     role="presentation"
   >
-    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-4xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] flex flex-col">
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-5xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] flex flex-col">
       <!-- HEADER -->
       <div class="flex items-center justify-between border-b border-slate-100 pb-3 flex-shrink-0">
         <div class="flex items-center gap-2 text-slate-900 font-bold">
@@ -1458,7 +1946,7 @@
       </div>
 
       <!-- BODY SCROLLABLE -->
-      <div class="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+      <div class="flex-1 overflow-y-auto space-y-4 pr-1 text-xs scrollbar-minimalist">
         <!-- LIST SURAT PESANAN (SP) YANG BELUM DITERIMA -->
         <div class="bg-blue-50/70 p-3.5 rounded-xl border border-blue-200/90 space-y-2.5">
           <div class="flex items-center justify-between">
@@ -1533,7 +2021,7 @@
               options={suppliers.map((s) => ({
                 value: s.name,
                 label: s.name,
-                sublabel: `${s.code} • TOP ${s.topDays} Hari`
+                sublabel: `${s.code} • TOP ${s.topDays} Hari${s.isConsignment ? " • [Konsinyasi]" : ""}`
               }))}
             />
           </div>
@@ -1618,6 +2106,14 @@
           </div>
         </div>
 
+        <!-- PERINGATAN KONSINYASI JIKA ADA ITEM/VENDOR KONSINYASI -->
+        {#if invoiceConsignmentWarning}
+          <div class="p-3 rounded-xl bg-purple-50 border border-purple-200 text-[11px] text-purple-900 flex items-start gap-2.5">
+            <AlertCircle class="w-4 h-4 text-purple-600 flex-shrink-0 mt-0.5" />
+            <div class="flex-1">{invoiceConsignmentWarning}</div>
+          </div>
+        {/if}
+
         <!-- PANDUAN PENJELASAN MODE PEMBELIAN -->
         {#if newInvoicePoNumber === "NONE"}
           <div class="p-3 rounded-xl bg-amber-50/80 border border-amber-200/90 text-[11px] text-amber-900 flex items-start gap-2.5">
@@ -1654,19 +2150,27 @@
               <thead class="bg-slate-100 text-slate-600 font-bold border-b border-slate-200 text-[11px]">
                 <tr>
                   <th class="py-2.5 px-3">Nama Obat</th>
-                  <th class="py-2.5 px-3 w-28">Batch</th>
                   <th class="py-2.5 px-3 w-28">Kadaluarsa (ED)</th>
                   <th class="py-2.5 px-3 w-28 text-center">Diterima</th>
                   <th class="py-2.5 px-3 w-28 text-right">HNA Beli</th>
                   <th class="py-2.5 px-3 w-14 text-center">Disc%</th>
-                  <th class="py-2.5 px-3 w-24 text-right">Subtotal</th>
+                  <th class="py-2.5 px-2 w-28 text-center">Subtotal</th>
                   <th class="py-2.5 px-2 w-28 text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100 bg-white">
                 {#each newInvoiceItems as item, idx}
+                  {@const rowMeta = resolveInvoiceUnitMeta(item.productId || item.productName, item.unit)}
+                  {@const rowProd = rowMeta.prod}
+                  {@const rowUnitOptions = rowProd?.units?.length
+                    ? rowProd.units.map((u: any) => ({
+                        value: u.unitName,
+                        label: `${u.unitName} (${Number(u.conversionFactor || 1)} ${rowProd.baseUnit || "PCS"})`
+                      }))
+                    : [{ value: item.unit || "BOX", label: item.unit || "BOX" }]}
+                  {@const activeFactor = Math.max(1, Number(item.conversionFactor || rowMeta.factor || 1))}
                   <tr class="transition-colors {item.isRejected ? 'bg-red-50/50 text-slate-500' : 'hover:bg-slate-50/50'}">
-                    <td class="p-2 max-w-40">
+                    <td class="p-2">
                       {#if item.isRejected}
                         <div class="py-1">
                           <div class="font-bold text-slate-500 line-through">{item.productName}</div>
@@ -1684,10 +2188,11 @@
                             const p = products.find((prod) => prod.name === val);
                             if (p) {
                               item.productId = p.id;
-                              const defaultUnitObj = p.units?.find((u: any) => !u.isBaseUnit) || p.units?.[0];
-                              item.unit = defaultUnitObj?.unitName || p.baseUnit || "BOX";
-                              const factor = defaultUnitObj ? Number(defaultUnitObj.conversionFactor || 1) : 1;
-                              item.hna = defaultUnitObj?.estimatedBuyPrice || Math.round(Number(p.buyPrice || 1000) * factor);
+                              const m = resolveInvoiceUnitMeta(p.id);
+                              item.unit = m.unit;
+                              item.conversionFactor = m.factor;
+                              item.baseUnit = m.baseUnit;
+                              item.hna = m.buyPrice;
                             }
                           }}
                           variant="default"
@@ -1703,76 +2208,90 @@
                     </td>
                     <td class="p-2">
                       <input
-                        type="text"
-                        bind:value={item.batchNo}
-                        disabled={item.isRejected}
-                        placeholder="Batch"
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-xs uppercase disabled:opacity-40 disabled:bg-slate-100"
-                      />
-                    </td>
-                    <td class="p-2">
-                      <input
                         type="date"
                         bind:value={item.expiredDate}
-                        disabled={item.isRejected}
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-xs disabled:opacity-40 disabled:bg-slate-100"
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-xs disabled:opacity-40 disabled:bg-slate-100 {item.isRejected ? 'hidden' : ''}"
                       />
+                      <div class="text-[9px] font-bold text-brand-blue-700 w-full text-center rounded-md bg-blue-50 border border-blue-100 mt-0.5 font-mono {item.isRejected ? 'hidden' : ''}">
+                        {item.batchNo}
+                      </div>
                     </td>
-                    <td class="p-2">
-                      <input
-                        type="number"
-                        min="0"
-                        bind:value={item.qty}
-                        disabled={item.isRejected}
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-bold text-center text-xs disabled:opacity-40 disabled:bg-slate-100"
-                      />
-                      {#if newInvoicePoNumber !== "NONE" && item.qtyOrdered !== undefined}
-                        {#if item.isRejected}
-                          <span class="text-[9px] font-bold text-red-600 block text-center mt-0.5">
-                            Ditolak (Pesan: {item.qtyOrdered})
-                          </span>
-                        {:else if item.qty === item.qtyOrdered}
-                          <span class="text-[9px] font-bold text-emerald-700 block text-center mt-0.5">
-                            ✓ Pas {item.qtyOrdered}
-                          </span>
-                        {:else if item.qty < item.qtyOrdered}
-                          <span class="text-[9px] font-bold text-amber-800 block text-center mt-0.5">
-                            ⚠ Kurang {item.qtyOrdered - item.qty} • {item.qtyOrdered}
-                          </span>
-                        {:else}
-                          <span class="text-[9px] font-bold text-blue-700 block text-center mt-0.5">
-                            ⚠ Lebih {item.qty - item.qtyOrdered} • {item.qtyOrdered}
-                          </span>
-                        {/if}
-                      {/if}
+                    <td class="p-2 item-center">
+                      <div class="flex items-center gap-1 {item.isRejected ? 'hidden' : ''}">
+                        <div>
+                          <input
+                            type="number"
+                            min="0"
+                            bind:value={item.qty}
+                            class="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-bold text-center text-xs disabled:opacity-40 disabled:bg-slate-100"
+                          />
+                          {#if !item.isRejected && activeFactor > 1}
+                            <div class="text-[9px] font-bold text-brand-blue-700 text-center rounded-md bg-blue-50 border border-blue-100 mt-0.5 font-mono">
+                              {((item.qty || 0) * activeFactor).toLocaleString("id-ID")} {item.baseUnit || rowMeta.baseUnit}
+                            </div>
+                          {/if}
+                        </div>
+                        <div>
+                          <select
+                            aria-label="Satuan {item.productName}"
+                            value={item.unit}
+                            onchange={(e) => {
+                              const selectedUnit = (e.currentTarget as HTMLSelectElement).value;
+                              item.unit = selectedUnit;
+                              const m = resolveInvoiceUnitMeta(item.productId || item.productName, selectedUnit);
+                              item.conversionFactor = m.factor;
+                              item.baseUnit = m.baseUnit;
+                              item.hna = m.buyPrice;
+                            }}
+                            class="w-20 flex-1 bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1.5 text-[11px] font-bold text-slate-700 disabled:opacity-40 disabled:bg-slate-100"
+                          >
+                            {#each rowUnitOptions as opt}
+                              <option value={opt.value}>{opt.label}</option>
+                            {/each}
+                          </select>
+                          {#if newInvoicePoNumber !== "NONE" && item.qtyOrdered !== undefined}
+                            {#if  item.qty === item.qtyOrdered}
+                              <div class="text-[9px] font-bold text-center rounded-md bg-emerald-50 border border-emerald-100 text-emerald-600 mt-0.5">
+                                ✓ Pas {item.qtyOrdered} {item.unit}
+                              </div>
+                            {:else if item.qty < item.qtyOrdered}
+                              <div class="text-[9px] font-bold text-amber-700 rounded-md bg-amber-50 border border-amber-100 text-center mt-0.5">
+                                ⚠ Kurang {item.qtyOrdered - item.qty}
+                              </div>
+                            {:else}
+                              <div class="text-[9px] font-bold text-blue-700 text-center rounded-md bg-blue-50 border border-blue-100 mt-0.5">
+                                ⚠ Lebih {item.qty - item.qtyOrdered}
+                              </div>
+                            {/if}
+                          {/if}
+                        </div>
+                      </div>
                     </td>
-                    <td class="p-2">
+                    <td class="p-2 w-32">
                       <input
                         type="number"
                         min="0"
                         step="500"
                         bind:value={item.hna}
-                        disabled={item.isRejected}
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-right text-xs disabled:opacity-40 disabled:bg-slate-100"
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-center text-xs disabled:opacity-40 disabled:bg-slate-100 {item.isRejected ? 'hidden' : ''}"
                       />
                       {#if item.estimatedHna && item.hna !== item.estimatedHna}
-                        <span class="text-[9px] font-semibold block text-right mt-0.5 {item.hna > item.estimatedHna ? 'text-amber-700' : 'text-emerald-700'}">
-                          SP: {formatRupiah(item.estimatedHna)}
-                        </span>
+                        <div class="text-[9px] font-semibold text-center rounded-md mt-0.5 {item.hna > item.estimatedHna ? 'text-amber-700 border border-amber-100 bg-amber-50' : 'text-emerald-700 border border-emerald-100 bg-emerald-50'} {item.isRejected ? 'hidden' : ''}">
+                          SP: {formatRupiah(item.estimatedHna, false)}
+                        </div>
                       {/if}
                     </td>
-                    <td class="p-2">
+                    <td class="p-2 w-32">
                       <input
                         type="number"
                         min="0"
-                        max="100"
+                        step="500"
                         bind:value={item.disc1}
-                        disabled={item.isRejected}
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1.5 text-center text-xs disabled:opacity-40 disabled:bg-slate-100"
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1.5 text-center text-xs disabled:opacity-40 disabled:bg-slate-100 {item.isRejected ? 'hidden' : ''}"
                       />
                     </td>
-                    <td class="p-2 text-right font-mono font-bold {item.isRejected ? 'text-slate-400 line-through' : 'text-slate-900'}">
-                      {formatRupiah(calcRowSubtotal(item))}
+                    <td class="text-sm text-center font-mono font-bold text-slate-900">
+                      {formatRupiah(calcRowSubtotal(item), false)}
                     </td>
                     <td class="p-2 text-center">
                       <div class="flex items-center justify-center gap-1 relative">
@@ -1799,7 +2318,7 @@
                               class="px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 font-bold text-[10px] border border-red-200 transition-colors whitespace-nowrap"
                               title="Tolak atau catat diskrepansi barang"
                             >
-                              Tolak / Beda
+                              <BanIcon class="w-3.5 h-3.5" />
                             </button>
                             {#if item.showDiscrepancyMenu}
                               <div class="fixed inset-0 z-40" onclick={() => (item.showDiscrepancyMenu = false)} role="presentation"></div>
@@ -2159,7 +2678,7 @@
     }}
     role="presentation"
   >
-    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] overflow-y-auto">
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] overflow-y-auto scrollbar-minimalist">
       <div class="flex items-center justify-between border-b border-slate-100 pb-3">
         <div class="flex items-center gap-2 text-slate-900 font-bold">
           <Printer class="w-5 h-5 text-brand-blue" />
@@ -2185,7 +2704,8 @@
               { value: "REGULER", label: "SP REGULER (Obat Bebas & Keras)" },
               { value: "PREKURSOR", label: "SP PREKURSOR FARMASI" },
               { value: "OOT", label: "SP OBAT-OBAT TERTENTU (OOT)" },
-              { value: "PSIKOTROPIKA", label: "SP PSIKOTROPIKA (Khusus Apoteker)" }
+              { value: "PSIKOTROPIKA", label: "SP PSIKOTROPIKA (Khusus Apoteker)" },
+              { value: "KONSINYASI", label: "SP KONSINYASI (Pesanan Barang Titipan)" }
             ]}
           />
         </div>
@@ -2485,8 +3005,10 @@
   </div>
 {/if}
 
-<!-- MODAL SETOR BAGI HASIL KONSINYASI -->
+<!-- MODAL SETOR BAGI HASIL & RETUR KONSINYASI -->
 {#if isSettleKsnModalOpen && selectedKsnForSettle}
+  {@const ksnGrossPay = Math.round((Number(ksnSettleSoldQty || 0) + Number(ksnSettleLostQty || 0)) * selectedKsnForSettle.unitPrice)}
+  {@const ksnNetPay = Math.max(0, ksnGrossPay - Number(ksnSettleDiscount || 0))}
   <div
     use:portal
     data-modal-overlay
@@ -2496,11 +3018,11 @@
     }}
     role="presentation"
   >
-    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-md w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto text-xs">
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto text-xs">
       <div class="flex items-center justify-between border-b border-slate-100 pb-3">
         <div class="font-bold text-slate-900 flex items-center gap-2 text-sm">
           <CheckCircle2 class="w-5 h-5 text-emerald-600" />
-          <span>Setor Bagi Hasil Konsinyasi</span>
+          <span>Setor Bagi Hasil & Retur Konsinyasi</span>
         </div>
         <button
           onclick={() => (isSettleKsnModalOpen = false)}
@@ -2511,18 +3033,96 @@
         </button>
       </div>
 
-      <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
-        <div class="font-mono font-bold text-brand-blue">{selectedKsnForSettle.receiptNumber}</div>
-        <div class="font-bold text-slate-900">{selectedKsnForSettle.supplierName}</div>
-        <div class="text-slate-600">{selectedKsnForSettle.productName}</div>
-        <div class="pt-2 border-t border-slate-200 flex justify-between font-bold">
-          <span>Terjual: {selectedKsnForSettle.soldQty} &times; {formatRupiah(selectedKsnForSettle.unitPrice)}</span>
-          <span class="font-mono text-emerald-700">{formatRupiah(selectedKsnForSettle.unsettledAmount)}</span>
+      <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-1.5">
+        <div class="flex items-center justify-between">
+          <span class="font-mono font-bold text-brand-blue">{selectedKsnForSettle.receiptNumber}</span>
+          <span class="font-mono text-[10px] text-slate-500">Batch: {selectedKsnForSettle.batchNo || "-"}</span>
+        </div>
+        <div class="font-bold text-slate-900 text-sm">{selectedKsnForSettle.supplierName}</div>
+        <div class="text-slate-700 font-semibold">{selectedKsnForSettle.productName}</div>
+        <div class="grid grid-cols-4 gap-2 pt-2 border-t border-slate-200 text-center">
+          <div>
+            <div class="text-[10px] text-slate-400">Titip Awal</div>
+            <div class="font-mono font-bold text-slate-700">{selectedKsnForSettle.receivedQty}</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-400">Laku POS</div>
+            <div class="font-mono font-bold text-emerald-700">{selectedKsnForSettle.soldQty}</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-400">Belum Disetor</div>
+            <div class="font-mono font-black text-brand-blue">{selectedKsnForSettle.unsettledSoldQty ?? 0}</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-400">Sisa Fisik</div>
+            <div class="font-mono font-bold text-amber-600">{selectedKsnForSettle.remainingQty}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label for="ksn-settle-sold" class="font-bold text-slate-700 block mb-1">
+            Qty Laku Disetor ({selectedKsnForSettle.baseUnit || "Unit"})
+          </label>
+          <input
+            id="ksn-settle-sold"
+            type="number"
+            min="0"
+            max={selectedKsnForSettle.unsettledSoldQty ?? 0}
+            bind:value={ksnSettleSoldQty}
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-emerald-700"
+          />
+          <div class="text-[10px] text-slate-400 mt-0.5">Maks: {selectedKsnForSettle.unsettledSoldQty ?? 0} @ {formatRupiah(selectedKsnForSettle.unitPrice)}</div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="ksn-settle-ret" class="font-bold text-slate-700">Retur Sisa ke Vendor</label>
+            {#if selectedKsnForSettle.remainingQty > 0}
+              <button
+                type="button"
+                onclick={() => (ksnSettleReturnedQty = selectedKsnForSettle?.remainingQty || 0)}
+                class="text-[10px] font-bold text-brand-blue hover:underline"
+              >
+                Retur Semua ({selectedKsnForSettle.remainingQty})
+              </button>
+            {/if}
+          </div>
+          <input
+            id="ksn-settle-ret"
+            type="number"
+            min="0"
+            max={selectedKsnForSettle.remainingQty}
+            bind:value={ksnSettleReturnedQty}
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-amber-700"
+          />
+          <div class="text-[10px] text-slate-400 mt-0.5">Memotong stok sisa batch & kartu stok</div>
+        </div>
+        <div>
+          <label for="ksn-settle-lost" class="font-bold text-slate-700 block mb-1">Qty Hilang / Susut</label>
+          <input
+            id="ksn-settle-lost"
+            type="number"
+            min="0"
+            max={Math.max(0, selectedKsnForSettle.remainingQty - ksnSettleReturnedQty)}
+            bind:value={ksnSettleLostQty}
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono"
+          />
+        </div>
+        <div>
+          <label for="ksn-settle-disc" class="font-bold text-slate-700 block mb-1">Potongan / Komisi (Rp)</label>
+          <input
+            id="ksn-settle-disc"
+            type="number"
+            min="0"
+            bind:value={ksnSettleDiscount}
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono"
+          />
         </div>
       </div>
 
       <div>
-        <label for="ksn-method" class="font-bold text-slate-700 block mb-1">Metode Penyetoran</label>
+        <label for="ksn-method" class="font-bold text-slate-700 block mb-1">Metode Penyetoran / Akun Kas `/keuangan`</label>
         <Select
           id="ksn-method"
           bind:value={ksnSettleMethod}
@@ -2533,10 +3133,32 @@
         />
       </div>
 
+      <div>
+        <label for="ksn-settle-notes" class="font-bold text-slate-700 block mb-1">Catatan Rekonsiliasi (Opsional)</label>
+        <input
+          id="ksn-settle-notes"
+          type="text"
+          bind:value={ksnSettleNotes}
+          placeholder="Contoh: Setoran periode bulan ini + retur sisa ED dekat"
+          class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2"
+        />
+      </div>
+
+      <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center justify-between">
+        <div>
+          <div class="font-bold text-emerald-900">Total Disetor ke Vendor</div>
+          <div class="text-[10px] text-emerald-700">
+            {ksnNetPay > 0 ? "Otomatis dicatat sebagai kas keluar di /keuangan." : "Hanya penyesuaian/retur stok (tanpa pengeluaran kas)."}
+          </div>
+        </div>
+        <div class="font-mono font-black text-base text-emerald-700">{formatRupiah(ksnNetPay)}</div>
+      </div>
+
       <div class="border-t border-slate-100 pt-3 flex justify-end gap-2">
         <button
           type="button"
           onclick={() => (isSettleKsnModalOpen = false)}
+          disabled={isSettlingKsn}
           class="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-bold"
         >
           Batal
@@ -2544,16 +3166,17 @@
         <button
           type="button"
           onclick={handleConfirmSettleKsn}
-          class="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+          disabled={isSettlingKsn}
+          class="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold disabled:opacity-50"
         >
-          Konfirmasi Setor
+          {isSettlingKsn ? "Memproses..." : "Konfirmasi Setor & Simpan"}
         </button>
       </div>
     </div>
   </div>
 {/if}
 
-<!-- MODAL TERIMA TITIPAN KONSINYASI BARU -->
+<!-- MODAL TERIMA TITIPAN KONSINYASI BARU (MULTI-ITEM & OPSIONAL SP) -->
 {#if isAddKsnModalOpen}
   <div
     use:portal
@@ -2564,11 +3187,11 @@
     }}
     role="presentation"
   >
-    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-md w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto text-xs">
-      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-4xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] flex flex-col text-xs">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3 flex-shrink-0">
         <div class="font-bold text-slate-900 flex items-center gap-2 text-sm">
-          <Truck class="w-5 h-5 text-brand-blue" />
-          <span>Terima Produk Konsinyasi (Titipan)</span>
+          <Truck class="w-5 h-5 text-purple-600" />
+          <span>Terima Produk Konsinyasi (Titipan Vendor)</span>
         </div>
         <button
           onclick={() => (isAddKsnModalOpen = false)}
@@ -2579,105 +3202,243 @@
         </button>
       </div>
 
-      <div class="space-y-3">
-        {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
-          <div>
-            <label for="ksn-branch" class="font-bold text-slate-700 block mb-1">Cabang Penerima</label>
-            <Select
-              id="ksn-branch"
-              value={newKsnForm.branchId}
-              onchange={(val) => (newKsnForm.branchId = val)}
-              options={branches.map((b) => ({ value: b.id, label: b.name }))}
-            />
+      <div class="flex-1 overflow-y-auto space-y-4 pr-1">
+        {#if pendingConsignmentPurchaseOrders.length > 0}
+          <div class="bg-purple-50/70 p-3 rounded-xl border border-purple-200 space-y-2">
+            <div class="flex items-center justify-between font-bold text-purple-900">
+              <span>SP Konsinyasi Menunggu Penerimaan ({pendingConsignmentPurchaseOrders.length})</span>
+              <span class="text-[10px] font-normal text-purple-700">Klik SP untuk mengisi form otomatis</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {#each pendingConsignmentPurchaseOrders as sp}
+                <button
+                  type="button"
+                  onclick={() => selectSpForConsignment(sp)}
+                  class="p-2 rounded-xl border text-left transition-all {newKsnForm.poNumber === sp.orderNumber ? 'bg-purple-700 text-white border-purple-700' : 'bg-white hover:bg-purple-50 border-purple-200 text-slate-800'}"
+                >
+                  <div class="font-mono font-bold text-xs">{sp.orderNumber}</div>
+                  <div class="text-[11px] truncate">{sp.supplierName}</div>
+                </button>
+              {/each}
+            </div>
           </div>
         {/if}
 
-        <div>
-          <label for="ksn-sup" class="font-bold text-slate-700 block mb-1">Nama Vendor / Konsinyor</label>
-          <SearchableSelect
-            id="ksn-sup"
-            variant="default"
-            value={newKsnForm.supplierName}
-            onchange={(val) => (newKsnForm.supplierName = val)}
-            searchPlaceholder="Pilih atau cari supplier konsinyor..."
-            options={suppliers.map((s) => ({
-              value: s.name,
-              label: s.name,
-              sublabel: `${s.code} • ${s.phone || "-"}`
-            }))}
-          />
-        </div>
-
-        <div>
-          <label for="ksn-prod" class="font-bold text-slate-700 block mb-1">Nama Produk Titipan</label>
-          <SearchableSelect
-            id="ksn-prod"
-            variant="default"
-            value={newKsnForm.productName}
-            onchange={(val) => {
-              newKsnForm.productName = val;
-              const p = products.find((prod) => prod.name === val);
-              if (p) {
-                newKsnForm.unitPrice = Number(p.buyPrice || newKsnForm.unitPrice);
-                newKsnForm.sellingPrice = Math.round(Number(p.buyPrice || newKsnForm.unitPrice) * 1.3);
-              }
-            }}
-            searchPlaceholder="Pilih produk dari master..."
-            options={products.map((p) => ({
-              value: p.name,
-              label: p.name,
-              sublabel: `${p.baseUnit} • Beli: ${formatRupiah(p.buyPrice || 0)}`
-            }))}
-          />
-        </div>
-
-        <div class="grid grid-cols-3 gap-2">
-          <div>
-            <label for="ksn-qty" class="font-bold text-slate-700 block mb-1">Qty Titip</label>
-            <input
-              id="ksn-qty"
-              type="number"
-              min="1"
-              bind:value={newKsnForm.receivedQty}
-              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-center"
+        <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-100">
+          <div class="sm:col-span-2">
+            <label for="ksn-sup" class="font-bold text-slate-700 block mb-1">Vendor / Konsinyor</label>
+            <SearchableSelect
+              id="ksn-sup"
+              variant="default"
+              value={newKsnForm.supplierName}
+              onchange={(val) => (newKsnForm.supplierName = val)}
+              searchPlaceholder="Pilih atau cari supplier konsinyor..."
+              options={sortedSuppliersForKsn.map((s) => ({
+                value: s.name,
+                label: s.name,
+                sublabel: `${s.isConsignment ? "[Vendor Konsinyasi] • " : ""}${s.code} • ${s.phone || "-"}`
+              }))}
             />
           </div>
           <div>
-            <label for="ksn-buy" class="font-bold text-slate-700 block mb-1">Harga Setor</label>
+            <label for="ksn-receipt-no" class="font-bold text-slate-700 block mb-1">No. Tanda Terima</label>
             <input
-              id="ksn-buy"
-              type="number"
-              bind:value={newKsnForm.unitPrice}
-              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono"
+              id="ksn-receipt-no"
+              type="text"
+              bind:value={newKsnForm.receiptNumber}
+              placeholder="KSN-..."
+              class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold"
             />
           </div>
           <div>
-            <label for="ksn-sell" class="font-bold text-slate-700 block mb-1">Harga Jual</label>
+            <label for="ksn-date" class="font-bold text-slate-700 block mb-1">Tanggal Terima</label>
             <input
-              id="ksn-sell"
-              type="number"
-              bind:value={newKsnForm.sellingPrice}
-              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-brand-blue"
+              id="ksn-date"
+              type="date"
+              bind:value={newKsnForm.date}
+              class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 font-mono"
             />
+          </div>
+          {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+            <div class="sm:col-span-2">
+              <label for="ksn-branch" class="font-bold text-slate-700 block mb-1">Cabang Penerima</label>
+              <Select
+                id="ksn-branch"
+                value={newKsnForm.branchId}
+                onchange={(val) => (newKsnForm.branchId = val)}
+                options={branches.map((b) => ({ value: b.id, label: b.name }))}
+              />
+            </div>
+          {/if}
+          <div class="sm:col-span-2">
+            <label for="ksn-notes" class="font-bold text-slate-700 block mb-1">Catatan Titipan (Opsional)</label>
+            <input
+              id="ksn-notes"
+              type="text"
+              bind:value={newKsnForm.notes}
+              placeholder="Misal: Titipan jatuh tempo cek bulanan"
+              class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2"
+            />
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <h4 class="font-bold text-slate-800 text-xs">Rincian Produk Titipan (Langsung Masuk Stok Jual POS)</h4>
+            <button
+              type="button"
+              onclick={addNewKsnItem}
+              class="px-2.5 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-xs inline-flex items-center gap-1"
+            >
+              <Plus class="w-3.5 h-3.5" />
+              <span>Tambah Produk</span>
+            </button>
+          </div>
+
+          <div class="border border-slate-200 rounded-xl overflow-visible shadow-xs">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-100 text-slate-600 font-bold border-b border-slate-200 text-[11px]">
+                <tr>
+                  <th class="py-2 px-3">Nama Produk</th>
+                  <th class="py-2 px-2 w-28">Satuan</th>
+                  <th class="py-2 px-2 w-28">Batch</th>
+                  <th class="py-2 px-2 w-28">ED</th>
+                  <th class="py-2 px-2 w-16 text-center">Qty</th>
+                  <th class="py-2 px-2 w-28 text-right">Harga Setor</th>
+                  <th class="py-2 px-2 w-28 text-right">Harga Jual</th>
+                  <th class="py-2 px-2 w-10 text-center"></th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 bg-white">
+                {#each newKsnForm.items as kItem, kIdx}
+                  {@const selectedProd = products.find((p) => p.id === kItem.productId || p.name === kItem.productName)}
+                  {@const unitOpts = selectedProd?.units?.length
+                    ? selectedProd.units.map((u: any) => ({ value: u.unitName, label: `${u.unitName} (${u.conversionFactor})` }))
+                    : [{ value: kItem.unitName || "PCS", label: kItem.unitName || "PCS" }]}
+                  <tr>
+                    <td class="p-2 max-w-44">
+                      <SearchableSelect
+                        id={`ksn-prod-${kIdx}`}
+                        value={kItem.productName}
+                        onchange={(val) => {
+                          kItem.productName = val;
+                          const p = products.find((prod) => prod.name === val);
+                          if (p) {
+                            kItem.productId = p.id;
+                            const u0 = p.units?.[0];
+                            kItem.unitName = u0?.unitName || p.baseUnit || "PCS";
+                            const factor = Number(u0?.conversionFactor || 1);
+                            const buy = Math.round(Number(p.buyPrice || 1000) * factor);
+                            kItem.unitPrice = buy;
+                            kItem.sellingPrice = Math.round(buy * 1.3);
+                          }
+                        }}
+                        variant="default"
+                        size="sm"
+                        searchPlaceholder="Cari produk..."
+                        options={sortedProductsForKsn.map((p) => ({
+                          value: p.name,
+                          label: p.name,
+                          sublabel: `${p.isConsignment ? "[Konsinyasi] • " : ""}${p.baseUnit} • Est. Beli: ${formatRupiah(p.buyPrice || 0)}`
+                        }))}
+                      />
+                    </td>
+                    <td class="p-2">
+                      <Select
+                        id={`ksn-unit-${kIdx}`}
+                        size="sm"
+                        value={kItem.unitName}
+                        onchange={(val) => {
+                          kItem.unitName = val;
+                          const u = selectedProd?.units?.find((x: any) => x.unitName === val);
+                          const factor = Number(u?.conversionFactor || 1);
+                          const buy = Math.round(Number(selectedProd?.buyPrice || 1000) * factor);
+                          kItem.unitPrice = buy;
+                          kItem.sellingPrice = Math.round(buy * 1.3);
+                        }}
+                        options={unitOpts}
+                      />
+                    </td>
+                    <td class="p-2">
+                      <input
+                        type="text"
+                        bind:value={kItem.batchNo}
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-[11px]"
+                      />
+                    </td>
+                    <td class="p-2">
+                      <input
+                        type="date"
+                        bind:value={kItem.expiredDate}
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-[11px]"
+                      />
+                    </td>
+                    <td class="p-2">
+                      <input
+                        type="number"
+                        min="1"
+                        bind:value={kItem.receivedQty}
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono font-bold text-center"
+                      />
+                    </td>
+                    <td class="p-2">
+                      <input
+                        type="number"
+                        min="0"
+                        bind:value={kItem.unitPrice}
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-right"
+                      />
+                    </td>
+                    <td class="p-2">
+                      <input
+                        type="number"
+                        min="0"
+                        bind:value={kItem.sellingPrice}
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono font-bold text-right text-brand-blue"
+                      />
+                    </td>
+                    <td class="p-2 text-center">
+                      {#if newKsnForm.items.length > 1}
+                        <button
+                          type="button"
+                          onclick={() => removeKsnItem(kIdx)}
+                          class="p-1 text-slate-400 hover:text-rose-600"
+                          title="Hapus Baris"
+                        >
+                          <Trash2 class="w-3.5 h-3.5" />
+                        </button>
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
 
-      <div class="border-t border-slate-100 pt-3 flex justify-end gap-2">
-        <button
-          type="button"
-          onclick={() => (isAddKsnModalOpen = false)}
-          class="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-bold"
-        >
-          Batal
-        </button>
-        <button
-          type="button"
-          onclick={handleCreateConsignment}
-          class="px-4 py-1.5 rounded-xl bg-brand-blue-700 text-white font-bold"
-        >
-          Simpan Titipan
-        </button>
+      <div class="border-t border-slate-100 pt-3 flex items-center justify-between flex-shrink-0">
+        <div class="text-[11px] text-slate-500">
+          Nilai Titipan: <strong class="font-mono text-slate-800">{formatRupiah(newKsnForm.items.reduce((a, b) => a + (Number(b.receivedQty || 0) * Number(b.unitPrice || 0)), 0))}</strong> (tidak masuk hutang PBF sampai terjual)
+        </div>
+        <div class="flex gap-2">
+          <button
+            type="button"
+            onclick={() => (isAddKsnModalOpen = false)}
+            disabled={isSavingKsn}
+            class="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-bold"
+          >
+            Batal
+          </button>
+          <button
+            type="button"
+            onclick={handleCreateConsignment}
+            disabled={isSavingKsn}
+            class="px-4 py-1.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold disabled:opacity-50"
+          >
+            {isSavingKsn ? "Menyimpan..." : "Simpan Titipan & Tambah Stok"}
+          </button>
+        </div>
       </div>
     </div>
   </div>

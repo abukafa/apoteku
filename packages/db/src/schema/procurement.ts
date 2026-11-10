@@ -31,6 +31,7 @@ export const suppliers = pgTable(
     contactPerson: varchar("contact_person", { length: 100 }),
     paymentTermDays: integer("payment_term_days").default(30).notNull(),
     leadTimeDays: integer("lead_time_days").default(3).notNull(),
+    isConsignment: boolean("is_consignment").default(false).notNull(),
     isActive: boolean("is_active").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
   },
@@ -200,6 +201,7 @@ export const consignmentReceipts = pgTable(
     locationId: uuid("location_id")
       .references(() => inventoryLocations.id)
       .notNull(),
+    purchaseOrderId: uuid("purchase_order_id").references(() => purchaseOrders.id),
     receiptNumber: varchar("receipt_number", { length: 100 }).notNull(),
     receiptDate: date("receipt_date").notNull(),
     notes: text("notes"),
@@ -226,8 +228,12 @@ export const consignmentReceiptItems = pgTable(
       .references(() => productBatches.id)
       .notNull(),
     lineNo: integer("line_no").notNull(),
+    unitName: varchar("unit_name", { length: 50 }).default("PCS").notNull(),
+    conversionFactor: numeric("conversion_factor", { precision: 24, scale: 8 }).default("1").notNull(),
     qtyReceived: numeric("qty_received", { precision: 24, scale: 8 }).notNull(),
+    qtyBase: numeric("qty_base", { precision: 24, scale: 8 }).default("0").notNull(),
     costPrice: numeric("cost_price", { precision: 24, scale: 8 }).notNull(),
+    sellingPrice: numeric("selling_price", { precision: 24, scale: 8 }).default("0").notNull(),
     subtotalCost: numeric("subtotal_cost", { precision: 24, scale: 8 }).notNull()
   },
   (t) => [

@@ -77,6 +77,7 @@
     address: "",
     contactPerson: "",
     paymentTermDays: 30,
+    isConsignment: false,
     isActive: true
   });
 
@@ -90,6 +91,7 @@
       address: "",
       contactPerson: "",
       paymentTermDays: 30,
+      isConsignment: false,
       isActive: true
     };
     isSupplierModalOpen = true;
@@ -105,6 +107,7 @@
       address: s.address || "",
       contactPerson: s.contactPerson || "",
       paymentTermDays: Number(s.paymentTermDays ?? 30),
+      isConsignment: Boolean(s.isConsignment),
       isActive: s.isActive ?? true
     };
     isSupplierModalOpen = true;
@@ -332,14 +335,21 @@
     }
   }
 
-  // Filtered (searches across all 241 suppliers before pagination)
+  let supplierTypeFilter = $state<"ALL" | "REGULAR" | "CONSIGNMENT">("ALL");
+
+  // Filtered (searches across all suppliers before pagination)
   let filteredSuppliers = $derived(
-    suppliers.filter(
-      (s) =>
+    suppliers.filter((s) => {
+      const matchSearch =
         s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         s.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.phone.includes(searchQuery)
-    )
+        (s.phone || "").includes(searchQuery);
+      const matchType =
+        supplierTypeFilter === "ALL" ||
+        (supplierTypeFilter === "CONSIGNMENT" && Boolean(s.isConsignment)) ||
+        (supplierTypeFilter === "REGULAR" && !s.isConsignment);
+      return matchSearch && matchType;
+    })
   );
 
   let supplierTotalPages = $derived(
@@ -513,6 +523,24 @@
       pageSize={PAGE_SIZE}
       onPageChange={(p) => (supplierPage = p)}
     >
+      {#snippet filters()}
+        <div class="w-48 shrink-0">
+          <Select
+            value={supplierTypeFilter}
+            onchange={(val) => {
+              supplierTypeFilter = val as typeof supplierTypeFilter;
+              supplierPage = 1;
+            }}
+            size="sm"
+            options={[
+              { value: "ALL", label: "Semua Tipe Vendor" },
+              { value: "REGULAR", label: "PBF Reguler (Faktur)" },
+              { value: "CONSIGNMENT", label: "Vendor Konsinyasi (Titip)" }
+            ]}
+          />
+        </div>
+      {/snippet}
+
       {#snippet header()}
         <th class="py-3 px-4">Kode</th>
         <th class="py-3 px-4">Distributor</th>
@@ -537,7 +565,14 @@
             <tr class="hover:bg-blue-50/40 transition-colors">
               <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{s.code}</td>
               <td class="py-3.5 px-4">
-                <div class="font-bold text-slate-900">{s.name}</div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-bold text-slate-900">{s.name}</span>
+                  {#if s.isConsignment}
+                    <span class="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-200 font-bold text-[10px]">
+                      KONSINYASI
+                    </span>
+                  {/if}
+                </div>
               </td>
               <td class="py-3.5 px-4 font-mono text-slate-600 text-xs">{s.phone}</td>
               <td class="py-3.5 px-4 text-slate-500 text-xs max-w-xs truncate">{s.address}</td>
@@ -821,6 +856,20 @@
             placeholder="Jl. Perintis Kemerdekaan No. 88, Tasikmalaya"
             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2"
           />
+        </div>
+        <div class="col-span-2 bg-purple-50/70 border border-purple-200 rounded-xl p-3 flex items-start gap-2.5">
+          <input
+            id="sup-consign"
+            type="checkbox"
+            bind:checked={supplierForm.isConsignment}
+            class="w-4 h-4 rounded text-purple-600 mt-0.5"
+          />
+          <label for="sup-consign" class="select-none cursor-pointer">
+            <div class="font-bold text-purple-900">Vendor / Mitra Konsinyasi (Titip Jual)</div>
+            <div class="text-[11px] text-purple-700 mt-0.5">
+              Tandai jika vendor ini menitipkan barang secara konsinyasi (pembayaran bagi hasil sesuai barang laku, bukan faktur hutang PBF langsung).
+            </div>
+          </label>
         </div>
         <div class="col-span-2 flex items-center gap-2 pt-1">
           <input

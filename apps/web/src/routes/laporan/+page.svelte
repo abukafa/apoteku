@@ -492,55 +492,59 @@
     breadcrumbs={[{ label: "Laporan" }]}
   >
     {#snippet actions()}
-      <!-- Period Selector -->
-      <div class="w-40">
-        <Select
-          value={selectedPeriod}
-          onchange={(val) => (selectedPeriod = val)}
-          options={[
-            { value: "2025-10", label: "Oktober 2025" },
-            { value: "2025-09", label: "September 2025" },
-            { value: "2025-08", label: "Agustus 2025" }
-          ]}
-        />
+      <div class="grid grid-rows-2 justify-items-end gap-2">
+        <div class="flex justify-end gap-2">
+          <!-- Period Selector -->
+          <div class="w-40">
+            <Select
+              value={selectedPeriod}
+              onchange={(val) => (selectedPeriod = val)}
+              options={[
+                { value: "2025-10", label: "Oktober 2025" },
+                { value: "2025-09", label: "September 2025" },
+                { value: "2025-08", label: "Agustus 2025" }
+              ]}
+            />
+          </div>
+
+          <button
+            type="button"
+            onclick={exportActiveReportCsv}
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs"
+          >
+            <FileSpreadsheet class="w-4 h-4 text-emerald-600" />
+            <span>Export Excel/CSV</span>
+          </button>
+
+          <button
+            type="button"
+            onclick={() => (isPrintModalOpen = true)}
+            class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+          >
+            <Printer class="w-4 h-4" />
+            <span>Cetak Laporan PDF</span>
+          </button>
+        </div>
+        
+        <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
+        {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+          <div class="w-52">
+            <Select
+              value={selectedBranchId}
+              onchange={(val) => (selectedBranchId = val)}
+              options={[
+                { value: "ALL", label: "Semua Cabang Apotek" },
+                ...branches.map((b) => ({ value: b.id, label: b.name }))
+              ]}
+            />
+          </div>
+        {:else}
+          <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
+            <Store class="w-3.5 h-3.5 text-brand-blue" />
+            <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+          </div>
+        {/if}
       </div>
-
-      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
-      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
-        <div class="w-52">
-          <Select
-            value={selectedBranchId}
-            onchange={(val) => (selectedBranchId = val)}
-            options={[
-              { value: "ALL", label: "Semua Cabang Apotek" },
-              ...branches.map((b) => ({ value: b.id, label: b.name }))
-            ]}
-          />
-        </div>
-      {:else}
-        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
-          <Store class="w-3.5 h-3.5 text-brand-blue" />
-          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
-        </div>
-      {/if}
-
-      <button
-        type="button"
-        onclick={exportActiveReportCsv}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs"
-      >
-        <FileSpreadsheet class="w-4 h-4 text-emerald-600" />
-        <span>Export Excel/CSV</span>
-      </button>
-
-      <button
-        type="button"
-        onclick={() => (isPrintModalOpen = true)}
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
-      >
-        <Printer class="w-4 h-4" />
-        <span>Cetak Laporan PDF</span>
-      </button>
     {/snippet}
   </PageHeader>
 

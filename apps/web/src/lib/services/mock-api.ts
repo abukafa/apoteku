@@ -97,6 +97,7 @@ export interface Supplier {
   address: string;
   topDays: number;
   pbfLicense: string;
+  isConsignment?: boolean;
 }
 
 export interface CashierShift {
@@ -313,7 +314,7 @@ class MockApiService {
                         : "OTC") as DrugClass,
                 requiresPrescription:
                   rawClass === "KERAS" || rawClass === "NARKOTIKA" || rawClass === "PSIKOTROPIKA",
-                isConsignment: false,
+                isConsignment: Boolean(p.isConsignment),
                 manufacturer: "PBF Terdaftar",
                 description: p.activeSubstance || p.name,
                 indication: p.indication || "Sesuai anjuran medis",

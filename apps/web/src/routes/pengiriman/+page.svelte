@@ -474,40 +474,38 @@
     breadcrumbs={[{ label: "Pengiriman" }]}
   >
     {#snippet actions()}
-      <div class="grid grid-rows-2 justify-items-end gap-2">
-        <button
-          type="button"
-          onclick={openAddTransferModal}
-          class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
-        >
-          <Plus class="w-4 h-4" />
-          <span>Kirim Barang Baru</span>
-        </button>
-
-        <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
-        {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
-          <Select
-            bind:value={selectedBranchFilter}
-            icon={Store}
-            variant="soft"
-            size="sm"
-            align="right"
-            options={[
-              { value: "ALL", label: "Semua Cabang (Konsolidasi)" },
-              ...branches.map((b) => ({
-                value: b.id,
-                label: `${b.name}`,
-                sublabel: b.address
-              }))
-            ]}
-          />
-        {:else}
-          <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
-            <Store class="w-3.5 h-3.5 text-brand-blue" />
-            <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchFilter)?.name || "Apotek Hafidz Farma Pusat"}</span>
-          </div>
-        {/if}
-      </div>
+      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
+      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+        <Select
+          bind:value={selectedBranchFilter}
+          icon={Store}
+          variant="soft"
+          size="sm"
+          align="right"
+          options={[
+            { value: "ALL", label: "Semua Cabang (Konsolidasi)" },
+            ...branches.map((b) => ({
+              value: b.id,
+              label: `${b.name}`,
+              sublabel: b.address
+            }))
+          ]}
+        />
+      {:else}
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
+          <Store class="w-3.5 h-3.5 text-brand-blue" />
+          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchFilter)?.name || "Apotek Hafidz Farma Pusat"}</span>
+        </div>
+      {/if}
+      
+      <button
+        type="button"
+        onclick={openAddTransferModal}
+        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+      >
+        <Plus class="w-4 h-4" />
+        <span>Kirim Barang Baru</span>
+      </button>
     {/snippet}
   </PageHeader>
 

@@ -640,42 +640,46 @@
     breadcrumbs={[{ label: "Pelayanan Kefarmasian" }]}
   >
     {#snippet actions()}
-      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
-      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
-        <div class="w-56">
-          <Select
-            value={selectedBranchId}
-            onchange={(val) => (selectedBranchId = val)}
-            options={[
-              { value: "ALL", label: "Semua Cabang Apotek" },
-              ...branches.map((b) => ({ value: b.id, label: b.name }))
-            ]}
-          />
-        </div>
-      {:else}
-        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
-          <Store class="w-3.5 h-3.5 text-brand-blue" />
-          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
-        </div>
-      {/if}
+      <div class="grid grid-rows-2 justify-items-end gap-2">
+        <div class="flex justify-end gap-2">
+          <button
+            type="button"
+            onclick={() => (isEtiketModalOpen = true)}
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs"
+          >
+            <Printer class="w-4 h-4 text-brand-blue" />
+            <span>Cetak Etiket Manual</span>
+          </button>
 
-      <button
-        type="button"
-        onclick={() => (isEtiketModalOpen = true)}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs"
-      >
-        <Printer class="w-4 h-4 text-brand-blue" />
-        <span>Cetak Etiket Manual</span>
-      </button>
-
-      <button
-        type="button"
-        onclick={() => (isAddResepModalOpen = true)}
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
-      >
-        <Plus class="w-4 h-4" />
-        <span>Input Resep Dokter Baru</span>
-      </button>
+          <button
+            type="button"
+            onclick={() => (isAddResepModalOpen = true)}
+            class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+          >
+            <Plus class="w-4 h-4" />
+            <span>Input Resep Dokter Baru</span>
+          </button>
+        </div>
+      
+        <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
+        {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+          <div class="w-56">
+            <Select
+              value={selectedBranchId}
+              onchange={(val) => (selectedBranchId = val)}
+              options={[
+                { value: "ALL", label: "Semua Cabang Apotek" },
+                ...branches.map((b) => ({ value: b.id, label: b.name }))
+              ]}
+            />
+          </div>
+        {:else}
+          <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
+            <Store class="w-3.5 h-3.5 text-brand-blue" />
+            <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+          </div>
+        {/if}
+      </div>
     {/snippet}
   </PageHeader>
 
@@ -1122,7 +1126,7 @@
     }}
     role="presentation"
   >
-    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] overflow-y-auto">
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] overflow-y-auto scrollbar-minimalist">
       <div class="flex items-center justify-between border-b border-slate-100 pb-3">
         <div class="flex items-center gap-2 text-slate-900 font-bold">
           <FileText class="w-5 h-5 text-brand-blue" />

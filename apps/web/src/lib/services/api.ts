@@ -173,8 +173,13 @@ export const api = {
         method: "DELETE"
       });
     },
-    async getConsignments() {
-      return await apiFetch<any>("/api/consignments");
+    async getConsignments(branchId?: string) {
+      const qs = branchId && branchId !== "ALL" ? `?branchId=${encodeURIComponent(branchId)}` : "";
+      return await apiFetch<any>(`/api/consignments${qs}`);
+    },
+    async getConsignmentSettlements(branchId?: string) {
+      const qs = branchId && branchId !== "ALL" ? `?branchId=${encodeURIComponent(branchId)}` : "";
+      return await apiFetch<any>(`/api/consignments/settlements${qs}`);
     },
     async createConsignment(payload: any) {
       return await apiFetch<any>("/api/consignments", {
@@ -186,6 +191,11 @@ export const api = {
       return await apiFetch<any>(`/api/consignments/${id}/settle`, {
         method: "POST",
         body: payload ? JSON.stringify(payload) : "{}"
+      });
+    },
+    async deleteConsignment(id: string) {
+      return await apiFetch<any>(`/api/consignments/${id}`, {
+        method: "DELETE"
       });
     }
   },
@@ -245,6 +255,7 @@ export const api = {
       contactPerson?: string;
       paymentTermDays?: number;
       topDays?: number;
+      isConsignment?: boolean;
       isActive?: boolean;
     }) {
       return await apiFetch<any>("/api/suppliers", {
@@ -263,6 +274,7 @@ export const api = {
         contactPerson?: string;
         paymentTermDays?: number;
         topDays?: number;
+        isConsignment?: boolean;
         isActive?: boolean;
       }
     ) {

@@ -1,10 +1,27 @@
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import Papa from "papaparse";
 import { db, schema } from "../index.js";
 import { eq, and } from "drizzle-orm";
 
-const LEGACY_DIR = join(process.cwd(), "legacy_database");
+function resolveLegacyDir(): string {
+  const candidates = [
+    join(process.cwd(), "legacy_database"),
+    join(process.cwd(), "docs", "legacy_database"),
+    resolve(process.cwd(), "../../docs/legacy_database")
+  ];
+  for (const dir of candidates) {
+    if (existsSync(dir)) return dir;
+  }
+  return candidates[0];
+}
+
+const LEGACY_DIR = resolveLegacyDir();
+
+const roundRupiah = (val: unknown): string => {
+  const n = parseFloat(String(val || "0"));
+  return Number.isFinite(n) && n > 0 ? String(Math.round(n)) : "0";
+};
 
 function parseCsv<T>(filename: string): T[] {
   const filePath = join(LEGACY_DIR, filename);
@@ -369,6 +386,13 @@ async function runMasterMigration() {
       else if (upperName.includes("BEBAS TERBATAS")) drugClass = "BEBAS_TERBATAS";
 
       const baseUnit = (b.SATUAN || "PCS").trim().toUpperCase();
+      const buyUnit = b.SATUAN_PEMBELIAN ? b.SATUAN_PEMBELIAN.trim().toUpperCase() : null;
+      const isi = Math.max(1, parseFloat(b.ISI || "1"));
+      const rawHppPack = parseFloat(b.HPP || "0");
+      const rawHppSat = parseFloat(b.HPP_SATUAN || "0");
+      const hppBase = rawHppSat > 0 ? rawHppSat : rawHppPack > 0 ? rawHppPack / isi : 0;
+      const hasSecondaryBuyUnit = Boolean(buyUnit && buyUnit !== baseUnit && isi > 1);
+      const defaultPurchaseUnit = hasSecondaryBuyUnit ? buyUnit! : baseUnit;
 
       try {
         const [prod] = await db
@@ -387,6 +411,8 @@ async function runMasterMigration() {
             rackLocation: rackName,
             drugClass,
             baseUnit,
+            defaultPurchaseUnit,
+            referenceBuyPriceBase: String(hppBase > 0 ? Number(hppBase.toFixed(4)) : 0),
             minStock: "0",
             isConsignment: b.IS_KONSI === "Y",
             isActive: b.DISCONTINUE !== "Y"
@@ -419,20 +445,21 @@ async function runMasterMigration() {
               productId: prod.id,
               unitName: baseUnit,
               conversionFactor: "1",
-              salePriceGeneral: String(parseFloat(b.HARGAJUAL1 || "0")),
-              salePriceResep: String(parseFloat(b.HARGAJUAL2 || b.HARGAJUAL1 || "0")),
-              salePriceGrosir: String(parseFloat(b.HARGAJUAL3 || b.HARGAJUAL1 || "0")),
-              salePriceDelivery: String(parseFloat(b.HARGAJUAL4 || b.HARGAJUAL1 || "0")),
-              salePriceMember: String(parseFloat(b.HARGAJUAL5 || b.HARGAJUAL1 || "0")),
-              isBaseUnit: true
+              buyPrice: String(hppBase > 0 ? Math.round(hppBase) : 0),
+              salePriceGeneral: roundRupiah(b.HARGAJUAL1),
+              salePriceResep: roundRupiah(b.HARGAJUAL2 || b.HARGAJUAL1),
+              salePriceGrosir: roundRupiah(b.HARGAJUAL3 || b.HARGAJUAL1),
+              salePriceDelivery: roundRupiah(b.HARGAJUAL4 || b.HARGAJUAL1),
+              salePriceMember: roundRupiah(b.HARGAJUAL5 || b.HARGAJUAL1),
+              isBaseUnit: true,
+              isSellable: true,
+              isPurchaseUnit: !hasSecondaryBuyUnit
             })
             .onConflictDoNothing();
           unitCount++;
 
           // Secondary unit if SATUAN_PEMBELIAN exists with multiplier ISI > 1
-          const buyUnit = b.SATUAN_PEMBELIAN ? b.SATUAN_PEMBELIAN.trim().toUpperCase() : null;
-          const isi = parseFloat(b.ISI || "1");
-          if (buyUnit && buyUnit !== baseUnit && isi > 1) {
+          if (hasSecondaryBuyUnit && buyUnit) {
             await db
               .insert(schema.productUnits)
               .values({
@@ -440,12 +467,15 @@ async function runMasterMigration() {
                 productId: prod.id,
                 unitName: buyUnit,
                 conversionFactor: String(isi),
-                salePriceGeneral: String(parseFloat(b.HARGAJUAL1 || "0") * isi),
-                salePriceResep: String(parseFloat(b.HARGAJUAL2 || b.HARGAJUAL1 || "0") * isi),
-                salePriceGrosir: String(parseFloat(b.HARGAJUAL3 || b.HARGAJUAL1 || "0") * isi),
-                salePriceDelivery: String(parseFloat(b.HARGAJUAL4 || b.HARGAJUAL1 || "0") * isi),
-                salePriceMember: String(parseFloat(b.HARGAJUAL5 || b.HARGAJUAL1 || "0") * isi),
-                isBaseUnit: false
+                buyPrice: String(hppBase > 0 ? Math.round(hppBase * isi) : 0),
+                salePriceGeneral: roundRupiah(parseFloat(b.HARGAJUAL1 || "0") * isi),
+                salePriceResep: roundRupiah(parseFloat(b.HARGAJUAL2 || b.HARGAJUAL1 || "0") * isi),
+                salePriceGrosir: roundRupiah(parseFloat(b.HARGAJUAL3 || b.HARGAJUAL1 || "0") * isi),
+                salePriceDelivery: roundRupiah(parseFloat(b.HARGAJUAL4 || b.HARGAJUAL1 || "0") * isi),
+                salePriceMember: roundRupiah(parseFloat(b.HARGAJUAL5 || b.HARGAJUAL1 || "0") * isi),
+                isBaseUnit: false,
+                isSellable: true,
+                isPurchaseUnit: true
               })
               .onConflictDoNothing();
             unitCount++;
@@ -459,8 +489,22 @@ async function runMasterMigration() {
     }
   }
 
-  // Merge child rows (178 items) into parent productUnits
+  // Merge child rows (178 items) into parent productUnits with factor deduplication & buy/sell separation
   console.log(`  Merging ${childRows.length} child items into product_units...`);
+  const parentMetaByUuid = new Map<string, { baseRetail: number; hppBase: number }>();
+  for (const p of parentRows) {
+    const pid = productMap.get(String(parseInt(p.ID_BARANG, 10)));
+    if (pid) {
+      const isi = Math.max(1, parseFloat(p.ISI || "1"));
+      const rawPack = parseFloat(p.HPP || "0");
+      const rawSat = parseFloat(p.HPP_SATUAN || "0");
+      parentMetaByUuid.set(pid, {
+        baseRetail: parseFloat(p.HARGAJUAL1 || "0"),
+        hppBase: rawSat > 0 ? rawSat : rawPack > 0 ? rawPack / isi : 0
+      });
+    }
+  }
+
   for (const child of childRows) {
     const parentLegacyId = String(Math.floor(parseFloat(child.ID_SATUAN_DARI)));
     const parentUuid = productMap.get(parentLegacyId);
@@ -470,21 +514,42 @@ async function runMasterMigration() {
       const factor = parseFloat(child.FAKTOR_SATUAN || "1");
 
       try {
-        await db
-          .insert(schema.productUnits)
-          .values({
-            tenantId,
-            productId: parentUuid,
-            unitName,
-            conversionFactor: String(factor),
-            salePriceGeneral: String(parseFloat(child.HARGAJUAL1 || "0")),
-            salePriceResep: String(parseFloat(child.HARGAJUAL2 || child.HARGAJUAL1 || "0")),
-            salePriceGrosir: String(parseFloat(child.HARGAJUAL3 || child.HARGAJUAL1 || "0")),
-            salePriceDelivery: String(parseFloat(child.HARGAJUAL4 || child.HARGAJUAL1 || "0")),
-            salePriceMember: String(parseFloat(child.HARGAJUAL5 || child.HARGAJUAL1 || "0")),
-            isBaseUnit: false
-          })
-          .onConflictDoNothing();
+        // Cegah duplikasi satuan berfaktor konversi sama dalam 1 produk (mis. BOX 100 vs DUS 100)
+        const existingUnits = await db
+          .select({ conversionFactor: schema.productUnits.conversionFactor })
+          .from(schema.productUnits)
+          .where(eq(schema.productUnits.productId, parentUuid));
+
+        const hasSameFactor = existingUnits.some(
+          (eu) => Math.abs(Number(eu.conversionFactor) - factor) < 0.0001
+        );
+
+        if (!hasSameFactor) {
+          const meta = parentMetaByUuid.get(parentUuid) || { baseRetail: 0, hppBase: 0 };
+          const childSaleGen = parseFloat(child.HARGAJUAL1 || "0");
+          const isCat4BuyOnly = meta.baseRetail > 0 && childSaleGen < meta.baseRetail * factor - 1;
+          const unitHpp = meta.hppBase > 0 ? Math.round(meta.hppBase * factor) : 0;
+
+          await db
+            .insert(schema.productUnits)
+            .values({
+              tenantId,
+              productId: parentUuid,
+              unitName,
+              conversionFactor: String(factor),
+              buyPrice: String(unitHpp),
+              salePriceGeneral: roundRupiah(child.HARGAJUAL1),
+              salePriceResep: roundRupiah(child.HARGAJUAL2 || child.HARGAJUAL1),
+              salePriceGrosir: roundRupiah(child.HARGAJUAL3 || child.HARGAJUAL1),
+              salePriceDelivery: roundRupiah(child.HARGAJUAL4 || child.HARGAJUAL1),
+              salePriceMember: roundRupiah(child.HARGAJUAL5 || child.HARGAJUAL1),
+              isBaseUnit: false,
+              isSellable: !isCat4BuyOnly,
+              isPurchaseUnit: isCat4BuyOnly
+            })
+            .onConflictDoNothing();
+          unitCount++;
+        }
 
         // Also map child ID to parent UUID for historical transaction linking
         await db
@@ -498,8 +563,6 @@ async function runMasterMigration() {
             entityId: parentUuid
           })
           .onConflictDoNothing();
-
-        unitCount++;
       } catch (_) {}
     }
   }

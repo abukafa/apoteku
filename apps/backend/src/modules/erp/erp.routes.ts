@@ -4,6 +4,125 @@ import { desc, count, sql, eq, and } from "drizzle-orm";
 import { generateOrderNumber } from "@apoteku/core";
 import { consignmentService } from "./consignment.service.js";
 
+class ProductUnitValidationError extends Error {}
+
+const roundIdr = (val: unknown): number => {
+  const n = Number(val || 0);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+};
+
+function normalizeProductUnitsInput(
+  rawUnits: any[] | undefined,
+  baseUnit: string,
+  fallbackPrices: any = {},
+  fallbackBuyPriceBase = 0
+) {
+  const inputList =
+    Array.isArray(rawUnits) && rawUnits.length > 0
+      ? rawUnits
+      : [
+          {
+            unitName: baseUnit,
+            conversionFactor: 1,
+            buyPrice: roundIdr(fallbackBuyPriceBase),
+            salePriceGeneral: fallbackPrices?.general || 0,
+            salePriceResep: fallbackPrices?.prescription || fallbackPrices?.general || 0,
+            salePriceGrosir: fallbackPrices?.wholesale || fallbackPrices?.general || 0,
+            salePriceDelivery: fallbackPrices?.general || 0,
+            salePriceMember: fallbackPrices?.wholesale || fallbackPrices?.general || 0,
+            isBaseUnit: true,
+            isSellable: true,
+            isPurchaseUnit: true
+          }
+        ];
+
+  const seenUnitNames = new Set<string>();
+  const seenFactors = new Set<number>();
+  const normalizedUnits: Array<{
+    unitName: string;
+    conversionFactor: number;
+    buyPrice: number;
+    salePriceGeneral: number;
+    salePriceResep: number;
+    salePriceGrosir: number;
+    salePriceDelivery: number;
+    salePriceMember: number;
+    isBaseUnit: boolean;
+    isSellable: boolean;
+    isPurchaseUnit: boolean;
+  }> = [];
+
+  for (let i = 0; i < inputList.length; i++) {
+    const u = inputList[i];
+    const unitName = String(u.unitName || u.unit || (i === 0 ? baseUnit : `UNIT${i + 1}`))
+      .trim()
+      .toUpperCase();
+    if (!unitName) continue;
+    if (seenUnitNames.has(unitName)) {
+      throw new ProductUnitValidationError(`Nama satuan "${unitName}" terduplikasi dalam 1 produk.`);
+    }
+    seenUnitNames.add(unitName);
+
+    const factor = i === 0 ? 1 : Math.max(1, Number(u.conversionFactor ?? u.multiplier ?? 1));
+    if (i > 0 && factor <= 1) {
+      throw new ProductUnitValidationError(`Satuan kemasan "${unitName}" harus memiliki faktor konversi lebih dari 1.`);
+    }
+    const factorKey = Math.round(factor * 10000);
+    if (seenFactors.has(factorKey)) {
+      throw new ProductUnitValidationError(
+        `Faktor konversi (${factor} ${baseUnit}) pada satuan "${unitName}" duplikat. Setiap satuan kemasan harus memiliki isi berbeda.`
+      );
+    }
+    seenFactors.add(factorKey);
+
+    const gen = roundIdr(u.salePriceGeneral ?? u.prices?.general);
+    const resep = roundIdr(u.salePriceResep ?? u.prices?.prescription ?? gen);
+    const grosir = roundIdr(u.salePriceGrosir ?? u.prices?.wholesale ?? gen);
+    const deliv = roundIdr(u.salePriceDelivery ?? u.prices?.delivery ?? gen);
+    const member = roundIdr(u.salePriceMember ?? u.prices?.member ?? grosir);
+    const explicitBuy = Number(u.buyPrice);
+    const buyPrice =
+      Number.isFinite(explicitBuy) && explicitBuy >= 0
+        ? Math.round(explicitBuy)
+        : Math.round(Math.max(0, fallbackBuyPriceBase) * factor);
+
+    normalizedUnits.push({
+      unitName,
+      conversionFactor: factor,
+      buyPrice,
+      salePriceGeneral: gen,
+      salePriceResep: resep,
+      salePriceGrosir: grosir,
+      salePriceDelivery: deliv,
+      salePriceMember: member,
+      isBaseUnit: i === 0 || Boolean(u.isBaseUnit),
+      isSellable: i === 0 ? true : u.isSellable !== false,
+      isPurchaseUnit: Boolean(u.isPurchaseUnit)
+    });
+  }
+
+  if (normalizedUnits.length > 0 && !normalizedUnits.some((u) => u.isPurchaseUnit)) {
+    const defaultPurchaseIdx = normalizedUnits.length > 1 ? normalizedUnits.length - 1 : 0;
+    normalizedUnits[defaultPurchaseIdx].isPurchaseUnit = true;
+  }
+
+  const primaryPurchaseUnit =
+    normalizedUnits.find((u) => u.isPurchaseUnit) || normalizedUnits[normalizedUnits.length - 1];
+  const baseUnitRow = normalizedUnits[0];
+  const derivedRefBuyPriceBase =
+    baseUnitRow && baseUnitRow.buyPrice > 0
+      ? baseUnitRow.buyPrice
+      : primaryPurchaseUnit && primaryPurchaseUnit.buyPrice > 0
+        ? primaryPurchaseUnit.buyPrice / Math.max(1, primaryPurchaseUnit.conversionFactor)
+        : Math.max(0, Number(fallbackBuyPriceBase || 0));
+
+  return {
+    normalizedUnits,
+    defaultPurchaseUnit: primaryPurchaseUnit?.unitName || baseUnit,
+    derivedRefBuyPriceBase
+  };
+}
+
 export const erpRoutes = new Elysia({ prefix: "/api" })
   // 1. STATISTIK SISTEM & DASHBOARD
   .get("/stats", async () => {
@@ -79,8 +198,15 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             id: u.id,
             unitName: u.unitName,
             conversionFactor: Number(u.conversionFactor),
+            buyPrice: Number(u.buyPrice || 0),
             salePriceGeneral: Number(u.salePriceGeneral || 0),
-            isBaseUnit: u.isBaseUnit
+            salePriceResep: Number(u.salePriceResep || 0),
+            salePriceGrosir: Number(u.salePriceGrosir || 0),
+            salePriceDelivery: Number(u.salePriceDelivery || 0),
+            salePriceMember: Number(u.salePriceMember || 0),
+            isBaseUnit: u.isBaseUnit,
+            isSellable: Boolean(u.isSellable),
+            isPurchaseUnit: Boolean(u.isPurchaseUnit)
           });
           unitsMap.set(u.productId, list);
         }
@@ -96,38 +222,87 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
 
       const priceMap = new Map<string, number>();
       for (const lp of latestPrices) {
-        if (!priceMap.has(lp.productId)) {
-          priceMap.set(lp.productId, Number(lp.buyPrice || 0));
+        const bp = Number(lp.buyPrice || 0);
+        if (!priceMap.has(lp.productId) && bp > 0) {
+          priceMap.set(lp.productId, bp);
         }
       }
 
       return {
         success: true,
         data: prods.map((p) => {
-          const uList = unitsMap.get(p.id) || [];
-          const baseUnitObj = uList.find((u) => u.isBaseUnit) || uList[0];
+          const uList = [...(unitsMap.get(p.id) || [])].sort(
+            (a, b) => a.conversionFactor - b.conversionFactor
+          );
 
-          let defaultBuyPrice = priceMap.get(p.id);
-          if (!defaultBuyPrice || defaultBuyPrice <= 0) {
-            if (baseUnitObj && Number(baseUnitObj.salePriceGeneral) > 0) {
-              const basePrice = Number(baseUnitObj.salePriceGeneral) / Number(baseUnitObj.conversionFactor || 1);
-              defaultBuyPrice = Math.round(basePrice * 0.8);
-            } else {
-              defaultBuyPrice = 1000;
-            }
-          }
+          // Prioritas HPP per satuan dasar: batch terakhir > master referenceBuyPriceBase > unit.buyPrice/factor > 0
+          const unitWithBuy = uList.find((u) => Number(u.buyPrice) > 0);
+          const refBase = Number(p.referenceBuyPriceBase || 0);
+          const batchBase = priceMap.get(p.id) || 0;
+          const baseBuyPrice =
+            batchBase > 0
+              ? batchBase
+              : refBase > 0
+                ? refBase
+                : unitWithBuy
+                  ? Number(unitWithBuy.buyPrice) / Math.max(1, Number(unitWithBuy.conversionFactor))
+                  : 0;
 
-          const basePrice = defaultBuyPrice;
-          const formattedUnits = (uList.length > 0 ? uList : [{ unitName: p.baseUnit, conversionFactor: 1, isBaseUnit: true }]).map((u) => {
+          const baseUnitsSource =
+            uList.length > 0
+              ? uList
+              : [
+                  {
+                    id: undefined,
+                    unitName: p.baseUnit,
+                    conversionFactor: 1,
+                    buyPrice: Math.round(baseBuyPrice),
+                    salePriceGeneral: 0,
+                    salePriceResep: 0,
+                    salePriceGrosir: 0,
+                    salePriceDelivery: 0,
+                    salePriceMember: 0,
+                    isBaseUnit: true,
+                    isSellable: true,
+                    isPurchaseUnit: true
+                  }
+                ];
+
+          const formattedUnits = baseUnitsSource.map((u) => {
             const factor = Number(u.conversionFactor || 1);
+            const masterUnitBuy = Number(u.buyPrice || 0);
+            const estimatedBuyPrice =
+              batchBase > 0
+                ? Math.round(batchBase * factor)
+                : masterUnitBuy > 0
+                  ? Math.round(masterUnitBuy)
+                  : baseBuyPrice > 0
+                    ? Math.round(baseBuyPrice * factor)
+                    : 0;
             return {
               id: u.id,
               unitName: u.unitName,
               conversionFactor: factor,
               isBaseUnit: Boolean(u.isBaseUnit),
-              estimatedBuyPrice: Math.round(basePrice * factor)
+              isSellable: u.isSellable !== false,
+              isPurchaseUnit: Boolean(u.isPurchaseUnit),
+              buyPrice: masterUnitBuy > 0 ? Math.round(masterUnitBuy) : estimatedBuyPrice,
+              estimatedBuyPrice,
+              salePriceGeneral: Number(u.salePriceGeneral || 0),
+              salePriceResep: Number(u.salePriceResep || 0),
+              salePriceGrosir: Number(u.salePriceGrosir || 0),
+              salePriceDelivery: Number(u.salePriceDelivery || 0),
+              salePriceMember: Number(u.salePriceMember || 0)
             };
           });
+
+          const taggedPurchaseUnits = formattedUnits.filter((u) => u.isPurchaseUnit);
+          const purchaseUnits =
+            taggedPurchaseUnits.length > 0
+              ? taggedPurchaseUnits
+              : formattedUnits.filter((u) => u.conversionFactor > 1).length > 0
+                ? formattedUnits.filter((u) => u.conversionFactor > 1)
+                : formattedUnits;
 
           return {
             id: p.id,
@@ -139,9 +314,12 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             rackLocation: p.rackLocation || "",
             drugClass: p.drugClass,
             baseUnit: p.baseUnit,
+            defaultPurchaseUnit: p.defaultPurchaseUnit || purchaseUnits[0]?.unitName || p.baseUnit,
+            referenceBuyPriceBase: refBase,
             isConsignment: Boolean(p.isConsignment),
-            buyPrice: defaultBuyPrice,
-            units: formattedUnits
+            buyPrice: Math.round(baseBuyPrice),
+            units: formattedUnits,
+            purchaseUnits
           };
         })
       };
@@ -151,9 +329,10 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
   })
 
   // 1D. TAMBAH MASTER PRODUK BARU
-  .post("/products", async ({ body }: { body: any }) => {
+  .post("/products", async ({ body, set }: { body: any; set: any }) => {
     try {
       if (!body.name || !String(body.name).trim()) {
+        set.status = 400;
         return { success: false, error: "Nama obat wajib diisi" };
       }
       const [tenant] = await db.select({ id: schema.tenants.id }).from(schema.tenants).limit(1);
@@ -173,6 +352,14 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
       }
 
       const baseUnit = String(body.baseUnit || body.units?.[0]?.unitName || "PCS").trim().toUpperCase();
+      const rawRefBuy = Number(body.referenceBuyPriceBase ?? body.buyPrice ?? 0);
+      const { normalizedUnits, defaultPurchaseUnit, derivedRefBuyPriceBase } = normalizeProductUnitsInput(
+        body.units,
+        baseUnit,
+        body.unitPrices,
+        rawRefBuy
+      );
+
       const prodId = crypto.randomUUID();
       const now = new Date();
 
@@ -189,47 +376,30 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             dosageForm: body.dosageForm || null,
             drugClass: body.drugClass || "BEBAS",
             baseUnit,
+            defaultPurchaseUnit: String(body.defaultPurchaseUnit || defaultPurchaseUnit).trim().toUpperCase(),
+            referenceBuyPriceBase: String(derivedRefBuyPriceBase),
             isConsignment: Boolean(body.isConsignment),
             isActive: body.isActive ?? true,
             updatedAt: now
           })
           .returning();
 
-        const rawUnits =
-          Array.isArray(body.units) && body.units.length > 0
-            ? body.units
-            : [
-                {
-                  unitName: baseUnit,
-                  conversionFactor: 1,
-                  salePriceGeneral: Number(body.unitPrices?.general || 0),
-                  salePriceResep: Number(body.unitPrices?.prescription || 0),
-                  salePriceGrosir: Number(body.unitPrices?.wholesale || 0),
-                  salePriceDelivery: Number(body.unitPrices?.general || 0),
-                  salePriceMember: Number(body.unitPrices?.wholesale || 0),
-                  isBaseUnit: true
-                }
-              ];
-
-        const seenUnitNames = new Set<string>();
-        for (let i = 0; i < rawUnits.length; i++) {
-          const u = rawUnits[i];
-          const unitName = String(u.unitName || (i === 0 ? baseUnit : `UNIT${i + 1}`)).trim().toUpperCase();
-          if (seenUnitNames.has(unitName)) continue;
-          seenUnitNames.add(unitName);
-
+        for (const u of normalizedUnits) {
           await tx.insert(schema.productUnits).values({
             id: crypto.randomUUID(),
             tenantId: tenant.id,
             productId: prodId,
-            unitName,
-            conversionFactor: String(i === 0 ? 1 : Math.max(1, Number(u.conversionFactor || 1))),
-            salePriceGeneral: String(Number(u.salePriceGeneral || 0)),
-            salePriceResep: String(Number(u.salePriceResep || u.salePriceGeneral || 0)),
-            salePriceGrosir: String(Number(u.salePriceGrosir || u.salePriceGeneral || 0)),
-            salePriceDelivery: String(Number(u.salePriceDelivery || u.salePriceGeneral || 0)),
-            salePriceMember: String(Number(u.salePriceMember || u.salePriceGrosir || u.salePriceGeneral || 0)),
-            isBaseUnit: i === 0 || Boolean(u.isBaseUnit)
+            unitName: u.unitName,
+            conversionFactor: String(u.conversionFactor),
+            buyPrice: String(u.buyPrice),
+            salePriceGeneral: String(u.salePriceGeneral),
+            salePriceResep: String(u.salePriceResep),
+            salePriceGrosir: String(u.salePriceGrosir),
+            salePriceDelivery: String(u.salePriceDelivery),
+            salePriceMember: String(u.salePriceMember),
+            isBaseUnit: u.isBaseUnit,
+            isSellable: u.isSellable,
+            isPurchaseUnit: u.isPurchaseUnit
           });
         }
 
@@ -277,7 +447,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
               productId: prodId,
               batchId,
               qtyBase: String(initStock),
-              buyPrice: String(Number(body.buyPrice || 0)),
+              buyPrice: String(derivedRefBuyPriceBase || Number(body.buyPrice || 0)),
               updatedAt: now
             });
 
@@ -306,12 +476,15 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         }
       };
     } catch (err: any) {
+      if (err instanceof ProductUnitValidationError) {
+        set.status = 400;
+      }
       return { success: false, error: err.message };
     }
   })
 
   // 1E. UPDATE MASTER PRODUK
-  .put("/products/:id", async ({ params, body }: { params: { id: string }; body: any }) => {
+  .put("/products/:id", async ({ params, body, set }: { params: { id: string }; body: any; set: any }) => {
     try {
       const [existing] = await db
         .select()
@@ -320,7 +493,18 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         .limit(1);
 
       if (!existing) {
+        set.status = 404;
         return { success: false, error: "Produk tidak ditemukan di database" };
+      }
+
+      const targetBaseUnit = String(body.baseUnit || body.units?.[0]?.unitName || existing.baseUnit)
+        .trim()
+        .toUpperCase();
+      const rawRefBuy = Number(body.referenceBuyPriceBase ?? body.buyPrice ?? existing.referenceBuyPriceBase ?? 0);
+
+      let unitMeta: ReturnType<typeof normalizeProductUnitsInput> | null = null;
+      if (Array.isArray(body.units) && body.units.length > 0) {
+        unitMeta = normalizeProductUnitsInput(body.units, targetBaseUnit, body.unitPrices, rawRefBuy);
       }
 
       const now = new Date();
@@ -333,9 +517,19 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           updateFields.activeSubstance = body.genericName ?? body.activeSubstance ?? null;
         }
         if (body.drugClass !== undefined) updateFields.drugClass = body.drugClass;
-        if (body.baseUnit !== undefined) updateFields.baseUnit = String(body.baseUnit).trim().toUpperCase();
+        if (body.baseUnit !== undefined) updateFields.baseUnit = targetBaseUnit;
         if (body.isConsignment !== undefined) updateFields.isConsignment = Boolean(body.isConsignment);
         if (body.isActive !== undefined) updateFields.isActive = Boolean(body.isActive);
+        if (unitMeta) {
+          updateFields.defaultPurchaseUnit = String(
+            body.defaultPurchaseUnit || unitMeta.defaultPurchaseUnit
+          )
+            .trim()
+            .toUpperCase();
+          updateFields.referenceBuyPriceBase = String(unitMeta.derivedRefBuyPriceBase);
+        } else if (body.referenceBuyPriceBase !== undefined || body.buyPrice !== undefined) {
+          updateFields.referenceBuyPriceBase = String(Math.max(0, rawRefBuy));
+        }
 
         const [p] = await tx
           .update(schema.products)
@@ -343,32 +537,27 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           .where(eq(schema.products.id, params.id))
           .returning();
 
-        if (Array.isArray(body.units) && body.units.length > 0) {
+        if (unitMeta) {
           await tx
             .delete(schema.productUnits)
             .where(eq(schema.productUnits.productId, params.id));
 
-          const seenUnits = new Set<string>();
-          for (let i = 0; i < body.units.length; i++) {
-            const u = body.units[i];
-            const unitName = String(u.unitName || u.unit || (i === 0 ? p.baseUnit : `UNIT${i + 1}`))
-              .trim()
-              .toUpperCase();
-            if (seenUnits.has(unitName)) continue;
-            seenUnits.add(unitName);
-
+          for (const u of unitMeta.normalizedUnits) {
             await tx.insert(schema.productUnits).values({
               id: crypto.randomUUID(),
               tenantId: existing.tenantId,
               productId: params.id,
-              unitName,
-              conversionFactor: String(i === 0 ? 1 : Math.max(1, Number(u.conversionFactor || 1))),
-              salePriceGeneral: String(Number(u.salePriceGeneral || 0)),
-              salePriceResep: String(Number(u.salePriceResep || u.salePriceGeneral || 0)),
-              salePriceGrosir: String(Number(u.salePriceGrosir || u.salePriceGeneral || 0)),
-              salePriceDelivery: String(Number(u.salePriceDelivery || u.salePriceGeneral || 0)),
-              salePriceMember: String(Number(u.salePriceMember || u.salePriceGrosir || u.salePriceGeneral || 0)),
-              isBaseUnit: i === 0 || Boolean(u.isBaseUnit)
+              unitName: u.unitName,
+              conversionFactor: String(u.conversionFactor),
+              buyPrice: String(u.buyPrice),
+              salePriceGeneral: String(u.salePriceGeneral),
+              salePriceResep: String(u.salePriceResep),
+              salePriceGrosir: String(u.salePriceGrosir),
+              salePriceDelivery: String(u.salePriceDelivery),
+              salePriceMember: String(u.salePriceMember),
+              isBaseUnit: u.isBaseUnit,
+              isSellable: u.isSellable,
+              isPurchaseUnit: u.isPurchaseUnit
             });
           }
         }
@@ -385,6 +574,9 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         }
       };
     } catch (err: any) {
+      if (err instanceof ProductUnitValidationError) {
+        set.status = 400;
+      }
       return { success: false, error: err.message };
     }
   })
@@ -787,6 +979,9 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           id: schema.salesTransactions.id,
           invoiceNo: schema.salesTransactions.invoiceNo,
           createdAt: schema.salesTransactions.createdAt,
+          branchId: schema.salesTransactions.branchId,
+          branchName: schema.branches.name,
+          branchPhone: schema.branches.phone,
           customerType: schema.salesTransactions.customerType,
           customerId: schema.salesTransactions.customerId,
           customerName: schema.customers.name,
@@ -806,6 +1001,10 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           changeAmount: schema.salesTransactions.changeAmount
         })
         .from(schema.salesTransactions)
+        .leftJoin(
+          schema.branches,
+          eq(schema.salesTransactions.branchId, schema.branches.id)
+        )
         .leftJoin(
           schema.customers,
           eq(schema.salesTransactions.customerId, schema.customers.id)
@@ -883,6 +1082,9 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
 
           return {
             id: s.id,
+            branchId: s.branchId,
+            branchName: s.branchName || "Apotek Hafidz Farma",
+            branchPhone: s.branchPhone || "",
             invoiceNo: s.invoiceNo,
             invoiceNumber: s.invoiceNo,
             createdAt: s.createdAt.toLocaleString("id-ID", {
@@ -1635,6 +1837,29 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
               buyPrice: String(costPerBase),
               updatedAt: new Date()
             });
+          }
+
+          // D2. Sinkronkan HNA referensi terbaru pada master produk & product_units
+          if (costPerBase > 0) {
+            await tx
+              .update(schema.products)
+              .set({
+                referenceBuyPriceBase: String(costPerBase),
+                updatedAt: new Date()
+              })
+              .where(eq(schema.products.id, productId));
+
+            for (const pu of prodUnits) {
+              const puFactor = Math.max(1, Number(pu.conversionFactor || 1));
+              const updatedUnitBuy =
+                String(pu.unitName || "").trim().toUpperCase() === unitName
+                  ? Math.round(buyPrice)
+                  : Math.round(costPerBase * puFactor);
+              await tx
+                .update(schema.productUnits)
+                .set({ buyPrice: String(updatedUnitBuy) })
+                .where(eq(schema.productUnits.id, pu.id));
+            }
           }
 
           // E. Update or Insert ke branch_stocks (Saldo Total Stok per Produk di Lokasi)

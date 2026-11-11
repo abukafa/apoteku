@@ -33,7 +33,8 @@ export const posRoutes = new Elysia({ prefix: "/api/pos" })
     "/bootstrap",
     async ({ tenant, query }) => {
       const targetBranchId = query.branch_id || tenant.branchId;
-      return await posService.getBootstrap(tenant.tenantId, targetBranchId);
+      const includeAllUnits = query.include_all_units === "1" || query.include_all_units === "true";
+      return await posService.getBootstrap(tenant.tenantId, targetBranchId, includeAllUnits);
     },
     {
       query: BootstrapQuerySchema,

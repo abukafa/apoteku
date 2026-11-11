@@ -28,8 +28,13 @@
   import DataTable from "$lib/components/ui/DataTable.svelte";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
+  import ThermalReceiptSheet, {
+    mapSaleToThermalReceipt,
+    triggerThermalPrint,
+    type ThermalReceiptData
+  } from "$lib/components/ui/ThermalReceiptSheet.svelte";
   import { portal } from "$lib/actions/portal";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { api } from "$lib/services/api";
   import { alertStore } from "$lib/stores/alertStore.svelte";
   import { formatRupiah } from "@apoteku/core";
@@ -132,6 +137,23 @@
   function openDetail(trx: any) {
     selectedTransaction = trx;
     isDetailModalOpen = true;
+  }
+
+  // State Cetak Ulang Struk Thermal ESC/POS
+  let activeReprintReceipt = $state<ThermalReceiptData | null>(null);
+  let cleanupPrintListener: (() => void) | null = null;
+
+  onDestroy(() => {
+    cleanupPrintListener?.();
+  });
+
+  async function handleReprintThermal(trx: any) {
+    if (!trx) return;
+    cleanupPrintListener?.();
+    activeReprintReceipt = mapSaleToThermalReceipt(trx);
+    cleanupPrintListener = await triggerThermalPrint(() => {
+      activeReprintReceipt = null;
+    });
   }
 </script>
 
@@ -438,7 +460,7 @@
               </button>
               <button
                 type="button"
-                onclick={() => alertStore.toast(`Mencetak ulang struk thermal untuk ${trx.invoiceNo}`, "success", "Cetak Struk")}
+                onclick={() => handleReprintThermal(trx)}
                 class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-emerald-600 transition-colors"
                 title="Cetak Ulang Struk Thermal ESC/POS"
               >
@@ -458,7 +480,7 @@
   <div
     use:portal
     data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    class="modal-overlay print:!hidden fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
       if (e.target === e.currentTarget) isDetailModalOpen = false;
     }}
@@ -593,7 +615,7 @@
       <div class="border-t border-slate-100 pt-3 flex items-center justify-between">
         <button
           type="button"
-          onclick={() => alertStore.toast(`Mencetak ulang faktur resmi ${selectedTransaction.invoiceNo}`, "success", "Cetak Faktur")}
+          onclick={() => handleReprintThermal(selectedTransaction)}
           class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors"
         >
           <Printer class="w-4 h-4 text-emerald-600" />
@@ -611,3 +633,6 @@
     </div>
   </div>
 {/if}
+
+<!-- KOMPONEN REUSABLE LEMBAR CETAK PRINTER TERMAL -->
+<ThermalReceiptSheet receipt={activeReprintReceipt} />

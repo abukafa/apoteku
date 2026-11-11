@@ -281,10 +281,7 @@
         products = prodRes.data;
         const preferredConsignProd = products.find((p: any) => p.isConsignment) || products[0];
         const firstProd = products[0];
-        const defaultUnitObj = firstProd.units?.find((u: any) => !u.isBaseUnit) || firstProd.units?.[0];
-        const defaultUnit = defaultUnitObj?.unitName || firstProd.baseUnit || "BOX";
-        const factor = defaultUnitObj ? Number(defaultUnitObj.conversionFactor || 1) : 1;
-        const initialHna = defaultUnitObj?.estimatedBuyPrice || Math.round(Number(firstProd.buyPrice || 1000) * factor);
+        const firstMeta = resolvePurchaseUnitMeta(firstProd);
 
         if (newInvoiceItems.length === 1 && newInvoiceItems[0].productId === "prod-amox-500") {
           newInvoiceItems = [
@@ -293,31 +290,31 @@
               productName: firstProd.name,
               batchNo: `BCH-${Date.now().toString().slice(-6)}`,
               expiredDate: "2027-12-31",
-              unit: defaultUnit,
+              unit: firstMeta.unit,
+              conversionFactor: firstMeta.factor,
+              baseUnit: firstMeta.baseUnit,
               qty: 1,
-              hna: initialHna,
+              hna: firstMeta.buyPrice,
               disc1: 0,
               disc2: 0
             }
           ];
         }
         draftSpProductName = firstProd.name;
-        draftSpUnit = defaultUnit;
-        draftSpHna = initialHna;
+        draftSpUnit = firstMeta.unit;
+        draftSpHna = firstMeta.buyPrice;
         if (preferredConsignProd) {
-          const kUnit = preferredConsignProd.units?.[0];
-          const kFactor = Number(kUnit?.conversionFactor || 1);
-          const kBuy = Number(preferredConsignProd.buyPrice || 1000) * kFactor;
+          const kMeta = resolvePurchaseUnitMeta(preferredConsignProd);
           newKsnForm.items = [
             {
               productId: preferredConsignProd.id,
               productName: preferredConsignProd.name,
-              unitName: kUnit?.unitName || preferredConsignProd.baseUnit || "PCS",
+              unitName: kMeta.unit,
               batchNo: `KSN-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-01`,
               expiredDate: "2027-12-31",
               receivedQty: 10,
-              unitPrice: Math.round(kBuy),
-              sellingPrice: Math.round(kBuy * 1.3)
+              unitPrice: kMeta.buyPrice,
+              sellingPrice: Math.round(kMeta.buyPrice * 1.3)
             }
           ];
         }
@@ -434,39 +431,85 @@
   let draftSpProductName = $state("");
   let draftSpQty = $state(1);
   let draftSpUnit = $state("BOX");
-  let draftSpHna = $state(15000);
+  let draftSpHna = $state(0);
+  let showAllSpUnits = $state(false);
 
   let currentSpProduct = $derived(
     products.find((p) => p.name === draftSpProductName)
   );
 
-  let availableSpUnits = $derived(
-    currentSpProduct?.units && currentSpProduct.units.length > 0
-      ? currentSpProduct.units.map((u: any) => ({
-          value: u.unitName,
-          label: `${u.unitName} (Isi ${Number(u.conversionFactor || 1)} ${currentSpProduct.baseUnit})`
-        }))
-      : [{ value: currentSpProduct?.baseUnit || "BOX", label: currentSpProduct?.baseUnit || "BOX" }]
-  );
+  function getSpCandidateUnits(prod: any, includeAll = false): any[] {
+    if (!prod) return [];
+    const all = Array.isArray(prod.units) ? prod.units : [];
+    if (includeAll) return all;
+    if (Array.isArray(prod.purchaseUnits) && prod.purchaseUnits.length > 0) {
+      return prod.purchaseUnits;
+    }
+    const flagged = all.filter((u: any) => Boolean(u.isPurchaseUnit));
+    if (flagged.length > 0) return flagged;
+    const packUnits = all.filter((u: any) => Number(u.conversionFactor || 1) > 1);
+    return packUnits.length > 0 ? packUnits : all;
+  }
+
+  let availableSpUnits = $derived.by(() => {
+    const candidates = getSpCandidateUnits(currentSpProduct, showAllSpUnits);
+    if (candidates.length === 0) {
+      const defUnit = currentSpProduct?.defaultPurchaseUnit || currentSpProduct?.baseUnit || "BOX";
+      return [{ value: defUnit, label: defUnit }];
+    }
+    return candidates.map((u: any) => ({
+      value: u.unitName,
+      label: `${u.unitName} (Isi ${Number(u.conversionFactor || 1)} ${currentSpProduct.baseUnit})`
+    }));
+  });
+
+  function resolvePurchaseUnitMeta(prod: any, unitName?: string) {
+    const targetUpper = String(unitName || "").trim().toUpperCase();
+    const candidates = getSpCandidateUnits(prod, false);
+    const allUnits: any[] = Array.isArray(prod?.units) ? prod.units : [];
+    const matched =
+      (targetUpper
+        ? allUnits.find((u: any) => String(u.unitName || "").trim().toUpperCase() === targetUpper)
+        : undefined) ||
+      (prod?.defaultPurchaseUnit
+        ? allUnits.find(
+            (u: any) =>
+              String(u.unitName || "").trim().toUpperCase() ===
+              String(prod.defaultPurchaseUnit).trim().toUpperCase()
+          )
+        : undefined) ||
+      candidates[0] ||
+      allUnits[0];
+
+    const unit = matched?.unitName || targetUpper || prod?.defaultPurchaseUnit || prod?.baseUnit || "BOX";
+    const factor = Math.max(1, Number(matched?.conversionFactor || 1));
+    const baseUnit = prod?.baseUnit || "PCS";
+    const explicitUnitBuy = Number(matched?.estimatedBuyPrice ?? matched?.buyPrice ?? 0);
+    const refBaseBuy = Number(prod?.buyPrice || prod?.referenceBuyPriceBase || 0);
+    const buyPrice =
+      explicitUnitBuy > 0
+        ? Math.round(explicitUnitBuy)
+        : refBaseBuy > 0
+          ? Math.round(refBaseBuy * factor)
+          : 0;
+    return { prod, unit, factor, baseUnit, buyPrice };
+  }
 
   function handleSpProductChange(val: string) {
     draftSpProductName = val;
     const prod = products.find((p) => p.name === val);
     if (prod) {
-      const defaultUnitObj = prod.units?.find((u: any) => !u.isBaseUnit) || prod.units?.[0];
-      const unitName = defaultUnitObj?.unitName || prod.baseUnit || "BOX";
-      const factor = defaultUnitObj ? Number(defaultUnitObj.conversionFactor || 1) : 1;
-      draftSpUnit = unitName;
-      draftSpHna = defaultUnitObj?.estimatedBuyPrice || Math.round(Number(prod.buyPrice || 1000) * factor);
+      const meta = resolvePurchaseUnitMeta(prod);
+      draftSpUnit = meta.unit;
+      draftSpHna = meta.buyPrice;
     }
   }
 
   function handleSpUnitChange(val: string) {
     draftSpUnit = val;
     if (!currentSpProduct) return;
-    const unitObj = currentSpProduct.units?.find((u: any) => u.unitName === val);
-    const factor = unitObj ? Number(unitObj.conversionFactor || 1) : 1;
-    draftSpHna = unitObj?.estimatedBuyPrice || Math.round(Number(currentSpProduct.buyPrice || 1000) * factor);
+    const meta = resolvePurchaseUnitMeta(currentSpProduct, val);
+    draftSpHna = meta.buyPrice;
   }
 
   function updateDueDateFromSupplier(supplierName: string, invDate: string) {
@@ -482,16 +525,7 @@
 
   function resolveInvoiceUnitMeta(productIdOrName: string, unitName?: string) {
     const prod = products.find((p) => p.id === productIdOrName || p.name === productIdOrName);
-    const targetUpper = String(unitName || "").trim().toUpperCase();
-    const matched =
-      prod?.units?.find((u: any) => String(u.unitName || "").trim().toUpperCase() === targetUpper) ||
-      prod?.units?.find((u: any) => !u.isBaseUnit) ||
-      prod?.units?.[0];
-    const unit = matched?.unitName || targetUpper || prod?.baseUnit || "BOX";
-    const factor = Math.max(1, Number(matched?.conversionFactor || 1));
-    const baseUnit = prod?.baseUnit || "PCS";
-    const buyPrice = matched?.estimatedBuyPrice || Math.round(Number(prod?.buyPrice || 15000) * factor);
-    return { prod, unit, factor, baseUnit, buyPrice };
+    return resolvePurchaseUnitMeta(prod, unitName);
   }
 
   function addNewInvoiceItem() {
@@ -1016,7 +1050,7 @@
         productName: draftSpProductName,
         qty: Number(draftSpQty),
         unit: draftSpUnit,
-        estimatedHna: Number(draftSpHna) || 15000
+        estimatedHna: Math.max(0, Number(draftSpHna) || 0)
       }
     ];
     draftSpQty = 1;
@@ -2162,8 +2196,16 @@
                 {#each newInvoiceItems as item, idx}
                   {@const rowMeta = resolveInvoiceUnitMeta(item.productId || item.productName, item.unit)}
                   {@const rowProd = rowMeta.prod}
-                  {@const rowUnitOptions = rowProd?.units?.length
-                    ? rowProd.units.map((u: any) => ({
+                  {@const rowOrderedUnits = rowProd
+                    ? [
+                        ...getSpCandidateUnits(rowProd, false),
+                        ...(rowProd.units || []).filter(
+                          (u: any) => !getSpCandidateUnits(rowProd, false).some((pu: any) => pu.unitName === u.unitName)
+                        )
+                      ]
+                    : []}
+                  {@const rowUnitOptions = rowOrderedUnits.length
+                    ? rowOrderedUnits.map((u: any) => ({
                         value: u.unitName,
                         label: `${u.unitName} (${Number(u.conversionFactor || 1)} ${rowProd.baseUnit || "PCS"})`
                       }))
@@ -2198,11 +2240,14 @@
                           variant="default"
                           size="sm"
                           searchPlaceholder="Cari nama obat..."
-                          options={products.map((p) => ({
-                            value: p.name,
-                            label: p.name,
-                            sublabel: `${p.baseUnit} • Beli: ${formatRupiah(p.buyPrice || 0)}`
-                          }))}
+                          options={products.map((p) => {
+                            const invMeta = resolvePurchaseUnitMeta(p);
+                            return {
+                              value: p.name,
+                              label: p.name,
+                              sublabel: `Beli: ${invMeta.unit} (${invMeta.factor} ${p.baseUnit}) • HNA: ${formatRupiah(invMeta.buyPrice)}`
+                            };
+                          })}
                         />
                       {/if}
                     </td>
@@ -2758,11 +2803,14 @@
               value={draftSpProductName}
               onchange={handleSpProductChange}
               searchPlaceholder="Pilih atau cari nama obat..."
-              options={products.map((p) => ({
-                value: p.name,
-                label: p.name,
-                sublabel: `${p.baseUnit} • Base HNA: ${formatRupiah(p.buyPrice || 0)}`
-              }))}
+              options={products.map((p) => {
+                const spMeta = resolvePurchaseUnitMeta(p);
+                return {
+                  value: p.name,
+                  label: p.name,
+                  sublabel: `Beli: ${spMeta.unit} (${spMeta.factor} ${p.baseUnit}) • HNA: ${formatRupiah(spMeta.buyPrice)}`
+                };
+              })}
             />
           </div>
           <div class="col-span-2">
@@ -2776,7 +2824,17 @@
             />
           </div>
           <div class="col-span-2">
-            <label for="sp-item-unit" class="text-[11px] font-semibold text-slate-600 block mb-1">Satuan</label>
+            <div class="flex items-center justify-between mb-1 gap-1">
+              <label for="sp-item-unit" class="text-[11px] font-semibold text-slate-600">Satuan Beli</label>
+              <button
+                type="button"
+                onclick={() => (showAllSpUnits = !showAllSpUnits)}
+                class="text-[9px] font-bold {showAllSpUnits ? 'text-brand-blue underline' : 'text-slate-400 hover:text-slate-600'}"
+                title="Tampilkan juga satuan eceran"
+              >
+                {showAllSpUnits ? "Semua" : "Beli saja"}
+              </button>
+            </div>
             <Select
               id="sp-item-unit"
               value={draftSpUnit}
@@ -2785,7 +2843,7 @@
             />
           </div>
           <div class="col-span-2">
-            <label for="sp-item-hna" class="text-[11px] font-semibold text-slate-600 block mb-1">Estimasi HNA</label>
+            <label for="sp-item-hna" class="text-[11px] font-semibold text-slate-600 block mb-1">HNA Beli (Rp)</label>
             <input
               id="sp-item-hna"
               type="number"

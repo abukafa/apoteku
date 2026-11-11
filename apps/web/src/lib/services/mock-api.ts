@@ -17,6 +17,9 @@ export interface ProductPriceTiers {
 export interface ProductUnit {
   unit: string;
   multiplier: number;
+  buyPrice?: number;
+  isSellable?: boolean;
+  isPurchaseUnit?: boolean;
   prices: ProductPriceTiers;
 }
 
@@ -45,6 +48,8 @@ export interface Product {
   indication: string;
   dosage: string;
   baseUnit: string;
+  defaultPurchaseUnit?: string;
+  referenceBuyPriceBase?: number;
   units: ProductUnit[];
   batches: ProductBatch[];
 }
@@ -195,15 +200,17 @@ class MockApiService {
   private loadPromise: Promise<void> | null = null;
 
   async ensureDataLoaded(branchId?: string): Promise<void> {
+    while (this.loadPromise) {
+      await this.loadPromise;
+    }
     if (this.isLoadedFromApi && (!branchId || this.loadedBranchId === branchId)) return;
-    if (this.loadPromise) return this.loadPromise;
 
     this.loadPromise = (async () => {
       try {
-        const res = await api.pos.getBootstrap(branchId);
+        const res = await api.pos.getBootstrap(branchId, true);
         if (res?.success && res?.data) {
           const d = res.data;
-          const activeBranchId = branchId || d.branch?.id || "1";
+          const activeBranchId = d.branch?.id || branchId || "1";
 
           const batchesByProductId = new Map<string, any[]>();
           for (const b of d.branchBatches || []) {
@@ -242,12 +249,15 @@ class MockApiService {
               const mappedUnits: ProductUnit[] = (p.units || []).map((u: any) => ({
                 unit: u.unitName,
                 multiplier: Number(u.conversionFactor) || 1,
+                buyPrice: Number(u.buyPrice || 0),
+                isSellable: u.isSellable !== false,
+                isPurchaseUnit: Boolean(u.isPurchaseUnit),
                 prices: {
-                  general: Number(u.salePriceGeneral || 0),
-                  prescription: Number(u.salePriceResep || u.salePriceGeneral || 0),
-                  wholesale: Number(u.salePriceGrosir || u.salePriceGeneral || 0),
-                  delivery: Number(u.salePriceDelivery || u.salePriceGeneral || 0),
-                  member: Number(u.salePriceMember || u.salePriceGeneral || 0)
+                  general: Math.round(Number(u.salePriceGeneral || 0)),
+                  prescription: Math.round(Number(u.salePriceResep || u.salePriceGeneral || 0)),
+                  wholesale: Math.round(Number(u.salePriceGrosir || u.salePriceGeneral || 0)),
+                  delivery: Math.round(Number(u.salePriceDelivery || u.salePriceGeneral || 0)),
+                  member: Math.round(Number(u.salePriceMember || u.salePriceGeneral || 0))
                 }
               }));
 
@@ -255,6 +265,9 @@ class MockApiService {
                 mappedUnits.push({
                   unit: p.baseUnit || "PCS",
                   multiplier: 1,
+                  buyPrice: Math.round(Number(p.referenceBuyPriceBase || 0)),
+                  isSellable: true,
+                  isPurchaseUnit: true,
                   prices: {
                     general: 0,
                     prescription: 0,
@@ -320,6 +333,8 @@ class MockApiService {
                 indication: p.indication || "Sesuai anjuran medis",
                 dosage: p.defaultDosage || "3x1 Sehari",
                 baseUnit: p.baseUnit || "PCS",
+                defaultPurchaseUnit: p.defaultPurchaseUnit || undefined,
+                referenceBuyPriceBase: Number(p.referenceBuyPriceBase || 0),
                 units: mappedUnits,
                 batches: mappedBatches
               };
@@ -332,7 +347,7 @@ class MockApiService {
             this.customers = d.customers;
           }
           this.isLoadedFromApi = true;
-          this.loadedBranchId = activeBranchId;
+          this.loadedBranchId = branchId || activeBranchId;
         }
       } catch (err) {
         console.warn("[MockApi] Backend unavailable, continuing with offline/local fallback:", err);
@@ -535,7 +550,7 @@ class MockApiService {
         : p.batches;
       return {
         ...p,
-        batches: branchBatches.length > 0 ? branchBatches : p.batches
+        batches: branchBatches
       };
     });
   }
@@ -551,7 +566,7 @@ class MockApiService {
     const branchBatches = product.batches.filter((b) => b.branchId === branchId);
     return {
       ...product,
-      batches: branchBatches.length > 0 ? branchBatches : product.batches
+      batches: branchBatches
     };
   }
 
@@ -563,7 +578,7 @@ class MockApiService {
     const branchBatches = product.batches.filter((b) => b.branchId === branchId);
     return {
       ...product,
-      batches: branchBatches.length > 0 ? branchBatches : product.batches
+      batches: branchBatches
     };
   }
 

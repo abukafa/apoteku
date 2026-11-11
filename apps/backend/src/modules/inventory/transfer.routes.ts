@@ -5,19 +5,46 @@ export const transferRoutes = new Elysia({ prefix: "/api/inventory/transfers" })
   .derive(({ headers }) => {
     const tenantId = (headers["x-tenant-id"] as string) || undefined;
     const branchId = (headers["x-branch-id"] as string) || undefined;
-    return { tenantId, branchId };
+    const userId = (headers["x-user-id"] as string) || undefined;
+    return { tenantId, branchId, userId };
   })
+  // 0. GET AVAILABLE STOCKED PRODUCTS FOR A SPECIFIC BRANCH
+  .get(
+    "/branch-products",
+    async ({ query, branchId, tenantId }) => {
+      try {
+        const targetBranch = query.branch_id || branchId;
+        if (!targetBranch) {
+          return { success: false, error: "Parameter branch_id wajib diisi", data: [] };
+        }
+        const data = await transferService.getBranchProducts(targetBranch, tenantId);
+        return { success: true, data };
+      } catch (err: any) {
+        return { success: false, error: err.message, data: [] };
+      }
+    },
+    {
+      query: t.Object({
+        branch_id: t.Optional(t.String())
+      }),
+      detail: {
+        tags: ["Inventori Transfer"],
+        summary: "Daftar Obat Beserta Batch & Satuan yang Tersedia di Cabang Tertentu"
+      }
+    }
+  )
+
   // 1. GET ALL TRANSFERS
   .get(
     "",
-    async ({ query, branchId }) => {
+    async ({ query, branchId, tenantId }) => {
       try {
         const targetBranch = query.branch_id || branchId;
         const limit = query.limit ? Number(query.limit) : 50;
-        const data = await transferService.getTransfers(targetBranch, limit);
+        const data = await transferService.getTransfers(targetBranch, limit, tenantId);
         return { success: true, data };
       } catch (err: any) {
-        return { success: false, error: err.message };
+        return { success: false, error: err.message, data: [] };
       }
     },
     {
@@ -35,11 +62,12 @@ export const transferRoutes = new Elysia({ prefix: "/api/inventory/transfers" })
   // 2. CREATE NEW TRANSFER (RKB)
   .post(
     "",
-    async ({ body, tenantId }) => {
+    async ({ body, tenantId, userId }) => {
       try {
         const res = await transferService.createTransfer({
           ...body,
-          tenantId
+          tenantId,
+          userId
         });
         return res;
       } catch (err: any) {
@@ -59,9 +87,11 @@ export const transferRoutes = new Elysia({ prefix: "/api/inventory/transfers" })
           t.Object({
             productId: t.String(),
             productName: t.Optional(t.String()),
+            batchId: t.Optional(t.String()),
             batchNumber: t.Optional(t.String()),
             expiryDate: t.Optional(t.String()),
-            qty: t.Number({ minimum: 1 }),
+            locationId: t.Optional(t.String()),
+            qty: t.Number({ minimum: 0.0001 }),
             unit: t.Optional(t.String())
           })
         )
@@ -76,10 +106,11 @@ export const transferRoutes = new Elysia({ prefix: "/api/inventory/transfers" })
   // 3. RECEIVE & VERIFY TRANSFER (RTB)
   .post(
     "/:id/receive",
-    async ({ params, body }) => {
+    async ({ params, body, userId }) => {
       try {
         const res = await transferService.receiveTransfer({
           transferId: params.id,
+          userId,
           receivedBy: body.receivedBy,
           receiptNotes: body.receiptNotes,
           items: body.items
@@ -114,9 +145,14 @@ export const transferRoutes = new Elysia({ prefix: "/api/inventory/transfers" })
   // 4. DISPATCH REQUESTED TRANSFER
   .post(
     "/:id/dispatch",
-    async ({ params, body }) => {
+    async ({ params, body, userId }) => {
       try {
-        const res = await transferService.dispatchTransfer(params.id, body?.courierName);
+        const res = await transferService.dispatchTransfer(
+          params.id,
+          body?.courierName,
+          userId,
+          body?.operator
+        );
         return res;
       } catch (err: any) {
         return { success: false, error: err.message };
@@ -128,7 +164,8 @@ export const transferRoutes = new Elysia({ prefix: "/api/inventory/transfers" })
       }),
       body: t.Optional(
         t.Object({
-          courierName: t.Optional(t.String())
+          courierName: t.Optional(t.String()),
+          operator: t.Optional(t.String())
         })
       ),
       detail: {

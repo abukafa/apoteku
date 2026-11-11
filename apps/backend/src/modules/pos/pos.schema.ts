@@ -1,7 +1,8 @@
 import { t } from "elysia";
 
 export const BootstrapQuerySchema = t.Object({
-  branch_id: t.Optional(t.String({ description: "Target Branch UUID" }))
+  branch_id: t.Optional(t.String({ description: "Target Branch UUID" })),
+  include_all_units: t.Optional(t.String({ description: "Set '1' untuk modul manajemen stok agar unit non-POS tetap tampil" }))
 });
 
 export const SyncSalesBodySchema = t.Object({

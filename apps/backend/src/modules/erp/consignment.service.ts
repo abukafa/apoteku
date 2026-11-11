@@ -159,12 +159,14 @@ export class ConsignmentService {
     const unitName = matchedUnit?.unitName || targetUnitUpper || product.baseUnit || "PCS";
     const conversionFactor = Math.max(1, Number(matchedUnit?.conversionFactor || 1));
     const masterSalePrice = Number(matchedUnit?.salePriceGeneral || 0);
+    const masterBuyPrice = Number(matchedUnit?.buyPrice || 0);
 
     return {
       product,
       unitName,
       conversionFactor,
-      masterSalePrice
+      masterSalePrice,
+      masterBuyPrice
     };
   }
 

@@ -33,6 +33,10 @@ export const products = pgTable(
     rackLocation: varchar("rack_location", { length: 50 }),
     drugClass: varchar("drug_class", { length: 50 }).default("BEBAS").notNull(),
     baseUnit: varchar("base_unit", { length: 50 }).notNull(),
+    defaultPurchaseUnit: varchar("default_purchase_unit", { length: 50 }),
+    referenceBuyPriceBase: numeric("reference_buy_price_base", { precision: 24, scale: 8 })
+      .default("0")
+      .notNull(),
     minStock: numeric("min_stock", { precision: 24, scale: 8 }).default("0").notNull(),
     isConsignment: boolean("is_consignment").default(false).notNull(),
     isActive: boolean("is_active").default(true).notNull(),
@@ -61,12 +65,15 @@ export const productUnits = pgTable(
       .notNull(),
     unitName: varchar("unit_name", { length: 50 }).notNull(),
     conversionFactor: numeric("conversion_factor", { precision: 24, scale: 8 }).notNull(),
+    buyPrice: numeric("buy_price", { precision: 24, scale: 8 }).default("0").notNull(),
     salePriceGeneral: numeric("sale_price_general", { precision: 24, scale: 8 }).default("0").notNull(),
     salePriceResep: numeric("sale_price_resep", { precision: 24, scale: 8 }).default("0").notNull(),
     salePriceGrosir: numeric("sale_price_grosir", { precision: 24, scale: 8 }).default("0").notNull(),
     salePriceDelivery: numeric("sale_price_delivery", { precision: 24, scale: 8 }).default("0").notNull(),
     salePriceMember: numeric("sale_price_member", { precision: 24, scale: 8 }).default("0").notNull(),
-    isBaseUnit: boolean("is_base_unit").default(false).notNull()
+    isBaseUnit: boolean("is_base_unit").default(false).notNull(),
+    isSellable: boolean("is_sellable").default(true).notNull(),
+    isPurchaseUnit: boolean("is_purchase_unit").default(false).notNull()
   },
   (t) => [
     uniqueIndex("uq_product_unit").on(t.productId, t.unitName)

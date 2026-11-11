@@ -39,7 +39,9 @@
   import {
     formatRupiah,
     calculateStockDifference,
-    generateAdjustmentNumber
+    generateAdjustmentNumber,
+    evaluateExpiryStatus,
+    type ExpiryColorLevel
   } from "@apoteku/core";
 
   // Types for Ledger & Adjustment History
@@ -349,26 +351,58 @@
     }, 0)
   );
 
-  // Defekta & Expiring batches
+  // Defekta & Expiring batches (Dinamis menggunakan @apoteku/core evaluateExpiryStatus & sisaHari)
+  let expiryWarningDays = $state<number>(90);
+  let normalizedExpiryDays = $derived(Math.max(1, Math.round(Number(expiryWarningDays) || 90)));
+  let criticalExpiryDays = $derived(Math.floor(normalizedExpiryDays / 3));
+
+  function getExpiryLevelClasses(level: ExpiryColorLevel) {
+    if (level === "red") {
+      return {
+        card: "border-rose-200 bg-rose-50/45",
+        badge: "bg-rose-100 text-rose-700 border-rose-200",
+        edText: "text-rose-700",
+        pill: "bg-rose-50 text-rose-700 border-rose-200"
+      };
+    }
+    if (level === "yellow") {
+      return {
+        card: "border-amber-200 bg-amber-50/35",
+        badge: "bg-amber-100 text-amber-800 border-amber-200",
+        edText: "text-amber-700",
+        pill: "bg-amber-50 text-amber-700 border-amber-200"
+      };
+    }
+    return {
+      card: "border-emerald-200 bg-emerald-50/30",
+      badge: "bg-emerald-100 text-emerald-700 border-emerald-200",
+      edText: "text-emerald-700",
+      pill: "bg-white text-emerald-700 border-emerald-200"
+    };
+  }
+
   let expiringBatches = $derived(
     products
       .flatMap((p: any) =>
-        (p.batches || []).map((b: any) => ({
-          ...b,
-          productId: p.id,
-          productName: p.name,
-          drugClass: p.drugClass,
-          baseUnit: p.baseUnit
-        }))
+        (p.batches || []).map((b: any) => {
+          const expiryMeta = evaluateExpiryStatus(b.expiryDate, normalizedExpiryDays);
+          return {
+            ...b,
+            productId: p.id,
+            productName: p.name,
+            drugClass: p.drugClass,
+            baseUnit: p.baseUnit,
+            expiryMeta
+          };
+        })
       )
-      .filter((b) => {
-        if (b.batchNumber === "STOK-AKTIF") return false;
-        const exp = new Date(b.expiryDate).getTime();
-        const now = Date.now();
-        const diffDays = Math.ceil((exp - now) / (1000 * 60 * 60 * 24));
-        return diffDays <= 730 && b.stock > 0;
-      })
-      .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime())
+      .filter(
+        (b) =>
+          b.batchNumber !== "STOK-AKTIF" &&
+          Number(b.stock) > 0 &&
+          b.expiryMeta.sisaHari <= normalizedExpiryDays
+      )
+      .sort((a, b) => a.expiryMeta.sisaHari - b.expiryMeta.sisaHari)
   );
 
   let lowStockProducts = $derived(
@@ -733,34 +767,44 @@
   interface FormProductUnit {
     unitName: string;
     conversionFactor: number;
+    buyPrice: number;
     salePriceGeneral: number;
     salePriceResep: number;
     salePriceGrosir: number;
     isBaseUnit: boolean;
+    isSellable: boolean;
+    isPurchaseUnit: boolean;
   }
 
   let formProdUnits = $state<FormProductUnit[]>([
     {
       unitName: "TABLET",
       conversionFactor: 1,
+      buyPrice: 1000,
       salePriceGeneral: 1500,
       salePriceResep: 1800,
       salePriceGrosir: 1300,
-      isBaseUnit: true
+      isBaseUnit: true,
+      isSellable: true,
+      isPurchaseUnit: true
     }
   ]);
 
   function addUnitRow() {
+    const baseBuy = formProdUnits[0]?.buyPrice || formProdBuyPrice || 0;
     const baseGeneral = formProdUnits[0]?.salePriceGeneral || 1500;
     const baseResep = formProdUnits[0]?.salePriceResep || 1800;
     const baseGrosir = formProdUnits[0]?.salePriceGrosir || 1300;
     formProdUnits.push({
       unitName: "STRIP",
       conversionFactor: 10,
-      salePriceGeneral: baseGeneral * 10,
-      salePriceResep: baseResep * 10,
-      salePriceGrosir: baseGrosir * 10,
-      isBaseUnit: false
+      buyPrice: Math.round(baseBuy * 10),
+      salePriceGeneral: Math.round(baseGeneral * 10),
+      salePriceResep: Math.round(baseResep * 10),
+      salePriceGrosir: Math.round(baseGrosir * 10),
+      isBaseUnit: false,
+      isSellable: true,
+      isPurchaseUnit: false
     });
   }
 
@@ -791,10 +835,13 @@
       {
         unitName: "TABLET",
         conversionFactor: 1,
+        buyPrice: 950,
         salePriceGeneral: 1500,
         salePriceResep: 1700,
         salePriceGrosir: 1350,
-        isBaseUnit: true
+        isBaseUnit: true,
+        isSellable: true,
+        isPurchaseUnit: true
       }
     ];
     isProductModalOpen = true;
@@ -816,27 +863,44 @@
     formProdInitialBatch = prod.batches[0]?.batchNumber || "BATCH-01";
     formProdInitialExpiry = prod.batches[0]?.expiryDate || "2027-12-31";
     formProdInitialStock = getProductTotalStock(prod);
-    formProdBuyPrice = prod.batches[0]?.buyPrice || 500;
+    const refBaseBuy = Number(prod.referenceBuyPriceBase || prod.batches[0]?.buyPrice || 0);
+    formProdBuyPrice = Math.round(refBaseBuy);
     formProdIsConsignment = Boolean(prod.isConsignment);
 
     if (prod.units && Array.isArray(prod.units) && prod.units.length > 0) {
-      formProdUnits = prod.units.map((u: any, idx: number) => ({
-        unitName: String(u.unit || u.unitName || (idx === 0 ? prod.baseUnit : "STRIP")).toUpperCase(),
-        conversionFactor: Number(u.multiplier ?? u.conversionFactor ?? 1),
-        salePriceGeneral: Number(u.prices?.general ?? u.salePriceGeneral ?? 0),
-        salePriceResep: Number(u.prices?.prescription ?? u.salePriceResep ?? 0),
-        salePriceGrosir: Number(u.prices?.wholesale ?? u.salePriceGrosir ?? 0),
-        isBaseUnit: idx === 0 || Number(u.multiplier ?? u.conversionFactor ?? 1) === 1
-      }));
+      formProdUnits = prod.units.map((u: any, idx: number) => {
+        const factor = Number(u.multiplier ?? u.conversionFactor ?? 1);
+        const unitName = String(u.unit || u.unitName || (idx === 0 ? prod.baseUnit : "STRIP")).toUpperCase();
+        const isDefPurchase =
+          u.isPurchaseUnit !== undefined
+            ? Boolean(u.isPurchaseUnit)
+            : prod.defaultPurchaseUnit
+              ? unitName === String(prod.defaultPurchaseUnit).toUpperCase()
+              : idx === prod.units.length - 1;
+        return {
+          unitName,
+          conversionFactor: factor,
+          buyPrice: Math.round(Number(u.buyPrice ?? refBaseBuy * factor)),
+          salePriceGeneral: Math.round(Number(u.prices?.general ?? u.salePriceGeneral ?? 0)),
+          salePriceResep: Math.round(Number(u.prices?.prescription ?? u.salePriceResep ?? 0)),
+          salePriceGrosir: Math.round(Number(u.prices?.wholesale ?? u.salePriceGrosir ?? 0)),
+          isBaseUnit: idx === 0 || factor === 1,
+          isSellable: u.isSellable !== false,
+          isPurchaseUnit: isDefPurchase
+        };
+      });
     } else {
       formProdUnits = [
         {
           unitName: String(prod.baseUnit || "TABLET").toUpperCase(),
           conversionFactor: 1,
-          salePriceGeneral: prod.units?.[0]?.prices?.general || 1000,
-          salePriceResep: prod.units?.[0]?.prices?.prescription || 1000,
-          salePriceGrosir: prod.units?.[0]?.prices?.wholesale || 900,
-          isBaseUnit: true
+          buyPrice: Math.round(refBaseBuy),
+          salePriceGeneral: Math.round(prod.units?.[0]?.prices?.general || 1000),
+          salePriceResep: Math.round(prod.units?.[0]?.prices?.prescription || 1000),
+          salePriceGrosir: Math.round(prod.units?.[0]?.prices?.wholesale || 900),
+          isBaseUnit: true,
+          isSellable: true,
+          isPurchaseUnit: true
         }
       ];
     }
@@ -858,33 +922,85 @@
           {
             unitName: formProdBaseUnit || "TABLET",
             conversionFactor: 1,
-            salePriceGeneral: formProdPriceGeneral,
-            salePriceResep: formProdPriceResep,
-            salePriceGrosir: formProdPriceWholesale,
-            isBaseUnit: true
+            buyPrice: Math.max(0, Math.round(Number(formProdBuyPrice) || 0)),
+            salePriceGeneral: Math.round(formProdPriceGeneral || 0),
+            salePriceResep: Math.round(formProdPriceResep || 0),
+            salePriceGrosir: Math.round(formProdPriceWholesale || 0),
+            isBaseUnit: true,
+            isSellable: true,
+            isPurchaseUnit: true
           }
         ];
       }
 
-      formProdBaseUnit = formProdUnits[0].unitName;
-      formProdPriceGeneral = formProdUnits[0].salePriceGeneral;
-      formProdPriceResep = formProdUnits[0].salePriceResep;
-      formProdPriceWholesale = formProdUnits[0].salePriceGrosir;
+      // Validasi anti-duplikat nama satuan & faktor konversi
+      const seenUnitNames = new Set<string>();
+      const seenFactors = new Set<number>();
+      for (let idx = 0; idx < formProdUnits.length; idx++) {
+        const u = formProdUnits[idx];
+        const unitUpper = (u.unitName || "").trim().toUpperCase();
+        if (!unitUpper) {
+          alertStore.danger("Satuan Kosong", `Nama satuan pada baris #${idx + 1} wajib diisi.`);
+          return;
+        }
+        if (seenUnitNames.has(unitUpper)) {
+          alertStore.danger(
+            "Nama Satuan Duplikat",
+            `Satuan "${unitUpper}" muncul lebih dari satu kali. Hapus atau ganti salah satunya.`
+          );
+          return;
+        }
+        seenUnitNames.add(unitUpper);
 
+        const factor = idx === 0 ? 1 : Number(u.conversionFactor || 0);
+        if (idx > 0 && (!Number.isFinite(factor) || factor <= 1)) {
+          alertStore.danger(
+            "Konversi Tidak Valid",
+            `Satuan kemasan "${unitUpper}" harus memiliki konversi lebih dari 1 ${formProdUnits[0].unitName}.`
+          );
+          return;
+        }
+        const facKey = Math.round(factor * 10000);
+        if (seenFactors.has(facKey)) {
+          alertStore.danger(
+            "Faktor Konversi Kembar",
+            `Terdapat dua satuan dengan isi konversi yang sama (${factor} ${formProdUnits[0].unitName}). Hapus salah satu agar tidak membingungkan di kasir dan SP.`
+          );
+          return;
+        }
+        seenFactors.add(facKey);
+      }
+
+      formProdBaseUnit = formProdUnits[0].unitName.trim().toUpperCase();
+      formProdPriceGeneral = Math.round(formProdUnits[0].salePriceGeneral || 0);
+      formProdPriceResep = Math.round(formProdUnits[0].salePriceResep || 0);
+      formProdPriceWholesale = Math.round(formProdUnits[0].salePriceGrosir || 0);
+      formProdBuyPrice = Math.max(0, Math.round(Number(formProdUnits[0].buyPrice ?? formProdBuyPrice) || 0));
+
+      const hasPurchaseFlag = formProdUnits.some((u) => Boolean(u.isPurchaseUnit));
       const unitsPayload = formProdUnits.map((u, idx) => ({
         unitName: (u.unitName || "").trim().toUpperCase() || (idx === 0 ? "TABLET" : "STRIP"),
-        conversionFactor: idx === 0 ? 1 : Math.max(1, Number(u.conversionFactor) || 1),
-        salePriceGeneral: Math.max(0, Number(u.salePriceGeneral) || 0),
-        salePriceResep: Math.max(0, Number(u.salePriceResep) || 0),
-        salePriceGrosir: Math.max(0, Number(u.salePriceGrosir) || 0),
-        salePriceDelivery: Math.max(0, Number(u.salePriceGeneral) || 0),
-        salePriceMember: Math.max(0, Number(u.salePriceGrosir) || 0),
-        isBaseUnit: idx === 0
+        conversionFactor: idx === 0 ? 1 : Math.max(2, Number(u.conversionFactor) || 2),
+        buyPrice: Math.max(0, Math.round(Number(u.buyPrice) || 0)),
+        salePriceGeneral: Math.max(0, Math.round(Number(u.salePriceGeneral) || 0)),
+        salePriceResep: Math.max(0, Math.round(Number(u.salePriceResep) || 0)),
+        salePriceGrosir: Math.max(0, Math.round(Number(u.salePriceGrosir) || 0)),
+        salePriceDelivery: Math.max(0, Math.round(Number(u.salePriceGeneral) || 0)),
+        salePriceMember: Math.max(0, Math.round(Number(u.salePriceGrosir) || 0)),
+        isBaseUnit: idx === 0,
+        isSellable: idx === 0 ? true : u.isSellable !== false,
+        isPurchaseUnit: hasPurchaseFlag ? Boolean(u.isPurchaseUnit) : idx === (formProdUnits.length > 1 ? formProdUnits.length - 1 : 0)
       }));
+
+      const primaryPurchaseUnit =
+        unitsPayload.find((u) => u.isPurchaseUnit)?.unitName || unitsPayload[0].unitName;
 
       const mappedUnitsForMemory = unitsPayload.map((u) => ({
         unit: u.unitName,
         multiplier: u.conversionFactor,
+        buyPrice: u.buyPrice,
+        isSellable: u.isSellable,
+        isPurchaseUnit: u.isPurchaseUnit,
         prices: {
           general: u.salePriceGeneral,
           prescription: u.salePriceResep,
@@ -904,6 +1020,8 @@
           categoryId: formProdCategoryId,
           drugClass: formProdDrugClass,
           baseUnit: formProdBaseUnit,
+          defaultPurchaseUnit: primaryPurchaseUnit,
+          referenceBuyPriceBase: Number(formProdBuyPrice) || 0,
           unitPrices: {
             general: Number(formProdPriceGeneral) || 0,
             prescription: Number(formProdPriceResep) || 0,
@@ -915,9 +1033,14 @@
         };
 
         try {
-          await api.products.update(editingProductId, payload);
-        } catch (e) {
-          console.warn("Backend update product warning:", e);
+          const updateRes = await api.products.update(editingProductId, payload);
+          if (updateRes && updateRes.success === false) {
+            alertStore.danger("Gagal Menyimpan Perubahan", updateRes.error || "Validasi server gagal.");
+            return;
+          }
+        } catch (e: any) {
+          alertStore.danger("Gagal Menyimpan Perubahan", e?.message || "Terjadi kesalahan saat memperbarui master produk.");
+          return;
         }
 
         const idx = products.findIndex((p) => p.id === editingProductId);
@@ -932,6 +1055,8 @@
           existing.categoryName = categoryName;
           existing.drugClass = formProdDrugClass;
           existing.baseUnit = formProdBaseUnit;
+          existing.defaultPurchaseUnit = primaryPurchaseUnit;
+          existing.referenceBuyPriceBase = Number(formProdBuyPrice) || 0;
           existing.isConsignment = formProdIsConsignment;
           existing.units = mappedUnitsForMemory;
           if (existing.batches && existing.batches[0]) {
@@ -956,6 +1081,8 @@
           genericName: formProdGeneric.trim() || formProdName.trim(),
           drugClass: formProdDrugClass,
           baseUnit: formProdBaseUnit,
+          defaultPurchaseUnit: primaryPurchaseUnit,
+          referenceBuyPriceBase: Number(formProdBuyPrice) || 0,
           unitPrices: {
             general: Number(formProdPriceGeneral) || 0,
             prescription: Number(formProdPriceResep) || 0,
@@ -973,11 +1100,16 @@
         let backendCreated: any = null;
         try {
           const res = await api.products.create(payload);
+          if (res && res.success === false) {
+            alertStore.danger("Gagal Menambahkan Produk", res.error || "Validasi server gagal.");
+            return;
+          }
           if (res?.success && res.data) {
             backendCreated = res.data;
           }
-        } catch (e) {
-          console.warn("Backend create product warning:", e);
+        } catch (e: any) {
+          alertStore.danger("Gagal Menambahkan Produk", e?.message || "Gagal menyimpan produk baru ke server.");
+          return;
         }
 
         const newProduct = {
@@ -996,6 +1128,8 @@
           indication: "-",
           dosage: "Gunakan sesuai petunjuk",
           baseUnit: formProdBaseUnit,
+          defaultPurchaseUnit: primaryPurchaseUnit,
+          referenceBuyPriceBase: Number(formProdBuyPrice) || 0,
           units: mappedUnitsForMemory,
           batches: [
             {
@@ -1209,10 +1343,10 @@
     />
     <MetricCard
       title="Defekta & ED"
-      value="{lowStockProducts.length} &bull; {expiringBatches.slice(0, 5).length} ED"
-      subtext="Monitoring FEFO"
+      value="{lowStockProducts.length} &bull; {expiringBatches.length} ED"
+      subtext="FEFO Alert (&le; {normalizedExpiryDays} hr)"
       icon={AlertTriangle}
-      variant="warning"
+      variant={expiringBatches.some((b) => b.expiryMeta.level === "red") ? "danger" : "warning"}
       alertActionText="Cek Alert"
       onAlertClick={() => (activeTab = "ed_defekta")}
     />
@@ -1260,7 +1394,7 @@
         <AlertTriangle class="w-4 h-4 text-amber-500" />
         <span>Peringatan ED & Defekta</span>
         <span class="px-2 py-0.5 rounded-full text-[10px] bg-red-100 text-brand-red-700 font-bold">
-          {lowStockProducts.length + expiringBatches.slice(0, 3).length}
+          {lowStockProducts.length + expiringBatches.length}
         </span>
       </div>
       {#if activeTab === "ed_defekta"}
@@ -1538,11 +1672,15 @@
           </div>
           <div class="flex flex-wrap items-center gap-2">
             {#each selectedProductForCard.batches as b}
-              <div class="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-mono text-[11px] flex items-center gap-2">
+              {@const bExp = evaluateExpiryStatus(b.expiryDate, normalizedExpiryDays)}
+              {@const bCls = getExpiryLevelClasses(bExp.level)}
+              <div class="px-2.5 py-1 rounded-lg border font-mono text-[11px] flex items-center gap-2 {bCls.pill}">
                 <span class="font-bold text-slate-800">{b.batchNumber}</span>
-                <span class="text-slate-400">|</span>
-                <span class="text-amber-700">ED: {b.expiryDate}</span>
-                <span class="text-slate-400">|</span>
+                <span class="text-slate-300">|</span>
+                <span class="font-semibold {bCls.edText}">
+                  ED: {b.expiryDate} ({bExp.label})
+                </span>
+                <span class="text-slate-300">|</span>
                 <span class="font-black text-emerald-700">{b.stock} {selectedProductForCard.baseUnit}</span>
               </div>
             {/each}
@@ -1837,37 +1975,72 @@
       </div>
 
       <!-- ED ALERT CARD -->
-      <div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 space-y-4">
-        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+      <div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 space-y-3.5">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <div class="flex items-center gap-2">
             <Clock class="w-4 h-4 text-amber-500" />
-            <h3 class="text-sm font-bold text-slate-800">Batch Mendekati Kadaluarsa (FEFO Alert)</h3>
+            <h3 class="text-sm font-bold text-slate-800">FEFO Alert</h3>
+            <span class="px-2 py-0.5 rounded-full text-xs font-bold {expiringBatches.some((b) => b.expiryMeta.level === 'red') ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}">
+              {expiringBatches.length} Batch
+            </span>
           </div>
-          <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">
-            {expiringBatches.length} Batch
-          </span>
+
+          <div class="flex items-center gap-1.5 text-[11px]">
+            <label for="expiry-threshold-select" class="font-semibold text-slate-500 whitespace-nowrap">Batas ED:</label>
+            <select
+              id="expiry-threshold-select"
+              value={String([30, 60, 90, 180, 365, 730].includes(normalizedExpiryDays) ? normalizedExpiryDays : "CUSTOM")}
+              onchange={(e) => {
+                const v = (e.currentTarget as HTMLSelectElement).value;
+                if (v !== "CUSTOM") expiryWarningDays = Number(v);
+              }}
+              class="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 font-bold text-slate-700 text-[11px] focus:outline-none focus:border-brand-blue-500"
+            >
+              <option value="30">30 Hari (1 Bln)</option>
+              <option value="60">60 Hari (2 Bln)</option>
+              <option value="90">90 Hari (3 Bln)</option>
+              <option value="180">180 Hari (6 Bln)</option>
+              <option value="365">365 Hari (1 Thn)</option>
+              <option value="730">730 Hari (2 Thn)</option>
+              <option value="CUSTOM">Kustom</option>
+            </select>
+          </div>
         </div>
 
-        <div class="space-y-3">
-          {#each expiringBatches.slice(0, 6) as eb}
-            <div class="p-3 rounded-xl border border-amber-100 bg-amber-50/20 flex items-center justify-between">
-              <div>
-                <div class="font-bold text-xs text-slate-900">{eb.productName}</div>
-                <div class="text-[11px] text-slate-400 mt-0.5 font-mono">
-                  Batch: <strong>{eb.batchNumber}</strong>
-                </div>
-              </div>
-              <div class="text-right">
-                <div class="text-xs font-black text-amber-700 font-mono">
-                  ED: {eb.expiryDate}
-                </div>
-                <div class="text-[10px] text-slate-500 mt-0.5">
-                  Stok: <strong>{eb.stock} {eb.baseUnit}</strong>
-                </div>
-              </div>
+        {#if expiringBatches.length === 0}
+          <div class="py-10 text-center text-slate-400 border border-dashed border-slate-200 rounded-xl bg-slate-50/50 text-xs">
+            <CheckCircle2 class="w-7 h-7 mx-auto text-emerald-500 mb-1.5" />
+            <div class="font-bold text-slate-700">Semua batch aman</div>
+            <div class="text-[11px] text-slate-400 mt-0.5">
+              Tidak ada batch dengan sisa masa simpan &le; {normalizedExpiryDays} hari.
             </div>
-          {/each}
-        </div>
+          </div>
+        {:else}
+          <div class="space-y-2.5 max-h-[480px] overflow-y-auto pr-1 scrollbar-minimalist">
+            {#each expiringBatches as eb}
+              {@const cls = getExpiryLevelClasses(eb.expiryMeta.level)}
+              <div class="p-3 rounded-xl border flex items-center justify-between gap-3 {cls.card}">
+                <div class="min-w-0">
+                  <div class="font-bold text-xs text-slate-900 truncate">{eb.productName}</div>
+                  <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 mt-1 font-mono">
+                    <span>Batch: <strong class="text-slate-700">{eb.batchNumber}</strong></span>
+                    <span class="px-1.5 py-0.5 rounded border text-[10px] font-sans font-bold {cls.badge}">
+                      {eb.expiryMeta.isExpired ? "KADALUARSA" : eb.expiryMeta.level === "red" ? "KRITIS" : "WASPADA"} &bull; {eb.expiryMeta.label}
+                    </span>
+                  </div>
+                </div>
+                <div class="text-right flex-shrink-0">
+                  <div class="text-xs font-black font-mono {cls.edText}">
+                    ED: {eb.expiryDate}
+                  </div>
+                  <div class="text-[10px] text-slate-500 mt-0.5">
+                    Stok: <strong>{eb.stock} {eb.baseUnit}</strong>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -2213,7 +2386,7 @@
     }}
     role="presentation"
   >
-    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] overflow-y-auto">
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-4xl w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] overflow-y-auto">
       <div class="flex items-center justify-between border-b border-slate-100 pb-3">
         <div class="flex items-center gap-2 text-slate-900 font-bold text-sm">
           <Package class="w-5 h-5 text-brand-blue" />
@@ -2314,10 +2487,10 @@
             <div>
               <div class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                 <Layers class="w-4 h-4 text-brand-blue" />
-                <span>Multi-Satuan & Harga Bertingkat</span>
+                <span>Multi-Satuan, Harga Beli (HNA) & Harga Jual Bertingkat</span>
               </div>
               <p class="text-[11px] text-slate-500 mt-0.5">
-                Setiap satuan otomatis menjadi tombol pembelian di kasir.
+                Centang <strong>Jual POS</strong> agar satuan tampil di kasir, dan centang <strong>Beli SP</strong> untuk satuan pemesanan ke PBF.
               </p>
             </div>
             <button
@@ -2331,21 +2504,25 @@
           </div>
 
           <div class="border border-slate-200 rounded-xl overflow-x-auto bg-white shadow-2xs">
-            <table class="w-full text-xs min-w-[550px]">
+            <table class="w-full text-xs min-w-[780px]">
               <thead class="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
                 <tr>
                   <th class="py-2.5 px-3 text-left">Level</th>
-                  <th class="py-2.5 px-3 text-left">Satuan</th>
-                  <th class="py-2.5 px-3 text-center">Konversi</th>
-                  <th class="py-2.5 px-3 text-right">Umum (Rp)</th>
-                  <th class="py-2.5 px-3 text-right">Resep (Rp)</th>
-                  <th class="py-2.5 px-3 text-right">Grosir (Rp)</th>
+                  <th class="py-2.5 px-2 text-left">Satuan</th>
+                  <th class="py-2.5 px-2 text-center">Konversi</th>
+                  <th class="py-2.5 px-2 text-right bg-amber-50/60 text-amber-800">HNA Beli (Rp)</th>
+                  <th class="py-2.5 px-2 text-right">Umum (Rp)</th>
+                  <th class="py-2.5 px-2 text-right">Resep (Rp)</th>
+                  <th class="py-2.5 px-2 text-right">Grosir (Rp)</th>
+                  <th class="py-2.5 px-2 text-center" title="Tampilkan satuan ini sebagai tombol penjualan di kasir POS">Jual POS</th>
+                  <th class="py-2.5 px-2 text-center" title="Jadikan satuan default pemesanan SP & Faktur Pembelian">Beli SP</th>
                   <th class="py-2.5 px-2 text-center w-10">Aksi</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100 font-medium">
                 {#each formProdUnits as u, uIdx}
-                  <tr class="hover:bg-slate-50/60 transition-colors {uIdx === 0 ? 'bg-blue-50/20' : ''}">
+                  {@const isLowMargin = u.buyPrice > 0 && u.salePriceGeneral > 0 && u.salePriceGeneral <= u.buyPrice}
+                  <tr class="hover:bg-slate-50/60 transition-colors {isLowMargin ? 'bg-rose-50/40' : uIdx === 0 ? 'bg-blue-50/20' : ''}">
                     <td class="py-2.5 px-3 font-semibold text-slate-700">
                       {#if uIdx === 0}
                         <Badge type="INFO" label="Terkecil" />
@@ -2353,15 +2530,15 @@
                         <span class="text-slate-500 text-[11px]">Kemasan #{uIdx + 1}</span>
                       {/if}
                     </td>
-                    <td class="py-2 px-3">
+                    <td class="py-2 px-2">
                       <input
                         type="text"
                         bind:value={u.unitName}
                         placeholder={uIdx === 0 ? "TABLET" : "STRIP"}
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold uppercase text-slate-800 text-xs"
+                        class="w-24 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-bold uppercase text-slate-800 text-xs"
                       />
                     </td>
-                    <td class="py-2 px-3 text-center">
+                    <td class="py-2 px-2 text-center">
                       {#if uIdx === 0}
                         <span class="font-mono font-bold text-slate-500 text-xs">1</span>
                       {:else}
@@ -2376,13 +2553,24 @@
                         </div>
                       {/if}
                     </td>
+                    <td class="py-2 px-2 text-right bg-amber-50/30">
+                      <input
+                        type="number"
+                        min="0"
+                        bind:value={u.buyPrice}
+                        class="w-24 bg-white border border-amber-200 rounded-lg px-2 py-1 text-right font-mono font-bold text-amber-800 text-xs"
+                      />
+                    </td>
                     <td class="py-2 px-2 text-right">
                       <input
                         type="number"
                         min="0"
                         bind:value={u.salePriceGeneral}
-                        class="w-24 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-right font-mono font-bold text-slate-800 text-xs"
+                        class="w-24 bg-slate-50 border {isLowMargin ? 'border-rose-400 text-rose-700' : 'border-slate-200 text-slate-800'} rounded-lg px-2 py-1 text-right font-mono font-bold text-xs"
                       />
+                      {#if isLowMargin}
+                        <div class="text-[9px] font-bold text-rose-600 mt-0.5">Margin &le; 0%</div>
+                      {/if}
                     </td>
                     <td class="py-2 px-2 text-right">
                       <input
@@ -2398,6 +2586,26 @@
                         min="0"
                         bind:value={u.salePriceGrosir}
                         class="w-24 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-right font-mono font-bold text-slate-600 text-xs"
+                      />
+                    </td>
+                    <td class="py-2 px-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={uIdx === 0 ? true : u.isSellable}
+                        disabled={uIdx === 0}
+                        onchange={(e) => {
+                          if (uIdx > 0) u.isSellable = (e.currentTarget as HTMLInputElement).checked;
+                        }}
+                        class="w-4 h-4 rounded text-emerald-600 disabled:opacity-50"
+                        aria-label="Jual di kasir POS ({u.unitName})"
+                      />
+                    </td>
+                    <td class="py-2 px-2 text-center">
+                      <input
+                        type="checkbox"
+                        bind:checked={u.isPurchaseUnit}
+                        class="w-4 h-4 rounded text-amber-600"
+                        aria-label="Satuan pemesanan SP ({u.unitName})"
                       />
                     </td>
                     <td class="py-2 px-2 text-center">

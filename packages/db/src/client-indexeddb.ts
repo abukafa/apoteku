@@ -11,17 +11,22 @@ export interface LocalProduct {
   rackLocation?: string | null;
   drugClass: string;
   baseUnit: string;
+  defaultPurchaseUnit?: string | null;
+  referenceBuyPriceBase?: number;
   isConsignment?: boolean;
   isActive: boolean;
   units: Array<{
     unitName: string;
     conversionFactor: number;
+    buyPrice?: number;
     salePriceGeneral: number;
     salePriceResep: number;
     salePriceGrosir: number;
     salePriceDelivery: number;
     salePriceMember: number;
     isBaseUnit: boolean;
+    isSellable?: boolean;
+    isPurchaseUnit?: boolean;
   }>;
   updatedAt: string;
 }

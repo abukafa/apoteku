@@ -147,3 +147,159 @@
     box-shadow: 0 25px 60px -15px rgba(2, 48, 117, 0.25), 0 0 0 1px rgba(15, 23, 42, 0.06) !important;
   }
 }
+
+/* Sembunyikan lembar cetak termal & etiket khusus saat mode layar normal */
+.thermal-receipt-sheet,
+.etiket-print-sheet {
+  display: none;
+}
+
+@media print {
+  /* Buka blokir layar kecil POS (< 1024px) saat mencetak karena ukuran kertas termal (58mm/80mm) < 1024px */
+  .pos-screen-blocker {
+    display: none !important;
+  }
+
+  /* Isolasi cetak struk termal POS: hanya tampilkan lembar struk tanpa modal card, backdrop, maupun UI kasir */
+  html:has(#thermal-receipt-sheet),
+  body:has(#thermal-receipt-sheet),
+  body.printing-thermal-receipt {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body:has(#thermal-receipt-sheet) > *:not(#thermal-receipt-sheet),
+  body.printing-thermal-receipt > *:not(#thermal-receipt-sheet) {
+    display: none !important;
+  }
+
+  body:has(#thermal-receipt-sheet) > #thermal-receipt-sheet,
+  body.printing-thermal-receipt > #thermal-receipt-sheet,
+  #thermal-receipt-sheet {
+    display: block !important;
+    position: static !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: 78mm !important;
+    margin: 0 !important;
+    padding: 2.5mm 2mm 6mm 2mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+    font-size: 10.5px !important;
+    line-height: 1.35 !important;
+  }
+
+  .thermal-receipt-divider {
+    border: 0 !important;
+    border-top: 1px dashed #000000 !important;
+    margin: 4px 0 !important;
+    height: 0 !important;
+  }
+
+  .thermal-receipt-double-divider {
+    border: 0 !important;
+    border-top: 2px solid #000000 !important;
+    margin: 4px 0 !important;
+    height: 0 !important;
+  }
+
+  .thermal-receipt-row {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: baseline !important;
+    gap: 6px !important;
+    flex-wrap: wrap !important;
+  }
+
+  .thermal-receipt-item {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    margin-bottom: 4px !important;
+  }
+
+  /* Isolasi cetak etiket obat 58mm x 40mm */
+  html:has(#etiket-print-sheet),
+  body:has(#etiket-print-sheet),
+  body.printing-etiket {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body:has(#etiket-print-sheet) > *:not(#etiket-print-sheet),
+  body.printing-etiket > *:not(#etiket-print-sheet) {
+    display: none !important;
+  }
+
+  body:has(#etiket-print-sheet) > #etiket-print-sheet,
+  body.printing-etiket > #etiket-print-sheet,
+  #etiket-print-sheet {
+    display: block !important;
+    position: static !important;
+    box-sizing: border-box !important;
+    width: 58mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .etiket-print-card {
+    box-sizing: border-box !important;
+    width: 58mm !important;
+    min-height: 38mm !important;
+    margin: 0 !important;
+    padding: 2mm 2.5mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    border: 1px solid #000000 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    font-family: ui-sans-serif, system-ui, -apple-system, sans-serif !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    break-after: page !important;
+    page-break-after: always !important;
+  }
+
+  .etiket-print-card:last-child {
+    break-after: auto !important;
+    page-break-after: auto !important;
+  }
+}
+
+@media print {
+  @page {
+    size: 58mm auto; /* Ubah ke 80mm auto untuk thermal ukuran besar */
+    margin: 0;
+  }
+  
+  body {
+    width: 58mm; /* Sesuaikan dengan ukuran @page */
+    margin: 0;
+    padding: 2mm; /* Area aman agar teks tidak terpotong */
+    font-family: monospace; /* Font khas struk kasir */
+    font-size: 12px;
+  }
+}

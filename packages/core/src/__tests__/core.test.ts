@@ -17,7 +17,12 @@ import {
   calculateDebtSettlement,
   calculateDebtVoidReversal
 } from "../calculations/debt.js";
-import { evaluateExpiryStatus } from "../validators/expiry.js";
+import {
+  evaluateExpiryStatus,
+  sisaHari,
+  getExpiryColorLevel,
+  formatSisaHariLabel
+} from "../validators/expiry.js";
 import {
   generateOrderNumber,
   generateAdjustmentNumber,
@@ -201,23 +206,54 @@ describe("debt calculations", () => {
 });
 
 describe("expiry evaluation", () => {
-  it("classifies expiry states correctly", () => {
+  it("classifies expiry states and color levels dynamically", () => {
     const ref = new Date("2026-06-01");
 
     // Overdue (expired in May 2026)
     const overdue = evaluateExpiryStatus("2026-05-15", 90, ref);
     expect(overdue.status).toBe("OVERDUE");
     expect(overdue.isExpired).toBe(true);
+    expect(overdue.sisaHari).toBe(-17);
+    expect(overdue.level).toBe("red");
+    expect(overdue.label).toBe("Sudah ED 17 hari lalu");
 
-    // Due Soon (expires in July 2026 - within 90 days)
-    const dueSoon = evaluateExpiryStatus("2026-07-01", 90, ref);
-    expect(dueSoon.status).toBe("DUE_SOON");
-    expect(dueSoon.isDueSoon).toBe(true);
+    // Due Soon & critical red (expires in July 2026 -> 30 days <= 90/3)
+    const dueSoonCritical = evaluateExpiryStatus("2026-07-01", 90, ref);
+    expect(dueSoonCritical.status).toBe("DUE_SOON");
+    expect(dueSoonCritical.isDueSoon).toBe(true);
+    expect(dueSoonCritical.isCritical).toBe(true);
+    expect(dueSoonCritical.sisaHari).toBe(30);
+    expect(dueSoonCritical.level).toBe("red");
+    expect(dueSoonCritical.label).toBe("30 hari lagi");
+
+    // Due Soon & warning yellow (45 days -> > 30 and <= 90)
+    const dueSoonYellow = evaluateExpiryStatus("2026-07-16", 90, ref);
+    expect(dueSoonYellow.status).toBe("DUE_SOON");
+    expect(dueSoonYellow.isCritical).toBe(false);
+    expect(dueSoonYellow.sisaHari).toBe(45);
+    expect(dueSoonYellow.level).toBe("yellow");
 
     // Safe (expires in 2028)
     const safe = evaluateExpiryStatus("2028-12-31", 90, ref);
     expect(safe.status).toBe("SAFE");
     expect(safe.isExpired).toBe(false);
+    expect(safe.level).toBe("green");
+  });
+
+  it("computes sisaHari = ED - today accurately across thresholds", () => {
+    expect(sisaHari("2026-11-11", "2026-11-11")).toBe(0);
+    expect(sisaHari("2026-12-01", "2026-11-11")).toBe(20);
+    expect(sisaHari("2026-11-01", "2026-11-11")).toBe(-10);
+
+    // Dynamic threshold = 180 hari -> red <= 60, yellow 61..180, green > 180
+    expect(getExpiryColorLevel(60, 180)).toBe("red");
+    expect(getExpiryColorLevel(61, 180)).toBe("yellow");
+    expect(getExpiryColorLevel(180, 180)).toBe("yellow");
+    expect(getExpiryColorLevel(181, 180)).toBe("green");
+
+    expect(formatSisaHariLabel(0)).toBe("ED Hari Ini");
+    expect(formatSisaHariLabel(120)).toBe("120 hari lagi (~4 bln)");
+    expect(formatSisaHariLabel(415)).toBe("415 hari lagi (~1.1 thn)");
   });
 });
 

@@ -16,19 +16,55 @@ function resolveShiftName(shiftNumber: number, notes?: string | null): string {
 }
 
 export class PosService {
+  private formatProductUnits(
+    units: Array<typeof schema.productUnits.$inferSelect>,
+    includeAllUnits = false
+  ) {
+    const sorted = [...units].sort(
+      (a, b) => Number(a.conversionFactor) - Number(b.conversionFactor)
+    );
+    const filtered = includeAllUnits
+      ? sorted
+      : sorted.filter(
+          (u) =>
+            u.isSellable !== false &&
+            (Number(u.salePriceGeneral || 0) > 0 || Boolean(u.isBaseUnit))
+        );
+    const selected = filtered.length > 0 ? filtered : sorted.filter((u) => u.isBaseUnit);
+
+    return selected.map((u) => ({
+      unitName: u.unitName,
+      conversionFactor: Number(u.conversionFactor),
+      buyPrice: Number(u.buyPrice || 0),
+      salePriceGeneral: Math.round(Number(u.salePriceGeneral || 0)),
+      salePriceResep: Math.round(Number(u.salePriceResep || 0)),
+      salePriceGrosir: Math.round(Number(u.salePriceGrosir || 0)),
+      salePriceDelivery: Math.round(Number(u.salePriceDelivery || 0)),
+      salePriceMember: Math.round(Number(u.salePriceMember || 0)),
+      isBaseUnit: Boolean(u.isBaseUnit),
+      isSellable: Boolean(u.isSellable),
+      isPurchaseUnit: Boolean(u.isPurchaseUnit)
+    }));
+  }
+
   /**
    * Initial Bootstrap POS: Mengambil seluruh data awal untuk IndexedDB kasir
    */
-  async getBootstrap(tenantId: string, branchId: string) {
+  async getBootstrap(tenantId: string, branchId: string, includeAllUnits = false) {
     const timestamp = new Date().toISOString();
 
     try {
-      // 1. Fetch Tenant
-      let tenantData = await db
-        .select()
-        .from(schema.tenants)
-        .where(eq(schema.tenants.id, tenantId))
-        .limit(1);
+      const isUuid = (val?: string | null) =>
+        Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim()));
+
+      // 1. Fetch Tenant (validasi UUID agar string legacy tidak memicu error SQL)
+      let tenantData = isUuid(tenantId)
+        ? await db
+            .select()
+            .from(schema.tenants)
+            .where(eq(schema.tenants.id, tenantId.trim()))
+            .limit(1)
+        : [];
 
       if (tenantData.length === 0) {
         tenantData = await db.select().from(schema.tenants).limit(1);
@@ -37,12 +73,27 @@ export class PosService {
         }
       }
 
-      // 2. Fetch Branch
-      let branchData = await db
-        .select()
-        .from(schema.branches)
-        .where(eq(schema.branches.id, branchId))
-        .limit(1);
+      // 2. Fetch Branch (cek UUID dulu, lalu code cabang, lalu fallback cabang pertama tenant)
+      let branchData = isUuid(branchId)
+        ? await db
+            .select()
+            .from(schema.branches)
+            .where(eq(schema.branches.id, branchId.trim()))
+            .limit(1)
+        : [];
+
+      if (branchData.length === 0 && branchId && tenantData.length > 0) {
+        branchData = await db
+          .select()
+          .from(schema.branches)
+          .where(
+            and(
+              eq(schema.branches.tenantId, tenantId),
+              eq(sql`LOWER(${schema.branches.code})`, branchId.trim().toLowerCase())
+            )
+          )
+          .limit(1);
+      }
 
       if (branchData.length === 0 && tenantData.length > 0) {
         branchData = await db
@@ -50,9 +101,10 @@ export class PosService {
           .from(schema.branches)
           .where(eq(schema.branches.tenantId, tenantId))
           .limit(1);
-        if (branchData.length > 0) {
-          branchId = branchData[0].id;
-        }
+      }
+
+      if (branchData.length > 0) {
+        branchId = branchData[0].id;
       }
 
       // If database has records, build from DB
@@ -107,33 +159,11 @@ export class PosService {
           .from(schema.productUnits)
           .where(eq(schema.productUnits.tenantId, tenantId));
 
-        const unitsByProductId = new Map<
-          string,
-          Array<{
-            unitName: string;
-            conversionFactor: number;
-            salePriceGeneral: number;
-            salePriceResep: number;
-            salePriceGrosir: number;
-            salePriceDelivery: number;
-            salePriceMember: number;
-            isBaseUnit: boolean;
-          }>
-        >();
-
+        const rawUnitsByProductId = new Map<string, Array<typeof schema.productUnits.$inferSelect>>();
         for (const u of unitsList) {
-          const existing = unitsByProductId.get(u.productId) || [];
-          existing.push({
-            unitName: u.unitName,
-            conversionFactor: Number(u.conversionFactor),
-            salePriceGeneral: Number(u.salePriceGeneral || 0),
-            salePriceResep: Number(u.salePriceResep || 0),
-            salePriceGrosir: Number(u.salePriceGrosir || 0),
-            salePriceDelivery: Number(u.salePriceDelivery || 0),
-            salePriceMember: Number(u.salePriceMember || 0),
-            isBaseUnit: u.isBaseUnit
-          });
-          unitsByProductId.set(u.productId, existing);
+          const existing = rawUnitsByProductId.get(u.productId) || [];
+          existing.push(u);
+          rawUnitsByProductId.set(u.productId, existing);
         }
 
         const formattedProducts = productsList.map((p) => ({
@@ -147,10 +177,12 @@ export class PosService {
           rackLocation: p.rackLocation,
           drugClass: p.drugClass,
           baseUnit: p.baseUnit,
+          defaultPurchaseUnit: p.defaultPurchaseUnit,
+          referenceBuyPriceBase: Number(p.referenceBuyPriceBase || 0),
           minStock: Number(p.minStock || 0),
           isConsignment: Boolean(p.isConsignment),
           isActive: p.isActive,
-          units: unitsByProductId.get(p.id) || []
+          units: this.formatProductUnits(rawUnitsByProductId.get(p.id) || [], includeAllUnits)
         }));
 
         // Fetch Branches & Customers
@@ -186,18 +218,11 @@ export class PosService {
           loyaltyPoints: c.pointBalance || 0
         }));
 
-        // Fetch Inventory Locations (Rak / Etalase / Gudang)
+        // Fetch Inventory Locations khusus cabang ini (tanpa fallback ke cabang lain)
         let locationsList = await db
           .select()
           .from(schema.inventoryLocations)
           .where(eq(schema.inventoryLocations.branchId, branchId));
-
-        if (locationsList.length === 0) {
-          locationsList = await db
-            .select()
-            .from(schema.inventoryLocations)
-            .where(eq(schema.inventoryLocations.tenantId, tenantId));
-        }
 
         if (locationsList.length === 0) {
           const [newLoc] = await db
@@ -205,8 +230,8 @@ export class PosService {
             .values({
               tenantId,
               branchId,
-              code: "RAK-01",
-              name: "Etalase Apotek",
+              code: "DEPO-UTAMA",
+              name: "Etalase Depo Utama",
               isDefault: true,
               isActive: true
             })
@@ -214,18 +239,11 @@ export class PosService {
           if (newLoc) locationsList = [newLoc];
         }
 
-        // Fetch Branch Stocks & Batches (fallback to tenant-wide stocks if specific branch has none)
-        let branchStocksData = await db
+        // Fetch Branch Stocks & Batches STRICTLY scoped to branchId (NEVER fallback to tenant-wide stocks!)
+        const branchStocksData = await db
           .select()
           .from(schema.branchStocks)
           .where(eq(schema.branchStocks.branchId, branchId));
-
-        if (branchStocksData.length === 0) {
-          branchStocksData = await db
-            .select()
-            .from(schema.branchStocks)
-            .where(eq(schema.branchStocks.tenantId, tenantId));
-        }
 
         const branchBatchesData = await db
           .select({
@@ -423,6 +441,30 @@ export class PosService {
 
         const validCashierUserId = isValidUuid(trx.cashierUserId) ? trx.cashierUserId : null;
         const cashierAuditUserId = validCashierUserId || "01931818-8000-7000-8000-000000000003";
+
+        // 1B. Validasi satuan jual POS: tolak jika item secara eksplisit ditandai isSellable = false
+        for (const item of trx.items) {
+          if (!isValidUuid(item.productId) || !item.unitName) continue;
+          const unitUpper = String(item.unitName).trim().toUpperCase();
+          const [matchedUnit] = await db
+            .select({
+              isSellable: schema.productUnits.isSellable,
+              unitName: schema.productUnits.unitName
+            })
+            .from(schema.productUnits)
+            .where(
+              and(
+                eq(schema.productUnits.productId, item.productId),
+                sql`UPPER(${schema.productUnits.unitName}) = ${unitUpper}`
+              )
+            )
+            .limit(1);
+          if (matchedUnit && matchedUnit.isSellable === false) {
+            throw new Error(
+              `Satuan "${matchedUnit.unitName}" bukan satuan jual kasir POS (khusus pembelian/PBF).`
+            );
+          }
+        }
 
         // 2. Commit transaction record to PostgreSQL
         try {
@@ -782,21 +824,15 @@ export class PosService {
         rackLocation: p.rackLocation,
         drugClass: p.drugClass,
         baseUnit: p.baseUnit,
+        defaultPurchaseUnit: p.defaultPurchaseUnit,
+        referenceBuyPriceBase: Number(p.referenceBuyPriceBase || 0),
         isConsignment: Boolean(p.isConsignment),
         isActive: p.isActive,
         updatedAt: p.updatedAt.toISOString(),
-        units: updatedUnits
-          .filter((u) => u.productId === p.id)
-          .map((u) => ({
-            unitName: u.unitName,
-            conversionFactor: Number(u.conversionFactor),
-            salePriceGeneral: Number(u.salePriceGeneral || 0),
-            salePriceResep: Number(u.salePriceResep || 0),
-            salePriceGrosir: Number(u.salePriceGrosir || 0),
-            salePriceDelivery: Number(u.salePriceDelivery || 0),
-            salePriceMember: Number(u.salePriceMember || 0),
-            isBaseUnit: u.isBaseUnit
-          }))
+        units: this.formatProductUnits(
+          updatedUnits.filter((u) => u.productId === p.id),
+          false
+        )
       }));
 
       return {

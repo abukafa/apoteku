@@ -20,6 +20,11 @@
   import { portal } from "$lib/actions/portal";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
+  import ThermalReceiptSheet, {
+    mapCheckoutToThermalReceipt,
+    triggerThermalPrint,
+    type ThermalReceiptData
+  } from "$lib/components/ui/ThermalReceiptSheet.svelte";
   import {
     Search,
     Barcode,
@@ -61,6 +66,9 @@
   let selectedCustomerId = $state("cust-general");
   let activeShift = $state<CashierShift | null>(null);
   let defaultLocationId = $state<string>("01931818-8000-7000-8000-000000000004");
+
+  const POS_CACHED_BRANCH_KEY = "apoteku_pos_cached_branch_id";
+  let syncRequestSeq = 0;
 
   let searchQuery = $state("");
   let products = $state<Product[]>([]);
@@ -404,11 +412,14 @@
         batchMap.set(b.productId, list);
       }
 
-      // Ambil seluruh total stok cabang dalam 1 query cepat
+      // Ambil seluruh total stok cabang dalam 1 query cepat (akumulasi per produk lintas lokasi cabang)
       const allBranchStocks = await localDb.branchStocks.toArray();
       const branchStockMap = new Map<string, number>();
       for (const s of allBranchStocks) {
-        branchStockMap.set(s.productId, Number(s.totalQtyBase || 0));
+        branchStockMap.set(
+          s.productId,
+          (branchStockMap.get(s.productId) || 0) + Number(s.totalQtyBase || 0)
+        );
       }
 
       productMap.clear(); // Bersihkan cache RAM agar selalu konsisten dengan data riil stok
@@ -446,20 +457,29 @@
           isConsignment: Boolean(lp.isConsignment),
           manufacturer: "Generik",
           baseUnit: lp.baseUnit,
+          defaultPurchaseUnit: lp.defaultPurchaseUnit || undefined,
+          referenceBuyPriceBase: Number(lp.referenceBuyPriceBase || 0),
           description: lp.activeSubstance || "",
           indication: "Sesuai anjuran medis",
           dosage: lp.defaultDosage || "3x1 Sehari",
-          units: lp.units.map((u) => ({
-            unit: u.unitName,
-            multiplier: u.conversionFactor,
-            prices: {
-              general: u.salePriceGeneral,
-              prescription: u.salePriceResep,
-              wholesale: u.salePriceGrosir,
-              delivery: u.salePriceDelivery,
-              member: u.salePriceMember
-            }
-          })),
+          units: (() => {
+            const sellableUnits = (lp.units || []).filter((u) => u.isSellable !== false);
+            const activeUnits = sellableUnits.length > 0 ? sellableUnits : lp.units || [];
+            return activeUnits.map((u) => ({
+              unit: u.unitName,
+              multiplier: u.conversionFactor,
+              buyPrice: Number(u.buyPrice || 0),
+              isSellable: u.isSellable !== false,
+              isPurchaseUnit: Boolean(u.isPurchaseUnit),
+              prices: {
+                general: Math.round(Number(u.salePriceGeneral || 0)),
+                prescription: Math.round(Number(u.salePriceResep || u.salePriceGeneral || 0)),
+                wholesale: Math.round(Number(u.salePriceGrosir || u.salePriceGeneral || 0)),
+                delivery: Math.round(Number(u.salePriceDelivery || u.salePriceGeneral || 0)),
+                member: Math.round(Number(u.salePriceMember || u.salePriceGeneral || 0))
+              }
+            }));
+          })(),
           batches: productBatches
         };
         productMap.set(item.id, item);
@@ -474,16 +494,27 @@
     }
   }
 
-  // Unduh penuh master bootstrap dari server ke IndexedDB (hanya pertama kali atau saat sinkronisasi manual)
-  async function syncFullBootstrapFromServer(force = false) {
-    if (!networkStore.effectiveOnline || isSyncingCatalog) return;
+  // Unduh penuh master bootstrap dari server ke IndexedDB (per cabang aktif)
+  async function syncFullBootstrapFromServer(force = false, targetBranchId?: string) {
+    if (!networkStore.effectiveOnline) return;
+    if (isSyncingCatalog && !force) return;
+
+    const reqSeq = ++syncRequestSeq;
+    const requestedBranch = targetBranchId || selectedBranchId;
     isSyncingCatalog = true;
 
     try {
-      const res = await api.pos.getBootstrap(selectedBranchId);
+      const res = await api.pos.getBootstrap(requestedBranch);
+      if (reqSeq !== syncRequestSeq) return; // Abaikan respons lama jika user berpindah cabang
+
       if (res && res.success && res.data) {
         const d = res.data;
         if (d.branches && d.branches.length > 0) branches = d.branches;
+        if (d.branch?.id && d.branch.id !== selectedBranchId) {
+          selectedBranchId = d.branch.id;
+        }
+        const resolvedBranchId = d.branch?.id || requestedBranch;
+
         if (d.customers && d.customers.length > 0) customers = d.customers;
         if (d.cashierShifts) {
           activeShift = d.cashierShifts;
@@ -512,11 +543,14 @@
               rackLocation: p.rackLocation || "RAK-01",
               drugClass: p.drugClass,
               baseUnit: p.baseUnit,
+              defaultPurchaseUnit: p.defaultPurchaseUnit || null,
+              referenceBuyPriceBase: Number(p.referenceBuyPriceBase || 0),
               isConsignment: Boolean(p.isConsignment),
               isActive: p.isActive,
               units: p.units || [],
               updatedAt: new Date().toISOString()
             }));
+            await localDb.products.clear();
             await localDb.products.bulkPut(dexieProds);
           }
 
@@ -550,47 +584,80 @@
             await localDb.branchStocks.bulkPut(dexieStocks);
           }
 
+          localStorage.setItem(POS_CACHED_BRANCH_KEY, resolvedBranchId);
           await loadLocalProducts();
         }
       }
     } catch (bootErr) {
       console.warn("[POS] Gagal bootstrap dari server:", bootErr);
     } finally {
-      isSyncingCatalog = false;
+      if (reqSeq === syncRequestSeq) {
+        isSyncingCatalog = false;
+      }
     }
   }
 
-  // Load initial data (Instan dari IndexedDB Lokal, background sync non-blocking)
+  async function handleBranchSwitch(newBranchId: string) {
+    selectedBranchId = newBranchId;
+    clearCart();
+    isLoading = true;
+    try {
+      if (typeof window !== "undefined") {
+        await localDb.batchStocks.clear();
+        await localDb.branchStocks.clear();
+        localStorage.removeItem(POS_CACHED_BRANCH_KEY);
+      }
+      await syncFullBootstrapFromServer(true, newBranchId);
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  // Load initial data (Instan dari IndexedDB Lokal hanya jika branch cocok, lalu background sync)
   onMount(async () => {
     if (authStore.user?.branchId) {
       selectedBranchId = authStore.user.branchId;
     }
 
-    // 1. TAMPILKAN LANGSUNG DARI LOKAL (< 100ms) JIKA SUDAH ADA DATA
-    let hasLocal = false;
-    if (typeof window !== "undefined") {
-      try {
-        const prodCount = await localDb.products.count();
-        if (prodCount > 0) {
-          hasLocal = await loadLocalProducts();
-          isLoading = false; // Langsung tampil seketika!
-        }
-      } catch (e) {
-        console.warn("[POS] Gagal mengecek data lokal:", e);
-      }
-    }
-
-    // 2. Ambil metadata cabang, kategori, pelanggan
+    // 1. Ambil metadata cabang, kategori, pelanggan terlebih dulu agar kode cabang legacy ("1") ter-resolve ke UUID
     try {
       const [branchList, catList, custList] = await Promise.all([
         mockApi.getBranches(),
         mockApi.getCategories(),
         mockApi.getCustomers()
       ]);
-      if (branches.length === 0) branches = branchList;
+      if (branchList.length > 0) {
+        branches = branchList;
+        const matchedBranch =
+          branchList.find((b) => b.id === selectedBranchId) ||
+          branchList.find((b) => b.code.toLowerCase() === String(selectedBranchId).toLowerCase());
+        if (matchedBranch) {
+          selectedBranchId = matchedBranch.id;
+        } else if (branchList[0]?.id) {
+          selectedBranchId = branchList[0].id;
+        }
+      }
       categories = catList;
       if (customers.length === 0) customers = custList;
     } catch (_) {}
+
+    // 2. TAMPILKAN LANGSUNG DARI LOKAL (< 100ms) HANYA JIKA CACHE LOKAL MILIK CABANG AKTIF
+    let hasLocal = false;
+    if (typeof window !== "undefined") {
+      try {
+        const cachedBranchId = localStorage.getItem(POS_CACHED_BRANCH_KEY);
+        const prodCount = await localDb.products.count();
+        if (prodCount > 0 && cachedBranchId === selectedBranchId) {
+          hasLocal = await loadLocalProducts();
+          isLoading = false; // Langsung tampil seketika!
+        } else if (cachedBranchId && cachedBranchId !== selectedBranchId) {
+          await localDb.batchStocks.clear();
+          await localDb.branchStocks.clear();
+        }
+      } catch (e) {
+        console.warn("[POS] Gagal mengecek data lokal:", e);
+      }
+    }
 
     // Cek shift kasir aktif di background tanpa memblokir UI
     if (networkStore.effectiveOnline) {
@@ -605,14 +672,18 @@
       }).catch(() => {});
     }
 
-    // 3. Sinkronisasi data katalog & stok:
+    // 3. Sinkronisasi data katalog & stok untuk cabang aktif:
     if (!hasLocal) {
       isLoading = true;
       try {
-        await syncFullBootstrapFromServer(true);
+        await syncFullBootstrapFromServer(true, selectedBranchId);
       } catch (err) {
-        // Fallback mock
-        products = await mockApi.searchProducts({ branchId: selectedBranchId });
+        // Fallback mock (pastikan hanya unit jual yang dimuat ke POS)
+        const rawFallback = await mockApi.searchProducts({ branchId: selectedBranchId });
+        products = rawFallback.map((p) => {
+          const sellUnits = (p.units || []).filter((u) => u.isSellable !== false);
+          return { ...p, units: sellUnits.length > 0 ? sellUnits : p.units };
+        });
         allCatalogProducts = products;
         for (const p of products) productMap.set(p.id, p);
       } finally {
@@ -620,7 +691,7 @@
       }
     } else if (networkStore.effectiveOnline) {
       // Jalankan background sync agar saldo stok lokal langsung mutakhir dengan snapshot server
-      syncFullBootstrapFromServer(false);
+      syncFullBootstrapFromServer(false, selectedBranchId);
     }
   });
 
@@ -650,7 +721,37 @@
     return product.batches.reduce((sum, b) => sum + b.stock, 0);
   }
 
-  function addToCart(product: Product, unitIndex = 0) {
+  function getUnitBuyCostReference(product: Product, unitObj: Product["units"][number]): number {
+    const activeBatchBuy = product.batches.find((b) => b.stock > 0 && Number(b.buyPrice) > 0)?.buyPrice || 0;
+    const baseRef = activeBatchBuy > 0 ? activeBatchBuy : Number(product.referenceBuyPriceBase || 0);
+    if (baseRef > 0) return Math.round(baseRef * unitObj.multiplier);
+    return Math.round(Number(unitObj.buyPrice || 0));
+  }
+
+  async function confirmMarginGuardIfNeeded(
+    product: Product,
+    unitObj: Product["units"][number],
+    sellingPrice: number
+  ): Promise<boolean> {
+    const hppUnit = getUnitBuyCostReference(product, unitObj);
+    if (hppUnit <= 0 || sellingPrice <= 0 || sellingPrice > hppUnit) return true;
+    const isLoss = sellingPrice < hppUnit;
+    return await alertStore.confirm({
+      type: isLoss ? "danger" : "warning",
+      title: isLoss ? "Peringatan: Harga Jual Di Bawah Modal!" : "Peringatan: Margin Penjualan 0%",
+      message: `Harga jual "${product.name}" satuan ${unitObj.unit} (Rp ${Math.round(sellingPrice).toLocaleString("id-ID")}) ${isLoss ? "lebih rendah dari" : "sama dengan"} harga beli/HPP (Rp ${hppUnit.toLocaleString("id-ID")}).`,
+      details: [
+        `Satuan: ${unitObj.unit} (Isi ${unitObj.multiplier} ${product.baseUnit})`,
+        `Harga Jual (${currentPriceTier}): Rp ${Math.round(sellingPrice).toLocaleString("id-ID")}`,
+        `Referensi HPP: Rp ${hppUnit.toLocaleString("id-ID")}`,
+        `Segera perbaiki harga jual produk ini di menu Stok -> Edit Master Obat jika bukan promo khusus.`
+      ],
+      confirmText: "Tetap Masukkan Keranjang",
+      cancelText: "Batal"
+    });
+  }
+
+  async function addToCart(product: Product, unitIndex = 0) {
     if (!activeShift) {
       alertStore.danger(
         "Shift Kasir Belum Dibuka",
@@ -667,7 +768,7 @@
 
     productMap.set(product.id, product);
     const selectedUnitObj = product.units[unitIndex] || product.units[0];
-    const unitPrice = selectedUnitObj.prices[currentPriceTier] || selectedUnitObj.prices.general;
+    const unitPrice = Math.round(selectedUnitObj.prices[currentPriceTier] || selectedUnitObj.prices.general || 0);
 
     // VALIDASI KETAT: Pengecekan Ketersediaan Stok
     const availableStock = getAvailableStock(product);
@@ -696,6 +797,11 @@
       return;
     }
 
+    if (existingIndex < 0) {
+      const proceed = await confirmMarginGuardIfNeeded(product, selectedUnitObj, unitPrice);
+      if (!proceed) return;
+    }
+
     // Calculate FEFO batch allocation preview
     const batchAllocations = allocateBatches(product, requestedQtyBase);
 
@@ -721,7 +827,7 @@
     }
   }
 
-  function updateItemUnit(index: number, newUnitName: string) {
+  async function updateItemUnit(index: number, newUnitName: string) {
     const item = cart[index];
     if (!item || item.selectedUnit === newUnitName) return;
 
@@ -729,7 +835,7 @@
     if (!product) return;
 
     const unitObj = product.units.find((u) => u.unit === newUnitName) || product.units[0];
-    const newUnitPrice = unitObj.prices[currentPriceTier] || unitObj.prices.general;
+    const newUnitPrice = Math.round(unitObj.prices[currentPriceTier] || unitObj.prices.general || 0);
 
     // VALIDASI KETAT: Cek stok jika ganti satuan
     const neededQtyBase = item.quantity * unitObj.multiplier;
@@ -742,6 +848,9 @@
       );
       return;
     }
+
+    const proceed = await confirmMarginGuardIfNeeded(product, unitObj, newUnitPrice);
+    if (!proceed) return;
 
     // Cek jika produk dengan satuan baru ini sudah ada di baris keranjang lain
     const existingIndex = cart.findIndex(
@@ -1027,6 +1136,16 @@
 
     receiptTextPreview = lines.join("\n");
   }
+
+  let activeThermalReceipt = $derived<ThermalReceiptData | null>(
+    showReceiptModal && lastCheckoutResult
+      ? mapCheckoutToThermalReceipt(lastCheckoutResult, selectedBranch)
+      : null
+  );
+
+  async function handlePrintThermalReceipt() {
+    await triggerThermalPrint();
+  }
 </script>
 
 <svelte:head>
@@ -1037,7 +1156,7 @@
 
 <!-- 1. BLOKIR RESOLUSI LAYAR KECIL (< LG / < 1024px) DENGAN ALERT ELEGAN -->
 <div
-  class="fixed inset-0 z-[9999] bg-[#f0f4f9] flex flex-col items-center justify-center p-6 text-center lg:hidden overflow-y-auto"
+  class="pos-screen-blocker print:!hidden fixed inset-0 z-[9999] bg-[#f0f4f9] flex flex-col items-center justify-center p-6 text-center lg:hidden overflow-y-auto"
 >
   <div
     class="max-w-md w-full bg-white/95 backdrop-blur-md rounded-3xl p-6 sm:p-8 border border-slate-200/80 shadow-2xl space-y-5 animate-scale-up"
@@ -1108,7 +1227,7 @@
 </div>
 
 <!-- 2. MAIN POS SCREEN (HANYA AKTIF DI LAYAR >= LG / >= 1024px) -->
-<div class="hidden lg:flex h-screen w-screen p-3 sm:p-4 bg-[#f0f4f9] flex-col overflow-hidden space-y-3">
+<div class="pos-main-screen print:!hidden hidden lg:flex h-screen w-screen p-3 sm:p-4 bg-[#f0f4f9] flex-col overflow-hidden space-y-3">
   <!-- POS DEDICATED FULLSCREEN TOPBAR -->
   <header class="bg-white rounded-2xl px-4 py-2.5 border border-slate-100 shadow-sm flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
     <div class="flex items-center gap-3">
@@ -1150,7 +1269,7 @@
           variant="soft"
           size="sm"
           align="right"
-          onchange={() => syncFullBootstrapFromServer(true)}
+          onchange={(val) => handleBranchSwitch(val)}
           options={branches.map((b) => ({
             value: b.id,
             label: `${b.name}`,
@@ -1204,7 +1323,7 @@
           title="Tarik pembaruan master obat terbaru dari server cloud"
         >
           <RefreshCw class="w-3.5 h-3.5 text-slate-500 {isSyncingCatalog ? 'animate-spin text-[#1d63d8]' : ''}" />
-          <span>{isSyncingCatalog ? 'Memperbarui...' : 'Update'}</span>
+          <span>{isSyncingCatalog ? 'Updating...' : 'Update'}</span>
         </button>
       {/if}
 
@@ -1322,6 +1441,8 @@
               {@const stock = getAvailableStock(prod)}
               {@const primaryUnit = prod.units[0]}
               {@const price = primaryUnit.prices[currentPriceTier] || primaryUnit.prices.general}
+              {@const primaryBuyCost = getUnitBuyCostReference(prod, primaryUnit)}
+              {@const isPrimaryLowMargin = primaryBuyCost > 0 && price > 0 && price <= primaryBuyCost}
 
               <div class="bg-white rounded-xl border border-surface-border p-3 flex flex-col justify-between hover:border-brand-blue-400 hover:shadow-card transition-all">
                 <div>
@@ -1366,23 +1487,33 @@
 
                 <!-- Price & Unit Action Buttons -->
                 <div class="mt-3 pt-2 border-t border-slate-100">
-                  <div class="flex items-baseline justify-between mb-2">
-                    <span class="text-sm font-extrabold text-brand-blue">
-                      Rp {price.toLocaleString("id-ID")}
+                  <div class="flex items-baseline justify-between mb-2 gap-1">
+                    <span class="text-sm font-extrabold {isPrimaryLowMargin ? 'text-amber-600' : 'text-brand-blue'}">
+                      Rp {Math.round(price).toLocaleString("id-ID")}
                     </span>
-                    <span class="text-[10px] text-slate-400">/{primaryUnit.unit}</span>
+                    <div class="flex items-center gap-1">
+                      {#if isPrimaryLowMargin}
+                        <span
+                          class="text-[9px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200"
+                          title="Harga jual saat ini <= HPP (Rp {primaryBuyCost.toLocaleString('id-ID')})"
+                        >
+                          Margin 0%
+                        </span>
+                      {/if}
+                      <span class="text-[10px] text-slate-400">/{primaryUnit.unit}</span>
+                    </div>
                   </div>
 
                   <!-- Multi-unit purchase buttons -->
                   <div class="flex items-center gap-1">
                     {#each prod.units as u, uIdx}
-                      {@const uPrice = u.prices[currentPriceTier] || u.prices.general}
+                      {@const uPrice = Math.round(u.prices[currentPriceTier] || u.prices.general || 0)}
                       <button
                         onclick={() => addToCart(prod, uIdx)}
                         class="flex-1 py-1 px-1.5 text-[11px] font-semibold rounded text-center transition-colors {stock > 0
                           ? 'bg-brand-blue-50 text-brand-blue hover:bg-brand-blue hover:text-white border border-brand-blue-200'
                           : 'bg-slate-100 text-slate-400 border border-slate-200 hover:bg-slate-200'}"
-                        title={stock > 0 ? `Beli per ${u.unit} (Rp ${uPrice.toLocaleString('id-ID')})` : 'Stok produk ini kosong (0)'}
+                        title={stock > 0 ? `Jual per ${u.unit} (Rp ${uPrice.toLocaleString('id-ID')})` : 'Stok produk ini kosong (0)'}
                       >
                         {u.unit}
                       </button>
@@ -1477,7 +1608,7 @@
                             type="button"
                             onclick={() => updateItemUnit(idx, u.unit)}
                             class="px-2 py-0.5 rounded-md text-[10px] font-bold transition-all {item.selectedUnit === u.unit ? 'bg-brand-blue text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'}"
-                            title="Ganti ke {u.unit} (Isi {u.multiplier}) - Rp {(u.prices[currentPriceTier] || u.prices.general).toLocaleString('id-ID')}"
+                            title="Ganti ke {u.unit} (Isi {u.multiplier}) - Rp {Math.round(u.prices[currentPriceTier] || u.prices.general || 0).toLocaleString('id-ID')}"
                           >
                             {u.unit}
                           </button>
@@ -1489,7 +1620,7 @@
                       </span>
                     {/if}
                     <span class="text-[10px] text-slate-500 font-mono">
-                      &bull; Rp {item.unitPrice.toLocaleString("id-ID")}/{item.selectedUnit}
+                      &bull; Rp {Math.round(item.unitPrice).toLocaleString("id-ID")}/{item.selectedUnit}
                     </span>
                   </div>
                 </div>
@@ -1600,7 +1731,7 @@
   <div
     use:portal
     data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    class="modal-overlay print:!hidden fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
       if (e.target === e.currentTarget) showCheckoutModal = false;
     }}
@@ -1851,7 +1982,7 @@
   <div
     use:portal
     data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    class="modal-overlay print:!hidden fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
       if (e.target === e.currentTarget) showReceiptModal = false;
     }}
@@ -1868,14 +1999,14 @@
         </button>
       </div>
 
-      <!-- Thermal Receipt Box -->
+      <!-- Thermal Receipt Box (Preview di Layar) -->
       <div class="bg-slate-900 text-emerald-400 font-mono text-[11px] p-4 rounded-lg overflow-x-auto max-h-[350px] whitespace-pre no-scrollbar">
         {receiptTextPreview}
       </div>
 
       <div class="flex items-center gap-2">
         <button
-          onclick={() => { window.print(); }}
+          onclick={handlePrintThermalReceipt}
           class="flex-1 py-2 px-4 rounded-xl bg-brand-blue text-white font-bold text-xs shadow-card flex items-center justify-center gap-1.5 hover:bg-brand-blue-700"
         >
           <Printer class="w-4 h-4" />
@@ -1892,12 +2023,15 @@
   </div>
 {/if}
 
+<!-- KOMPONEN REUSABLE LEMBAR CETAK PRINTER TERMAL -->
+<ThermalReceiptSheet receipt={activeThermalReceipt} />
+
 <!-- MODAL: REKONSILIASI & TUTUP SHIFT KASIR -->
 {#if isShiftModalOpen}
   <div
     use:portal
     data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    class="modal-overlay print:!hidden fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
       if (e.target === e.currentTarget) isShiftModalOpen = false;
     }}
@@ -2107,7 +2241,7 @@
   <div
     use:portal
     data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-slate-900/95 backdrop-blur-xl z-[120] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    class="modal-overlay print:!hidden fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-slate-900/95 backdrop-blur-xl z-[120] flex items-center justify-center overflow-y-auto w-screen h-screen"
     role="dialog"
     aria-label="Kunci Terminal Kasir"
   >

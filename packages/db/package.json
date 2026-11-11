@@ -20,7 +20,8 @@
     "db:studio": "bun --env-file=../../.env x drizzle-kit studio",
     "migrate:master": "bun --env-file=../../.env src/scripts/migrate-master-data.ts",
     "migrate:purchases": "bun --env-file=../../.env src/scripts/migrate-purchases.ts",
-    "migrate:sales": "bun --env-file=../../.env src/scripts/migrate-sales.ts"
+    "migrate:sales": "bun --env-file=../../.env src/scripts/migrate-sales.ts",
+    "cleanup:units": "bun --env-file=../../.env src/scripts/cleanup-units-and-backfill-hpp.ts"
   },
   "dependencies": {
     "dexie": "^4.0.10",

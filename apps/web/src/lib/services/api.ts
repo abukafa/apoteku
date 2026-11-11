@@ -66,8 +66,11 @@ export async function apiFetch<T>(
 
 export const api = {
   pos: {
-    async getBootstrap(branchId?: string) {
-      const query = branchId ? `?branch_id=${encodeURIComponent(branchId)}` : "";
+    async getBootstrap(branchId?: string, includeAllUnits = false) {
+      const params = new URLSearchParams();
+      if (branchId) params.set("branch_id", branchId);
+      if (includeAllUnits) params.set("include_all_units", "1");
+      const query = params.toString() ? `?${params.toString()}` : "";
       return await apiFetch<any>(`/api/pos/bootstrap${query}`, { branchId });
     },
     async syncSales(payload: any) {
@@ -483,6 +486,34 @@ export const api = {
         method: "POST",
         body: JSON.stringify(payload)
       });
+    },
+    async verify(id: string, payload: any = {}) {
+      return await apiFetch<any>(`/api/prescriptions/${encodeURIComponent(id)}/verify`, {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+    },
+    async dispense(id: string, payload: any) {
+      return await apiFetch<any>(`/api/prescriptions/${encodeURIComponent(id)}/dispense`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    },
+    async listCounselings(params: { branchId?: string; limit?: number } = {}) {
+      const sp = new URLSearchParams();
+      if (params.branchId) sp.append("branch_id", params.branchId);
+      if (params.limit) sp.append("limit", String(params.limit));
+      const qs = sp.toString() ? `?${sp.toString()}` : "";
+      return await apiFetch<any>(`/api/prescriptions/counselings${qs}`);
+    },
+    async listDoctors() {
+      return await apiFetch<any>("/api/prescriptions/doctors");
+    },
+    async createDoctor(payload: any) {
+      return await apiFetch<any>("/api/prescriptions/doctors", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
     }
   },
   transfer: {
@@ -492,6 +523,10 @@ export const api = {
       if (params.limit) sp.append("limit", String(params.limit));
       const qs = sp.toString() ? `?${sp.toString()}` : "";
       return await apiFetch<any>(`/api/inventory/transfers${qs}`);
+    },
+    async getBranchProducts(branchId: string) {
+      const qs = `?branch_id=${encodeURIComponent(branchId)}`;
+      return await apiFetch<any>(`/api/inventory/transfers/branch-products${qs}`, { branchId });
     },
     async create(payload: any) {
       return await apiFetch<any>("/api/inventory/transfers", {
@@ -505,10 +540,10 @@ export const api = {
         body: JSON.stringify(payload)
       });
     },
-    async dispatch(transferId: string, courierName?: string) {
+    async dispatch(transferId: string, courierName?: string, operator?: string) {
       return await apiFetch<any>(`/api/inventory/transfers/${transferId}/dispatch`, {
         method: "POST",
-        body: JSON.stringify({ courierName })
+        body: JSON.stringify({ courierName, operator })
       });
     }
   },

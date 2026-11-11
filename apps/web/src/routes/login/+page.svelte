@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { env } from "$env/dynamic/public";
   import { onMount } from "svelte";
   import {
     KeyRound,
@@ -41,8 +42,9 @@
   let activeTab = $state<"GOOGLE" | "PIN">("GOOGLE");
 
   // Google Form State
-  let googleConfig = $state<{ clientId: string; isConfigured: boolean }>({
+  let googleConfig = $state<{ clientId: string; redirectUri?: string; isConfigured: boolean }>({
     clientId: "",
+    redirectUri: "",
     isConfigured: false
   });
 
@@ -338,11 +340,21 @@
     pinError = "";
     isSubmitting = true;
 
-    const clientId =
+    const clientId = (
       googleConfig.clientId ||
-      "";
+      env.PUBLIC_GOOGLE_CLIENT_ID ||
+      ""
+    ).trim();
 
-    const redirectUri = "http://localhost:5173/api/auth/google/callback";
+    if (!clientId) {
+      pinError = "Konfigurasi Google OAuth Client ID belum diatur di environment (.env).";
+      isSubmitting = false;
+      return;
+    }
+
+    const redirectUri =
+      googleConfig.redirectUri ||
+      `${window.location.origin}/api/auth/google/callback`;
 
     let loginUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(
       clientId

@@ -120,9 +120,9 @@ Urutan alur bisnis disusun mengikuti siklus operasional nyata di dalam kode:
 - **Status implementasi:** **Berjalan** (alur redirect OAuth 2.0 ke `/api/auth/google/callback` maupun endpoint `POST /api/auth/google` terimplementasi).
 - **Rangkaian utama:**
   1. **UI/aksi pengguna:** Pengguna mengklik tombol Google (`handleGoogleButtonClick`, `login/+page.svelte:335-356`).
-  2. **State dan validasi di client:** Mengambil `googleClientId` (dari hasil `GET /api/auth/google/config` atau fallback hardcoded `<GOOGLE_CLIENT_ID>` di `L52-55`) dan mengarahkan browser ke `https://accounts.google.com/o/oauth2/v2/auth` dengan `redirect_uri = "http://localhost:5173/api/auth/google/callback"` (`L343`).
+  2. **State dan validasi di client:** Mengambil `googleClientId` (dari hasil `GET /api/auth/google/config` atau env `PUBLIC_GOOGLE_CLIENT_ID`) dan mengarahkan browser ke `https://accounts.google.com/o/oauth2/v2/auth` dengan `redirect_uri` callback (`/api/auth/google/callback`).
   3. **Client/service/API:** Google mengarahkan browser kembali ke `GET /api/auth/google/callback?code=...` (yang di-proxy oleh Vite ke `http://localhost:3001/api/auth/google/callback`).
-  4. **Handler dan validasi server:** Handler `GET /api/auth/google/callback` (`apps/backend/src/modules/auth/auth.routes.ts:564-792`) memeriksa `query.error` dan `query.code`, menukar `code` ke `https://oauth2.googleapis.com/token` menggunakan `clientId` dan `clientSecret` (dengan fallback secret hardcoded di `L585-587`), lalu mengambil profil dari `https://www.googleapis.com/oauth2/v3/userinfo` (`L622-643`).
+  4. **Handler dan validasi server:** Handler `GET /api/auth/google/callback` (`apps/backend/src/modules/auth/auth.routes.ts`) memeriksa `query.error` dan `query.code`, menukar `code` ke `https://oauth2.googleapis.com/token` menggunakan `GOOGLE_CLIENT_ID` dan `GOOGLE_CLIENT_SECRET` dari `.env`, lalu mengambil profil dari `https://www.googleapis.com/oauth2/v3/userinfo`.
   5. **Business logic/perhitungan/aturan status:**
      - Mencari `users` berdasarkan `LOWER(email) = googleEmail OR LOWER(username) = emailPrefix` (`L659-684`).
      - Jika ditemukan: memeriksa `isActive` (`L687-689`), memperbarui `avatarUrl` jika berubah (`L692-701`).

@@ -318,20 +318,20 @@ export const authRoutes = new Elysia({ prefix: "/api" })
   .get(
     "/auth/google/config",
     () => {
-      const clientId =
+      const clientId = (
         process.env.GOOGLE_CLIENT_ID ||
         process.env.PUBLIC_GOOGLE_CLIENT_ID ||
-        "";
+        ""
+      ).trim();
       const redirectUri =
         process.env.GOOGLE_REDIRECT_URI ||
         "http://localhost:5173/api/auth/google/callback";
-
       return {
         success: true,
         data: {
-          clientId: clientId.trim(),
+          clientId,
           redirectUri,
-          isConfigured: true
+          isConfigured: Boolean(clientId)
         }
       };
     },
@@ -615,14 +615,20 @@ export const authRoutes = new Elysia({ prefix: "/api" })
           return redirect(`${frontendUrl}/login?error=${encodeURIComponent("Authorization code Google tidak ditemukan")}`, 302);
         }
 
-        const clientId =
+        const clientId = (
           process.env.GOOGLE_CLIENT_ID ||
           process.env.PUBLIC_GOOGLE_CLIENT_ID ||
-          "";
+          ""
+        ).trim();
 
-        const clientSecret =
-          process.env.GOOGLE_CLIENT_SECRET ||
-          "";
+        const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || "").trim();
+
+        if (!clientId || !clientSecret) {
+          return redirect(
+            `${frontendUrl}/login?error=${encodeURIComponent("Konfigurasi Google OAuth belum diatur di server (.env)")}`,
+            302
+          );
+        }
 
         const redirectUri =
           process.env.GOOGLE_REDIRECT_URI ||

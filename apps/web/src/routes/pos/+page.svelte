@@ -156,8 +156,9 @@
   let shiftInitialCash = $state(0);
   let shiftCashSales = $state(0);
   let shiftQrisSales = $state(0);
+  let shiftCashRefunds = $state(0);
   let shiftActualCash = $state(0);
-  let shiftExpectedCash = $derived(shiftInitialCash + shiftCashSales);
+  let shiftExpectedCash = $derived(shiftInitialCash + shiftCashSales - shiftCashRefunds);
   let shiftDiscrepancy = $derived(shiftActualCash - shiftExpectedCash);
   let shiftNotes = $state("");
   let shiftClosureSuccess = $state("");
@@ -179,13 +180,22 @@
 
     if (networkStore.effectiveOnline) {
       try {
-        const res = await api.pos.getActiveShift(selectedBranchId);
+        let branchToQuery = selectedBranchId;
+        if (branchToQuery === "1" || !branchToQuery.includes("-")) {
+          const valid = branches.find((b) => b.id.includes("-")) || branches[0];
+          if (valid) {
+            selectedBranchId = valid.id;
+            branchToQuery = valid.id;
+          }
+        }
+        const res = await api.pos.getActiveShift(branchToQuery);
         if (res && res.success && res.shift) {
           activeShift = res.shift;
-          shiftInitialCash = res.shift.initialCash || 0;
-          shiftCashSales = res.shift.cashSales || 0;
-          shiftQrisSales = res.shift.qrisSales || 0;
-          shiftActualCash = res.shift.expectedCash || shiftInitialCash + shiftCashSales;
+          shiftInitialCash = Number(res.shift.initialCash || 0);
+          shiftCashSales = Number(res.shift.cashSales || res.shift.currentCashSales || 0);
+          shiftQrisSales = Number(res.shift.qrisSales || res.shift.currentNonCashSales || 0);
+          shiftCashRefunds = Number(res.shift.currentCashRefunds ?? res.shift.cashRefunds ?? 0);
+          shiftActualCash = Number(res.shift.expectedCash ?? (shiftInitialCash + shiftCashSales - shiftCashRefunds));
         }
       } catch (err) {
         console.warn("[POS] Gagal memuat rekap shift kasir dari API:", err);
@@ -2161,22 +2171,33 @@
             </div>
 
             <!-- Cash & Digital Summary -->
-            <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-2">
+            <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
               <div class="flex justify-between text-slate-600">
                 <span>Modal Awal Kas:</span>
-                <span class="font-mono font-bold">Rp {shiftInitialCash.toLocaleString("id-ID")}</span>
+                <span class="font-mono font-bold text-slate-800">Rp {shiftInitialCash.toLocaleString("id-ID")}</span>
               </div>
               <div class="flex justify-between text-slate-600">
-                <span>Penjualan Tunai:</span>
+                <span>Penjualan Tunai Kasir:</span>
                 <span class="font-mono font-bold text-emerald-600">+ Rp {shiftCashSales.toLocaleString("id-ID")}</span>
               </div>
               <div class="flex justify-between text-slate-600">
                 <span>Penjualan Non-Tunai / QRIS:</span>
                 <span class="font-mono text-slate-500">Rp {shiftQrisSales.toLocaleString("id-ID")}</span>
               </div>
-              <div class="flex justify-between text-slate-800 pt-2 border-t border-slate-200 font-bold">
-                <span>Target Kas di Laci:</span>
-                <span class="font-mono text-brand-blue">Rp {shiftExpectedCash.toLocaleString("id-ID")}</span>
+              {#if shiftCashRefunds > 0}
+                <div class="flex justify-between text-rose-600 font-semibold bg-rose-50 px-2.5 py-1.5 rounded-lg border border-rose-200">
+                  <span>Refund Tunai Retur Penjualan:</span>
+                  <span class="font-mono font-bold">- Rp {shiftCashRefunds.toLocaleString("id-ID")}</span>
+                </div>
+              {/if}
+              <div class="pt-2 border-t border-slate-200">
+                <div class="flex justify-between items-center bg-blue-50/80 p-2.5 rounded-xl border border-blue-200">
+                  <div>
+                    <span class="block text-brand-blue font-bold text-xs">Total Uang Seharusnya di Laci:</span>
+                    <span class="text-[10px] text-slate-500 font-normal">(Modal Awal + Tunai - Refund Tunai)</span>
+                  </div>
+                  <span class="font-mono text-base font-black text-brand-blue">Rp {shiftExpectedCash.toLocaleString("id-ID")}</span>
+                </div>
               </div>
             </div>
 

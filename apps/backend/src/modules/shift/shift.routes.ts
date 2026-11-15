@@ -13,7 +13,7 @@ export const shiftRoutes = new Elysia({ prefix: "/api/shifts" })
     "",
     async ({ query, branchId }) => {
       try {
-        const targetBranch = query.branch_id || branchId;
+        const targetBranch = query.branch_id || (query as any).branchId || branchId;
         const status = query.status as "ALL" | "OPEN" | "CLOSED" | undefined;
         const limit = query.limit ? Number(query.limit) : 50;
         const data = await shiftService.getShifts({
@@ -29,6 +29,7 @@ export const shiftRoutes = new Elysia({ prefix: "/api/shifts" })
     {
       query: t.Object({
         branch_id: t.Optional(t.String()),
+        branchId: t.Optional(t.String()),
         status: t.Optional(t.Union([t.Literal("ALL"), t.Literal("OPEN"), t.Literal("CLOSED")])),
         limit: t.Optional(t.Numeric())
       }),
@@ -44,7 +45,7 @@ export const shiftRoutes = new Elysia({ prefix: "/api/shifts" })
     "/current",
     async ({ query, branchId, tenantId }) => {
       try {
-        const targetBranch = query.branch_id || branchId;
+        const targetBranch = query.branch_id || (query as any).branchId || branchId;
         if (!targetBranch) {
           return { success: false, error: "branch_id is required" };
         }
@@ -56,7 +57,8 @@ export const shiftRoutes = new Elysia({ prefix: "/api/shifts" })
     },
     {
       query: t.Object({
-        branch_id: t.Optional(t.String())
+        branch_id: t.Optional(t.String()),
+        branchId: t.Optional(t.String())
       }),
       detail: {
         tags: ["Shift"],

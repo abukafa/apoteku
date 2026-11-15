@@ -199,11 +199,15 @@ class MockApiService {
   private isSuppliersLoaded = false;
   private loadPromise: Promise<void> | null = null;
 
-  async ensureDataLoaded(branchId?: string): Promise<void> {
+  async ensureDataLoaded(branchId?: string, force = false): Promise<void> {
     while (this.loadPromise) {
       await this.loadPromise;
     }
-    if (this.isLoadedFromApi && (!branchId || this.loadedBranchId === branchId)) return;
+    if (!force && this.isLoadedFromApi && (!branchId || this.loadedBranchId === branchId)) return;
+    if (force) {
+      this.isLoadedFromApi = false;
+      this.loadedBranchId = undefined;
+    }
 
     this.loadPromise = (async () => {
       try {
@@ -524,8 +528,9 @@ class MockApiService {
     query?: string;
     categoryId?: string;
     branchId?: string;
+    forceReload?: boolean;
   }): Promise<Product[]> {
-    await this.ensureDataLoaded(options?.branchId);
+    await this.ensureDataLoaded(options?.branchId, options?.forceReload);
     const branchId = options?.branchId;
     let result = this.products;
 

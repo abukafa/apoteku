@@ -73,6 +73,28 @@ export const returnsRoutes = new Elysia({ prefix: "/api/returns" })
     }
   )
 
+  // 2b. APPROVE CUSTOMER RETURN
+  .post(
+    "/customer/:id/approve",
+    async ({ params }) => {
+      try {
+        const res = await returnsService.approveCustomerReturn(params.id);
+        return res;
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      params: t.Object({
+        id: t.String()
+      }),
+      detail: {
+        tags: ["Retur"],
+        summary: "Setujui Status Retur Penjualan Pasien"
+      }
+    }
+  )
+
   // 3. GET SUPPLIER RETURNS
   .get(
     "/supplier",

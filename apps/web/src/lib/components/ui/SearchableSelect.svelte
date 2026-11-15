@@ -49,9 +49,11 @@
   let menuStyle = $state("");
 
   let normalizedOptions = $derived<SelectOption[]>(
-    options.map((opt) =>
-      typeof opt === "string" ? { value: opt, label: opt } : opt
-    )
+    options
+      .filter((opt): opt is SelectOption | string => opt !== null && opt !== undefined)
+      .map((opt) =>
+        typeof opt === "string" ? { value: opt, label: opt } : opt
+      )
   );
 
   $effect(() => {

@@ -1107,7 +1107,7 @@
   >
     {#snippet header()}
       <th class="py-3 px-4">No. Surat</th>
-      <th class="py-3 px-4">Cabang Asal</th>
+      <th class="py-3 px-4">Cabang</th>
       <th class="py-3 px-4">Cabang Tujuan</th>
       <th class="py-3 px-4">Waktu</th>
       <th class="py-3 px-4">Rincian Barang</th>

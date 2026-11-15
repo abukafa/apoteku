@@ -1401,7 +1401,7 @@
       </div>
 
       <!-- DESKTOP TABLE VIEW (md+) UNTUK DAFTAR PENGGUNA -->
-      <div class="hidden md:block overflow-x-auto scrollbar-minimalist">
+      <div class="hidden md:block overflow-x-auto no-scrollbar">
         <table class="w-full text-left text-xs border-collapse">
           <thead>
             <tr class="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider text-[11px] border-b border-slate-100">
@@ -1409,7 +1409,6 @@
               <th class="py-3 px-4">Username / Email</th>
               <th class="py-3 px-4">Peran (Role)</th>
               <th class="py-3 px-4">Penugasan Cabang</th>
-              <th class="py-3 px-4 text-center">PIN</th>
               <th class="py-3 px-4 text-center">Status</th>
               <th class="py-3 px-4 text-center">Aksi</th>
             </tr>
@@ -1473,9 +1472,6 @@
                     {:else}
                       <span>{u.branchName || "Cabang Pusat"}</span>
                     {/if}
-                  </td>
-                  <td class="py-3.5 px-4 text-center font-mono font-bold tracking-widest text-slate-500">
-                    ••••••
                   </td>
                   <td class="py-3.5 px-4 text-center">
                     <Badge type="SUCCESS" label="AKTIF" />

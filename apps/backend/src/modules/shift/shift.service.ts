@@ -79,12 +79,29 @@ class ShiftService {
         )
       );
 
+    // Hitung total refund tunai dari retur penjualan kasir selama shift ini
+    const [refundsAgg] = await db
+      .select({
+        totalCashRefunds: sql<number>`COALESCE(SUM(${schema.customerReturns.refundAmount}), 0)::numeric`,
+        refundCount: sql<number>`COUNT(*)::int`
+      })
+      .from(schema.customerReturns)
+      .where(
+        and(
+          eq(schema.customerReturns.branchId, branchId),
+          eq(schema.customerReturns.compensationType, "REFUND_TUNAI"),
+          eq(schema.customerReturns.status, "APPROVED"),
+          gte(schema.customerReturns.createdAt, shift.startTime)
+        )
+      );
+
     const agg = salesAgg[0] || { cashSales: 0, nonCashSales: 0, totalSales: 0, trxCount: 0 };
     const initial = Number(shift.initialCash);
     const cashSales = Number(agg.cashSales);
     const nonCashSales = Number(agg.nonCashSales);
     const totalSales = Number(agg.totalSales);
-    const expectedCash = initial + cashSales;
+    const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
+    const expectedCash = initial + cashSales - cashRefunds;
 
     return {
       ...shift,
@@ -92,6 +109,7 @@ class ShiftService {
       currentCashSales: cashSales,
       currentNonCashSales: nonCashSales,
       currentTotalSales: totalSales,
+      currentCashRefunds: cashRefunds,
       expectedCash,
       trxCount: agg.trxCount
     };
@@ -202,12 +220,28 @@ class ShiftService {
         )
       );
 
+    // Hitung total refund tunai dari retur penjualan kasir selama shift ini
+    const [refundsAgg] = await db
+      .select({
+        totalCashRefunds: sql<number>`COALESCE(SUM(${schema.customerReturns.refundAmount}), 0)::numeric`
+      })
+      .from(schema.customerReturns)
+      .where(
+        and(
+          eq(schema.customerReturns.branchId, shift.branchId),
+          eq(schema.customerReturns.compensationType, "REFUND_TUNAI"),
+          eq(schema.customerReturns.status, "APPROVED"),
+          gte(schema.customerReturns.createdAt, shift.startTime)
+        )
+      );
+
     const agg = salesAgg[0] || { cashSales: 0, nonCashSales: 0, totalSales: 0 };
     const initial = Number(shift.initialCash);
     const cashSales = Number(agg.cashSales);
     const totalNonCash = Number(agg.nonCashSales);
     const totalSales = Number(agg.totalSales);
-    const expectedCash = initial + cashSales;
+    const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
+    const expectedCash = initial + cashSales - cashRefunds;
     const actualCash = Number(params.actualCash);
     const cashDifference = actualCash - expectedCash;
 

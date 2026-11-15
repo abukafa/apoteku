@@ -1,6 +1,6 @@
 import { Elysia, t } from "elysia";
 import { db, schema } from "@apoteku/db";
-import { eq, and, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
 import { generateAdjustmentNumber, calculateStockDifference } from "@apoteku/core";
 
 export const opnameRoutes = new Elysia({ prefix: "/api/inventory" })
@@ -371,4 +371,128 @@ export const opnameRoutes = new Elysia({ prefix: "/api/inventory" })
       console.error("[Inventory POST /opname error]:", err);
       return { success: false, error: err.message };
     }
-  });
+  })
+
+  // 3. GET STOCK LEDGER / KARTU STOK AUDIT
+  .get(
+    "/ledger",
+    async ({ query, branchId }) => {
+      try {
+        const targetBranch = query.branch_id || branchId;
+        const targetProduct = query.product_id;
+        const limit = query.limit ? Number(query.limit) : 500;
+
+        const conditions = [];
+        if (targetBranch && targetBranch !== "ALL") {
+          conditions.push(eq(schema.stockLedger.branchId, targetBranch));
+        }
+        if (targetProduct) {
+          conditions.push(eq(schema.stockLedger.productId, targetProduct));
+        }
+
+        const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+        const rows = await db
+          .select({
+            id: schema.stockLedger.id,
+            createdAt: schema.stockLedger.createdAt,
+            branchId: schema.stockLedger.branchId,
+            branchName: schema.branches.name,
+            productId: schema.stockLedger.productId,
+            productName: schema.products.name,
+            sku: schema.products.sku,
+            baseUnit: schema.products.baseUnit,
+            batchId: schema.stockLedger.batchId,
+            batchNumber: schema.productBatches.batchNo,
+            expiryDate: schema.productBatches.expiredDate,
+            mutationType: schema.stockLedger.mutationType,
+            quantityBase: schema.stockLedger.quantityBase,
+            referenceId: schema.stockLedger.referenceId,
+            notes: schema.stockLedger.notes
+          })
+          .from(schema.stockLedger)
+          .leftJoin(schema.products, eq(schema.stockLedger.productId, schema.products.id))
+          .leftJoin(schema.branches, eq(schema.stockLedger.branchId, schema.branches.id))
+          .leftJoin(schema.productBatches, eq(schema.stockLedger.batchId, schema.productBatches.id))
+          .where(whereClause)
+          .orderBy(asc(schema.stockLedger.createdAt))
+          .limit(limit);
+
+        const mapped = rows.map((r) => {
+          const qty = Number(r.quantityBase || 0);
+          const isPositive = qty > 0;
+          const qtyIn = isPositive ? qty : 0;
+          const qtyOut = !isPositive ? Math.abs(qty) : 0;
+
+          // Ekstrak nomor faktur / nota / surat jalan dari teks catatan jika ada
+          let refNo = "REF-MUTASI";
+          const notes = r.notes || "";
+          const refMatch = notes.match(/\b(FP-[0-9A-Za-z-]+|INV\/[0-9A-Za-z\/-]+|RSP-[0-9A-Za-z-]+|RKB-[0-9A-Za-z-]+|KSN-[0-9A-Za-z-]+|OPN-[0-9A-Za-z-]+|RET-[0-9A-Za-z-]+)\b/);
+          if (refMatch) {
+            refNo = refMatch[1];
+          } else if (r.referenceId) {
+            refNo = r.referenceId.slice(0, 13);
+          }
+
+          // Klasifikasi tipe transaksi yang ramah pengguna
+          let type = "MUTASI";
+          if (r.mutationType === "PURCHASE_RECEIPT") type = "PEMBELIAN";
+          else if (r.mutationType === "PURCHASE_VOID") type = "VOID_BELI";
+          else if (r.mutationType === "CONSIGNMENT_IN") type = "KONSINYASI";
+          else if (r.mutationType === "POS_SALE") {
+            type = notes.toLowerCase().includes("resep") ? "RESEP_DOKTER" : "PENJUALAN";
+          } else if (r.mutationType === "TRANSFER_OUT") type = "PENGIRIMAN_CABANG";
+          else if (r.mutationType === "TRANSFER_IN") type = "PENERIMAAN_CABANG";
+          else if (r.mutationType === "ADJUSTMENT") {
+            if (notes.toLowerCase().includes("retur pembelian") || notes.toLowerCase().includes("ret-bl")) type = "RETUR_BELI";
+            else if (notes.toLowerCase().includes("retur penjualan") || notes.toLowerCase().includes("ret-jl")) type = "RETUR_JUAL";
+            else type = "OPNAME";
+          } else if (r.mutationType === "DEFICIT_OVERSELL") type = "DEFICIT_OVERSELL";
+
+          const d = new Date(r.createdAt);
+          const dateFormatted =
+            d.toLocaleDateString("id-ID", {
+              day: "numeric",
+              month: "short",
+              year: "numeric"
+            }) +
+            ", " +
+            d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+
+          return {
+            id: r.id,
+            productId: r.productId,
+            productName: r.productName,
+            sku: r.sku,
+            branchId: r.branchId,
+            branchName: r.branchName,
+            date: dateFormatted,
+            rawDate: r.createdAt,
+            refNumber: refNo,
+            type,
+            rawMutationType: r.mutationType,
+            batch: r.batchNumber || "-",
+            expiryDate: r.expiryDate || "-",
+            qtyIn,
+            qtyOut,
+            qtyChange: qty,
+            unit: r.baseUnit || "PCS",
+            notes,
+            operator: "Sistem / Petugas"
+          };
+        });
+
+        return { success: true, data: mapped };
+      } catch (err: any) {
+        console.error("[Inventory GET /ledger error]:", err);
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      query: t.Object({
+        branch_id: t.Optional(t.String()),
+        product_id: t.Optional(t.String()),
+        limit: t.Optional(t.Numeric())
+      })
+    }
+  );

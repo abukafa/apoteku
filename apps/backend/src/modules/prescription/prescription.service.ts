@@ -399,6 +399,97 @@ class PrescriptionService {
         verifiedAt: isVerified ? now : null,
         updatedAt: now
       });
+
+      // 4. Potong stok fisik cabang & catat mutasi di stock_ledger
+      const [defaultLocation] = await tx
+        .select({ id: schema.inventoryLocations.id })
+        .from(schema.inventoryLocations)
+        .where(
+          and(
+            eq(schema.inventoryLocations.branchId, branchId),
+            eq(schema.inventoryLocations.isDefault, true)
+          )
+        )
+        .limit(1);
+
+      const anyLocation = defaultLocation || (await tx
+        .select({ id: schema.inventoryLocations.id })
+        .from(schema.inventoryLocations)
+        .where(eq(schema.inventoryLocations.branchId, branchId))
+        .limit(1)
+        .then((r) => r[0]));
+
+      const targetLocationId = anyLocation?.id;
+
+      if (targetLocationId) {
+        for (const item of itemsToInsert) {
+          const qtyToDeduct = Number(item.qtyBase) || 0;
+          if (qtyToDeduct <= 0) continue;
+
+          // Cari batch aktif dengan stok di branchBatchStocks
+          const batchStocks = await tx
+            .select({
+              id: schema.branchBatchStocks.id,
+              batchId: schema.branchBatchStocks.batchId,
+              qtyBase: schema.branchBatchStocks.qtyBase
+            })
+            .from(schema.branchBatchStocks)
+            .where(
+              and(
+                eq(schema.branchBatchStocks.branchId, branchId),
+                eq(schema.branchBatchStocks.productId, item.productId),
+                sql`${schema.branchBatchStocks.qtyBase} > 0`
+              )
+            )
+            .orderBy(desc(schema.branchBatchStocks.qtyBase))
+            .limit(1);
+
+          const activeBatch = batchStocks[0];
+
+          // Update saldo stok total cabang
+          await tx
+            .update(schema.branchStocks)
+            .set({
+              totalQtyBase: sql`${schema.branchStocks.totalQtyBase} - ${qtyToDeduct}`,
+              updatedAt: now
+            })
+            .where(
+              and(
+                eq(schema.branchStocks.branchId, branchId),
+                eq(schema.branchStocks.productId, item.productId),
+                eq(schema.branchStocks.locationId, targetLocationId)
+              )
+            );
+
+          // Update saldo per batch jika ada
+          if (activeBatch) {
+            await tx
+              .update(schema.branchBatchStocks)
+              .set({
+                qtyBase: sql`GREATEST(0, ${schema.branchBatchStocks.qtyBase} - ${qtyToDeduct})`,
+                updatedAt: now
+              })
+              .where(eq(schema.branchBatchStocks.id, activeBatch.id));
+          }
+
+          // Catat audit trail pengeluaran di stock_ledger
+          await tx.insert(schema.stockLedger).values({
+            id: crypto.randomUUID(),
+            tenantId,
+            branchId,
+            locationId: targetLocationId,
+            productId: item.productId,
+            batchId: activeBatch?.batchId || null,
+            mutationType: "POS_SALE",
+            quantityBase: String(-qtyToDeduct),
+            costPerUnit: "0",
+            referenceId: transactionId,
+            notes: `Pelayanan resep dokter nota ${recipeNumber} (${payload.patientName || "Pasien"})`,
+            createdBy: crypto.randomUUID(),
+            createdAt: now
+          });
+        }
+      }
     });
 
     const createdRecord = await this.getPrescriptionById(transactionId);

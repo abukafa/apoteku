@@ -11,6 +11,8 @@
     Eye,
     Check,
     Store,
+    Clock,
+    FileText,
     X
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
@@ -43,6 +45,7 @@
     reason: string;
     status: "PENDING" | "APPROVED";
     cashier: string;
+    cashierShiftId?: string | null;
   }
 
   interface SupplierReturnRecord {
@@ -65,15 +68,22 @@
     pic: string;
   }
 
-  // Master Data
+  // Master Data State (100% dari API Database Real)
   let branches = $state<any[]>([]);
   let products = $state<any[]>([]);
+  let masterProducts = $state<any[]>([]);
   let suppliers = $state<any[]>([]);
   let customers = $state<any[]>([]);
   let purchaseInvoices = $state<any[]>([]);
+  let salesInvoices = $state<any[]>([]);
+  let selectedPurchaseItems = $state<any[]>([]);
+
+  // Shift Kasir State
+  let activeShift = $state<any | null>(null);
+  let isCheckingShift = $state(false);
 
   // Filter & Tab State
-  let selectedBranchId = $state(authStore.user?.branchId || "1");
+  let selectedBranchId = $state(authStore.user?.branchId || "ALL");
   let activeTab = $state<"penjualan" | "pembelian">("penjualan");
   let salesReturnStatusFilter = $state<"ALL" | "PENDING" | "APPROVED">("ALL");
   let purchaseReturnStatusFilter = $state<
@@ -95,60 +105,320 @@
 
   let customerReturns = $state<CustomerReturnRecord[]>([]);
   let supplierReturns = $state<SupplierReturnRecord[]>([]);
+  let isSubmitting = $state(false);
 
   // Form Input Retur Baru State
   let newReturForm = $state({
     returCategory: "PENJUALAN" as "PENJUALAN" | "PEMBELIAN",
-    branchId: authStore.user?.branchId || "1",
-    referenceNo: "PJ-1025-0319",
-    customerName: "Pelanggan Umum (Walk-in)",
-    supplierName: "PT. Kimia Farma Trading & Distribution",
+    branchId: authStore.user?.branchId || "",
+    referenceNo: "",
+    customerName: "",
+    supplierName: "",
     productId: "",
-    productName: "Amoxicillin 500mg (Errata)",
-    batchNo: "AMX24H01",
+    productName: "",
+    batchNo: "",
     qty: 1,
     unit: "STRIP",
-    unitPrice: 8500,
-    stockDisposition: "KARANTINA" as "LAYAK_JUAL" | "KARANTINA",
+    unitPrice: 0,
+    stockDisposition: "LAYAK_JUAL" as "LAYAK_JUAL" | "KARANTINA",
     compensationType: "REFUND_TUNAI" as "REFUND_TUNAI" | "TUKAR_BARANG",
     settlementType: "NOTA_KREDIT" as "NOTA_KREDIT" | "TUKAR_BATCH",
     reason: ""
   });
 
-  onMount(async () => {
-    if (authStore.user?.branchId) {
-      selectedBranchId = authStore.user.branchId;
-      newReturForm.branchId = authStore.user.branchId;
-    }
-    try {
-      await mockApi.ensureDataLoaded();
-      const [prods, custs, branchList, suppRes, custRetRes, suppRetRes] =
-        await Promise.all([
-          mockApi.getProducts(),
-          mockApi.getCustomers(),
-          mockApi.getBranches(),
-          api.erp.getSuppliers(),
-          api.returns.getCustomerReturns(),
-          api.returns.getSupplierReturns()
-        ]);
+  // Struk Penjualan Terpilih di Modal Retur
+  let selectedSaleInvoice = $derived(
+    salesInvoices.find(
+      (s) =>
+        s.invoiceNo === newReturForm.referenceNo ||
+        s.invoiceNumber === newReturForm.referenceNo
+    )
+  );
 
-      if (prods.length > 0) products = prods;
-      if (custs.length > 0) customers = custs;
-      if (branchList.length > 0) {
-        branches = branchList;
-        if (!authStore.user?.branchId && branchList[0]?.id) {
-          selectedBranchId = branchList[0].id;
-          newReturForm.branchId = branchList[0].id;
+  // Faktur PBF Terpilih di Modal Retur
+  let selectedPurchaseInvoice = $derived(
+    purchaseInvoices.find(
+      (p) => p.invoiceNumber === newReturForm.referenceNo
+    )
+  );
+
+  // Daftar obat yang valid dan boleh diretur:
+  // Jika memilih No. Struk Kasir, HANYA menampilkan obat yang dibeli pada struk tersebut!
+  let eligibleProducts = $derived.by(() => {
+    if (newReturForm.returCategory === "PENJUALAN" && selectedSaleInvoice?.items?.length) {
+      return selectedSaleInvoice.items.map((item: any) => {
+        const master =
+          masterProducts.find((p: any) => p.id === item.productId || p.name === item.productName) ||
+          products.find((p: any) => p.id === item.productId || p.name === item.productName);
+
+        // Ambil seluruh satuan yang terdaftar di master obat
+        let itemUnits =
+          master?.units && Array.isArray(master.units) && master.units.length > 0
+            ? master.units
+            : [
+                {
+                  unitName: item.unit || "TABLET",
+                  conversionFactor: 1,
+                  salePriceGeneral: Number(item.price || item.unitPrice || 0)
+                }
+              ];
+
+        // Pastikan satuan yang dibeli ada di list opsi
+        const hasPurchasedUnit = itemUnits.some(
+          (u: any) => (u.unitName || u.unit)?.toUpperCase() === (item.unit || "").toUpperCase()
+        );
+        if (!hasPurchasedUnit && item.unit) {
+          itemUnits = [
+            ...itemUnits,
+            {
+              unitName: item.unit,
+              conversionFactor: 1,
+              salePriceGeneral: Number(item.price || item.unitPrice || 0)
+            }
+          ];
         }
+
+        // Hitung total kuantitas pembelian dalam satuan terkecil / dasar
+        const purchasedUnitInfo = itemUnits.find(
+          (u: any) => (u.unitName || u.unit)?.toUpperCase() === (item.unit || "").toUpperCase()
+        );
+        const factorPurchased = Number(purchasedUnitInfo?.conversionFactor) || 1;
+        const purchasedQtyBase = Number(item.qty || 1) * factorPurchased;
+
+        return {
+          id: item.productId,
+          name: item.productName,
+          sku: master?.sku || item.productId?.slice(0, 8),
+          stock: Number(item.qty || 1),
+          purchasedQty: Number(item.qty || 1),
+          purchasedUnit: item.unit,
+          purchasedQtyBase,
+          baseUnit: master?.baseUnit || item.unit || "PCS",
+          batchNo: item.batchNo || "BATCH-REG",
+          price: Number(item.price || item.unitPrice || 0),
+          units: itemUnits
+        };
+      });
+    }
+
+    if (newReturForm.returCategory === "PEMBELIAN" && selectedPurchaseItems.length > 0) {
+      return selectedPurchaseItems.map((item: any) => {
+        const master =
+          masterProducts.find((p: any) => p.id === item.productId || p.name === item.productName) ||
+          products.find((p: any) => p.id === item.productId || p.name === item.productName);
+
+        let itemUnits =
+          master?.units && Array.isArray(master.units) && master.units.length > 0
+            ? master.units
+            : [
+                {
+                  unitName: item.unit || "BOX",
+                  conversionFactor: 1,
+                  buyPrice: Number(item.hna || item.buyPrice || 0)
+                }
+              ];
+
+        const hasPurchasedUnit = itemUnits.some(
+          (u: any) => (u.unitName || u.unit)?.toUpperCase() === (item.unit || "").toUpperCase()
+        );
+        if (!hasPurchasedUnit && item.unit) {
+          itemUnits = [
+            ...itemUnits,
+            {
+              unitName: item.unit,
+              conversionFactor: 1,
+              buyPrice: Number(item.hna || item.buyPrice || 0)
+            }
+          ];
+        }
+
+        const purchasedUnitInfo = itemUnits.find(
+          (u: any) => (u.unitName || u.unit)?.toUpperCase() === (item.unit || "").toUpperCase()
+        );
+        const factorPurchased = Number(purchasedUnitInfo?.conversionFactor) || 1;
+        const purchasedQtyBase = Number(item.qty || 1) * factorPurchased;
+
+        return {
+          id: item.productId,
+          name: item.productName,
+          sku: master?.sku || item.productId?.slice(0, 8),
+          stock: Number(item.qty || 1),
+          purchasedQty: Number(item.qty || 1),
+          purchasedUnit: item.unit,
+          purchasedQtyBase,
+          baseUnit: master?.baseUnit || item.unit || "BOX",
+          batchNo: item.batchNo || "BATCH-REG",
+          price: Number(item.hna || item.buyPrice || 0),
+          units: itemUnits
+        };
+      });
+    }
+
+    // Fallback: seluruh obat yang ada di master/cabang aktif
+    const sourceList = masterProducts.length > 0 ? masterProducts : products;
+    return sourceList.map((p: any) => ({
+      ...p,
+      purchasedQty: undefined,
+      purchasedQtyBase: undefined,
+      price: Number(
+        p.units?.[0]?.salePriceGeneral ??
+        p.sellPrice ??
+        p.referenceBuyPriceBase ??
+        0
+      )
+    }));
+  });
+
+  // Maksimum kuantitas yang dapat diretur sesuai struk pembelian & satuan aktif
+  let maxAllowedQty = $derived.by(() => {
+    const found = eligibleProducts.find((p: any) => p.name === newReturForm.productName);
+    if (!found) return undefined;
+    if (found.purchasedQtyBase !== undefined) {
+      const currentUnitInfo = found.units?.find(
+        (u: any) => (u.unitName || u.unit || u.name)?.toUpperCase() === (newReturForm.unit || "").toUpperCase()
+      );
+      const currentFactor = Number(currentUnitInfo?.conversionFactor) || 1;
+      return Math.floor(found.purchasedQtyBase / currentFactor);
+    }
+    return found.purchasedQty;
+  });
+
+  // Opsi satuan obat yang aman tanpa undefined
+  let availableUnits = $derived.by(() => {
+    const found =
+      eligibleProducts.find((p: any) => p.name === newReturForm.productName) ||
+      masterProducts.find((p: any) => p.name === newReturForm.productName) ||
+      products.find((p: any) => p.name === newReturForm.productName);
+
+    if (found && Array.isArray(found.units) && found.units.length > 0) {
+      const list = found.units
+        .map((u: any) => u.unitName || u.unit || u.name)
+        .filter((u: any): u is string => typeof u === "string" && u.trim().length > 0);
+      if (list.length > 0) {
+        return Array.from(new Set(list));
       }
-      if (suppRes?.success && Array.isArray(suppRes.data) && suppRes.data.length > 0) {
-        suppliers = suppRes.data;
+    }
+    if (found?.baseUnit) {
+      return [found.baseUnit];
+    }
+    return ["TABLET", "STRIP", "BOX", "BOTOL", "KAPLET"];
+  });
+
+  // Ambil produk relatif cabang
+  async function loadProductsForBranch(branchId: string) {
+    if (!branchId || branchId === "ALL") return;
+    try {
+      const res = await api.transfer.getBranchProducts(branchId);
+      if (res?.success && Array.isArray(res.data)) {
+        products = res.data;
       }
-      if (custRetRes?.success && Array.isArray(custRetRes.data) && custRetRes.data.length > 0) {
+    } catch (e) {
+      console.warn("Gagal memuat produk cabang:", e);
+    }
+  }
+
+  // Cek apakah cabang yang dipilih sedang dalam status Buka Sif Kasir
+  async function checkBranchShift(branchId: string) {
+    if (!branchId || branchId === "ALL") {
+      activeShift = null;
+      return;
+    }
+    isCheckingShift = true;
+    try {
+      const res = await api.shift.getCurrent(branchId);
+      if (res?.success && res.data) {
+        activeShift = res.data;
+      } else {
+        activeShift = null;
+      }
+    } catch (e) {
+      activeShift = null;
+    } finally {
+      isCheckingShift = false;
+    }
+  }
+
+  async function loadReturnsData(branchId?: string) {
+    try {
+      const targetBranch = branchId && branchId !== "ALL" ? branchId : undefined;
+      const [custRetRes, suppRetRes] = await Promise.all([
+        api.returns.getCustomerReturns({ branchId: targetBranch }),
+        api.returns.getSupplierReturns({ branchId: targetBranch })
+      ]);
+      if (custRetRes?.success && Array.isArray(custRetRes.data)) {
         customerReturns = custRetRes.data;
       }
-      if (suppRetRes?.success && Array.isArray(suppRetRes.data) && suppRetRes.data.length > 0) {
+      if (suppRetRes?.success && Array.isArray(suppRetRes.data)) {
         supplierReturns = suppRetRes.data;
+      }
+    } catch (e) {
+      console.warn("Gagal mengambil daftar retur:", e);
+    }
+  }
+
+  async function handleBranchChange(newBranchId: string) {
+    selectedBranchId = newBranchId;
+    if (newBranchId !== "ALL") {
+      newReturForm.branchId = newBranchId;
+      await Promise.all([
+        loadReturnsData(newBranchId),
+        loadProductsForBranch(newBranchId),
+        checkBranchShift(newBranchId)
+      ]);
+    } else {
+      await Promise.all([
+        loadReturnsData(undefined),
+        checkBranchShift("")
+      ]);
+    }
+  }
+
+  onMount(async () => {
+    try {
+      const [branchList, suppRes, custList, purchaseRes, salesRes] = await Promise.all([
+        api.erp.getBranches(),
+        api.erp.getSuppliers(),
+        api.erp.getCustomers(),
+        api.erp.getPurchases(100),
+        api.erp.getSales(100)
+      ]);
+
+      if (Array.isArray(branchList)) {
+        branches = branchList;
+        if (authStore.user?.branchId) {
+          selectedBranchId = authStore.user.branchId;
+          newReturForm.branchId = authStore.user.branchId;
+        } else if (branches.length > 0) {
+          selectedBranchId = branches[0].id;
+          newReturForm.branchId = branches[0].id;
+        }
+      }
+
+      if (suppRes?.success && Array.isArray(suppRes.data)) {
+        suppliers = suppRes.data;
+      }
+
+      if (Array.isArray(custList)) {
+        customers = custList;
+      }
+
+      if (purchaseRes?.success && Array.isArray(purchaseRes.data)) {
+        purchaseInvoices = purchaseRes.data;
+      }
+
+      if (salesRes?.success && Array.isArray(salesRes.data)) {
+        salesInvoices = salesRes.data;
+      }
+
+      const initialBranch = selectedBranchId !== "ALL" ? selectedBranchId : branches[0]?.id;
+      if (initialBranch) {
+        await Promise.all([
+          loadReturnsData(selectedBranchId),
+          loadProductsForBranch(initialBranch),
+          checkBranchShift(initialBranch)
+        ]);
+      } else {
+        await loadReturnsData();
       }
     } catch (e) {
       console.warn("Retur onMount API error:", e);
@@ -165,6 +435,24 @@
   let branchSupplierReturns = $derived(
     supplierReturns.filter(
       (r) => selectedBranchId === "ALL" || r.branchId === selectedBranchId
+    )
+  );
+
+  let branchSalesInvoices = $derived(
+    salesInvoices.filter(
+      (s) =>
+        newReturForm.branchId === "ALL" ||
+        !s.branchId ||
+        s.branchId === newReturForm.branchId
+    )
+  );
+
+  let branchPurchaseInvoices = $derived(
+    purchaseInvoices.filter(
+      (p) =>
+        newReturForm.branchId === "ALL" ||
+        !p.branchId ||
+        p.branchId === newReturForm.branchId
     )
   );
 
@@ -200,10 +488,10 @@
 
   // Reactive Metrics
   let totalCustomerRefunds = $derived(
-    branchCustomerReturns.reduce((a, b) => a + b.refundAmount, 0)
+    branchCustomerReturns.reduce((a, b) => a + Number(b.refundAmount || 0), 0)
   );
   let totalSupplierCredit = $derived(
-    branchSupplierReturns.reduce((a, b) => a + b.totalValue, 0)
+    branchSupplierReturns.reduce((a, b) => a + Number(b.totalValue || 0), 0)
   );
   let activePbfClaimsCount = $derived(
     branchSupplierReturns.filter((r) => r.status !== "RESOLVED").length
@@ -217,174 +505,311 @@
     (Number(newReturForm.qty) || 0) * (Number(newReturForm.unitPrice) || 0)
   );
 
-  function handleProductChange(prodName: string) {
+  function handleProductSelect(prodName: string) {
     newReturForm.productName = prodName;
-    const found = products.find((p) => p.name === prodName);
+    const found =
+      eligibleProducts.find((p: any) => p.name === prodName) ||
+      masterProducts.find((p: any) => p.name === prodName) ||
+      products.find((p: any) => p.name === prodName);
+
     if (found) {
       newReturForm.productId = found.id;
-      newReturForm.batchNo = found.batches?.[0]?.batchNumber || "BATCH-01";
+      newReturForm.batchNo =
+        found.batchNo ||
+        found.batches?.[0]?.batchNumber ||
+        found.batches?.[0]?.batchNo ||
+        "BATCH-REG";
+
+      const primaryUnit =
+        found.purchasedUnit ||
+        found.baseUnit ||
+        found.units?.[0]?.unitName ||
+        found.units?.[0]?.unit ||
+        (newReturForm.returCategory === "PENJUALAN" ? "STRIP" : "BOX");
+      newReturForm.unit = primaryUnit;
+
+      const matchUnit = found.units?.find(
+        (u: any) => (u.unitName || u.unit || u.name)?.toUpperCase() === primaryUnit.toUpperCase()
+      );
+
       if (newReturForm.returCategory === "PENJUALAN") {
-        newReturForm.unit = found.units?.[1]?.unit || found.baseUnit || "STRIP";
-        newReturForm.unitPrice =
-          found.units?.[1]?.prices?.general ??
-          found.units?.[0]?.prices?.general ??
-          10000;
+        newReturForm.unitPrice = Number(
+          matchUnit?.salePriceGeneral ??
+          found.price ??
+          found.units?.[0]?.salePriceGeneral ??
+          found.sellPrice ??
+          10000
+        );
       } else {
-        newReturForm.unit = found.units?.[2]?.unit || "BOX";
-        newReturForm.unitPrice =
-          (found.batches?.[0]?.buyPrice || 800) *
-          (found.units?.[2]?.multiplier || 100);
+        newReturForm.unitPrice = Number(
+          matchUnit?.buyPrice ??
+          found.price ??
+          found.hna ??
+          found.units?.[0]?.buyPrice ??
+          found.batches?.[0]?.buyPrice ??
+          10000
+        );
+      }
+
+      newReturForm.qty = 1;
+    }
+  }
+
+  function handleUnitChange(newUnit: string) {
+    newReturForm.unit = newUnit;
+    const found =
+      eligibleProducts.find((p: any) => p.name === newReturForm.productName) ||
+      masterProducts.find((p: any) => p.name === newReturForm.productName) ||
+      products.find((p: any) => p.name === newReturForm.productName);
+
+    if (found && Array.isArray(found.units)) {
+      const matchUnit = found.units.find(
+        (u: any) => (u.unitName || u.unit || u.name)?.toUpperCase() === newUnit.toUpperCase()
+      );
+      if (matchUnit) {
+        if (newReturForm.returCategory === "PENJUALAN") {
+          let price = Number(matchUnit.salePriceGeneral ?? matchUnit.price ?? 0);
+          if (price <= 0 && found.price) {
+            const baseFactor = Number(found.purchasedQtyBase ? (found.purchasedQtyBase / (found.purchasedQty || 1)) : 1);
+            price = Math.round((Number(found.price) * (Number(matchUnit.conversionFactor) || 1)) / (baseFactor || 1));
+          }
+          newReturForm.unitPrice = price;
+        } else {
+          let price = Number(matchUnit.buyPrice ?? matchUnit.hna ?? 0);
+          if (price <= 0 && found.price) {
+            const baseFactor = Number(found.purchasedQtyBase ? (found.purchasedQtyBase / (found.purchasedQty || 1)) : 1);
+            price = Math.round((Number(found.price) * (Number(matchUnit.conversionFactor) || 1)) / (baseFactor || 1));
+          }
+          newReturForm.unitPrice = price;
+        }
       }
     }
   }
 
-  async function handleSaveNewRetur() {
-    const branchObj =
-      branches.find((b) => b.id === newReturForm.branchId) || branches[0];
-    const nowStr = new Date().toISOString().replace("T", " ").slice(0, 16);
+  function handleSaleInvoiceChange(invNo: string) {
+    newReturForm.referenceNo = invNo;
+    const sale = salesInvoices.find(
+      (s) => s.invoiceNo === invNo || s.invoiceNumber === invNo
+    );
+    if (sale) {
+      newReturForm.customerName =
+        sale.customerName || sale.patientName || "Pelanggan Umum";
+      if (Array.isArray(sale.items) && sale.items.length > 0) {
+        handleProductSelect(sale.items[0].productName);
+      }
+    } else {
+      // Manual mode / struk tidak dipilih
+      if (customers.length > 0 && !newReturForm.customerName) {
+        newReturForm.customerName = customers[0].name;
+      }
+      if (products.length > 0) {
+        handleProductSelect(products[0].name);
+      }
+    }
+  }
 
-    if (newReturForm.returCategory === "PENJUALAN") {
-      const nextNo = String(customerReturns.length + 1).padStart(3, "0");
-      let created: CustomerReturnRecord = {
-        id: `ret-cust-${Date.now()}`,
-        returnNumber: `RET-JL-2025-${nextNo}`,
-        branchId: newReturForm.branchId,
-        branchName: branchObj?.name || "Apotek Hafidz Farma Pusat",
-        originalTrx: newReturForm.referenceNo || "PJ-1025-0320",
-        customerName: newReturForm.customerName,
-        date: nowStr,
-        productName: newReturForm.productName,
-        batchNo: newReturForm.batchNo,
-        qty: Number(newReturForm.qty) || 1,
-        unit: newReturForm.unit,
-        refundAmount: newReturCalculatedTotal,
-        stockDisposition: newReturForm.stockDisposition,
-        compensationType: newReturForm.compensationType,
-        reason: newReturForm.reason.trim() || "Retur pelanggan terverifikasi",
-        status: "APPROVED",
-        cashier: "apt. Hafidz Nurul"
-      };
+  async function handlePurchaseInvoiceChange(invNumber: string) {
+    newReturForm.referenceNo = invNumber;
+    selectedPurchaseItems = [];
+    const inv = purchaseInvoices.find((i) => i.invoiceNumber === invNumber);
+    if (inv?.supplierName) newReturForm.supplierName = inv.supplierName;
 
+    if (inv?.id) {
       try {
+        const res = await api.erp.getPurchaseById(inv.id);
+        if (res?.success && res.data?.items && Array.isArray(res.data.items)) {
+          selectedPurchaseItems = res.data.items;
+          if (selectedPurchaseItems.length > 0) {
+            handleProductSelect(selectedPurchaseItems[0].productName);
+          }
+        }
+      } catch (e) {
+        console.warn("Gagal mengambil detail faktur PBF:", e);
+      }
+    }
+
+    if (selectedPurchaseItems.length === 0 && products.length > 0) {
+      handleProductSelect(products[0].name);
+    }
+  }
+
+  async function openAddReturModal(category: "PENJUALAN" | "PEMBELIAN") {
+    newReturForm.returCategory = category;
+    const effectiveBranch =
+      selectedBranchId !== "ALL"
+        ? selectedBranchId
+        : (branches[0]?.id || "81d3bcff-9577-47b6-9a35-7d510c0d4225");
+    newReturForm.branchId = effectiveBranch;
+
+    // Load produk & status shift
+    await Promise.all([
+      loadProductsForBranch(effectiveBranch),
+      checkBranchShift(effectiveBranch),
+      api.erp.getProducts().then((res) => {
+        if (res?.success && Array.isArray(res.data)) masterProducts = res.data;
+      })
+    ]);
+
+    if (category === "PENJUALAN") {
+      const branchSales = salesInvoices.filter(
+        (s) => !s.branchId || s.branchId === effectiveBranch
+      );
+      if (branchSales.length > 0) {
+        handleSaleInvoiceChange(branchSales[0].invoiceNo);
+      } else {
+        newReturForm.referenceNo = "";
+        newReturForm.customerName = customers[0]?.name || "Pelanggan Umum (Walk-in)";
+        if (products.length > 0) {
+          handleProductSelect(products[0].name);
+        }
+      }
+    } else {
+      const branchPurchases = purchaseInvoices.filter(
+        (p) => !p.branchId || p.branchId === effectiveBranch
+      );
+      if (branchPurchases.length > 0) {
+        await handlePurchaseInvoiceChange(branchPurchases[0].invoiceNumber);
+      } else {
+        newReturForm.referenceNo = "";
+        newReturForm.supplierName = suppliers[0]?.name || "Distributor PBF";
+        if (products.length > 0) {
+          handleProductSelect(products[0].name);
+        }
+      }
+    }
+
+    isAddReturModalOpen = true;
+  }
+
+  async function handleSaveNewRetur() {
+    if (!newReturForm.productName) {
+      alert("Silakan pilih produk obat yang akan diretur.");
+      return;
+    }
+    const qtyVal = Number(newReturForm.qty) || 0;
+    if (qtyVal <= 0) {
+      alert("Kuantitas retur harus lebih besar dari 0.");
+      return;
+    }
+
+    // Validasi kuantitas tidak boleh melebihi kuantitas pembelian di struk
+    if (maxAllowedQty !== undefined && qtyVal > maxAllowedQty) {
+      alert(
+        `Kuantitas retur (${qtyVal} ${newReturForm.unit}) tidak boleh melebihi jumlah pembelian pada struk (${maxAllowedQty} ${newReturForm.unit}).`
+      );
+      return;
+    }
+
+    isSubmitting = true;
+
+    try {
+      if (newReturForm.returCategory === "PENJUALAN") {
         const res = await api.returns.createCustomerReturn({
           branchId: newReturForm.branchId,
-          customerName: newReturForm.customerName,
-          originalTrx: newReturForm.referenceNo,
+          customerName: newReturForm.customerName || "Pelanggan Umum (Walk-in)",
+          originalTrx: newReturForm.referenceNo || "PJ-UMUM",
           productId: newReturForm.productId || undefined,
           productName: newReturForm.productName,
-          batchNo: newReturForm.batchNo,
-          qty: Number(newReturForm.qty) || 1,
+          batchNo: newReturForm.batchNo || "BATCH-REG",
+          qty: qtyVal,
           unit: newReturForm.unit,
           refundAmount: newReturCalculatedTotal,
           stockDisposition: newReturForm.stockDisposition,
           compensationType: newReturForm.compensationType,
-          reason: newReturForm.reason.trim() || "Retur pelanggan terverifikasi",
-          cashier: "apt. Hafidz Nurul"
+          reason: newReturForm.reason.trim() || "Retur penjualan terverifikasi",
+          cashier: authStore.user?.fullName || "apt. Hafidz Nurul"
         });
+
         if (res?.success && res.data) {
-          created = {
-            ...created,
-            id: res.data.id,
-            returnNumber: res.data.returnNumber
-          };
+          customerReturns = [res.data, ...customerReturns];
+        } else {
+          throw new Error(res?.error || "Gagal menyimpan data retur penjualan ke database");
         }
-      } catch (err) {
-        console.warn("Could not save customer return via API, using fallback", err);
-      }
-
-      customerReturns = [created, ...customerReturns];
-      activeTab = "penjualan";
-    } else {
-      const nextNo = String(supplierReturns.length + 1).padStart(3, "0");
-      let created: SupplierReturnRecord = {
-        id: `ret-sup-${Date.now()}`,
-        returnNumber: `RET-BL-2025-${nextNo}`,
-        branchId: newReturForm.branchId,
-        branchName: branchObj?.name || "Apotek Hafidz Farma Pusat",
-        invoiceRef: newReturForm.referenceNo || "FP-KF-2025-0891",
-        supplierName: newReturForm.supplierName,
-        date: nowStr,
-        productName: newReturForm.productName,
-        batchNo: newReturForm.batchNo,
-        qty: Number(newReturForm.qty) || 1,
-        unit: newReturForm.unit,
-        totalValue: newReturCalculatedTotal,
-        settlementType: newReturForm.settlementType,
-        reason: newReturForm.reason.trim() || "Klaim retur barang ke PBF",
-        status: "SENT_TO_SUPPLIER",
-        pic: "apt. Hafidz Nurul"
-      };
-
-      try {
+        activeTab = "penjualan";
+      } else {
         const res = await api.returns.createSupplierReturn({
           branchId: newReturForm.branchId,
-          supplierName: newReturForm.supplierName,
-          invoiceRef: newReturForm.referenceNo,
+          supplierName: newReturForm.supplierName || "Distributor PBF",
+          invoiceRef: newReturForm.referenceNo || "FP-PBF",
           productId: newReturForm.productId || undefined,
           productName: newReturForm.productName,
-          batchNo: newReturForm.batchNo,
-          qty: Number(newReturForm.qty) || 1,
+          batchNo: newReturForm.batchNo || "BATCH-REG",
+          qty: qtyVal,
           unit: newReturForm.unit,
           totalValue: newReturCalculatedTotal,
           settlementType: newReturForm.settlementType,
           reason: newReturForm.reason.trim() || "Klaim retur barang ke PBF",
-          pic: "apt. Hafidz Nurul"
+          pic: authStore.user?.fullName || "apt. Hafidz Nurul"
         });
+
         if (res?.success && res.data) {
-          created = {
-            ...created,
-            id: res.data.id,
-            returnNumber: res.data.returnNumber
-          };
+          supplierReturns = [res.data, ...supplierReturns];
+        } else {
+          throw new Error(res?.error || "Gagal menyimpan data retur pembelian ke database");
         }
-      } catch (err) {
-        console.warn("Could not save supplier return via API, using fallback", err);
+        activeTab = "pembelian";
       }
 
-      supplierReturns = [created, ...supplierReturns];
-      activeTab = "pembelian";
-    }
+      // Segarkan cache stok produk agar realtime seketika
+      await Promise.all([
+        mockApi.ensureDataLoaded(newReturForm.branchId, true),
+        loadProductsForBranch(newReturForm.branchId)
+      ]);
 
-    newReturForm.reason = "";
-    isAddReturModalOpen = false;
+      newReturForm.reason = "";
+      isAddReturModalOpen = false;
+    } catch (err: any) {
+      alert(`Gagal menyimpan retur: ${err?.message || "Terjadi kesalahan"}`);
+    } finally {
+      isSubmitting = false;
+    }
   }
 
-  function approveCustomerReturn(id: string) {
-    customerReturns = customerReturns.map((r) =>
-      r.id === id ? { ...r, status: "APPROVED" } : r
-    );
+  async function approveCustomerReturn(id: string) {
+    try {
+      await api.returns.approveCustomerReturn(id);
+      customerReturns = customerReturns.map((r) =>
+        r.id === id ? { ...r, status: "APPROVED" } : r
+      );
+    } catch (err) {
+      console.warn("Gagal menyetujui retur pelanggan:", err);
+    }
   }
 
   function openResolveSupplierReturn(r: SupplierReturnRecord) {
     selectedSupplierReturn = r;
     resolveSettlementType = r.settlementType;
-    resolveCreditNoteNo = `CN-${r.returnNumber.slice(-3)}-${Math.floor(100 + Math.random() * 900)}`;
+    resolveCreditNoteNo = r.creditNoteNo || "";
     isResolvePbfModalOpen = true;
   }
 
   async function handleConfirmResolvePbf() {
     if (!selectedSupplierReturn) return;
     try {
-      await api.returns.resolveSupplierReturn(selectedSupplierReturn.id, {
+      const res = await api.returns.resolveSupplierReturn(selectedSupplierReturn.id, {
         settlementType: resolveSettlementType,
         creditNoteNo: resolveCreditNoteNo
       });
-    } catch (err) {
-      console.warn("Could not resolve supplier return via API, using fallback", err);
+      if (res?.success) {
+        supplierReturns = supplierReturns.map((r) =>
+          r.id === selectedSupplierReturn?.id
+            ? {
+                ...r,
+                status: "RESOLVED",
+                settlementType: resolveSettlementType,
+                creditNoteNo: resolveCreditNoteNo
+              }
+            : r
+        );
+      } else {
+        throw new Error(res?.error || "Gagal menyelesaikan klaim PBF");
+      }
+    } catch (err: any) {
+      alert(`Gagal menyelesaikan klaim PBF: ${err?.message || "Terjadi kesalahan"}`);
+    } finally {
+      isResolvePbfModalOpen = false;
+      selectedSupplierReturn = null;
     }
-
-    supplierReturns = supplierReturns.map((r) =>
-      r.id === selectedSupplierReturn?.id
-        ? {
-            ...r,
-            status: "RESOLVED",
-            settlementType: resolveSettlementType,
-            creditNoteNo: resolveCreditNoteNo
-          }
-        : r
-    );
-    isResolvePbfModalOpen = false;
-    selectedSupplierReturn = null;
   }
 </script>
 
@@ -396,17 +821,30 @@
   <!-- PAGE HEADER -->
   <PageHeader
     title="Retur Transaksi"
-    subtitle="Retur pelanggan dan distributor PBF"
+    subtitle="Retur konsumen kasir dan klaim distributor PBF"
     icon={RotateCcw}
     breadcrumbs={[{ label: "Retur" }]}
   >
     {#snippet actions()}
+      <!-- Shift Status Indicator (Live dari API) -->
+      {#if activeShift}
+        <div class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold" title="Status Shift Kasir Aktif">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>Shift #{activeShift.shiftNumber} Buka</span>
+        </div>
+      {:else if selectedBranchId !== "ALL"}
+        <div class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold" title="Kasir belum membuka shift">
+          <Clock class="w-3.5 h-3.5 text-amber-600" />
+          <span>Shift Kasir Tutup</span>
+        </div>
+      {/if}
+
       <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
       {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
         <div class="w-56">
           <Select
             value={selectedBranchId}
-            onchange={(val) => (selectedBranchId = val)}
+            onchange={handleBranchChange}
             options={[
               { value: "ALL", label: "Semua Cabang Apotek" },
               ...branches.map((b) => ({ value: b.id, label: b.name }))
@@ -416,17 +854,13 @@
       {:else}
         <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
           <Store class="w-3.5 h-3.5 text-brand-blue" />
-          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma"}</span>
         </div>
       {/if}
 
       <button
         type="button"
-        onclick={() => {
-          newReturForm.returCategory =
-            activeTab === "pembelian" ? "PEMBELIAN" : "PENJUALAN";
-          isAddReturModalOpen = true;
-        }}
+        onclick={() => openAddReturModal(activeTab === "pembelian" ? "PEMBELIAN" : "PENJUALAN")}
         class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
       >
         <Plus class="w-4 h-4" />
@@ -468,11 +902,11 @@
   </div>
 
   <!-- TAB NAVIGATION -->
-  <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold">
+  <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold overflow-x-auto no-scrollbar">
     <button
       type="button"
       onclick={() => (activeTab = "penjualan")}
-      class="pb-3 px-3 transition-colors relative {activeTab === 'penjualan' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'penjualan' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-2">
         <ShoppingCart class="w-4 h-4" />
@@ -489,7 +923,7 @@
     <button
       type="button"
       onclick={() => (activeTab = "pembelian")}
-      class="pb-3 px-3 transition-colors relative {activeTab === 'pembelian' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'pembelian' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-2">
         <ShoppingBag class="w-4 h-4" />
@@ -527,11 +961,10 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">No. Retur</th>
-        <th class="py-3 px-4">No. Struk</th>
+        <th class="py-3 px-4">Tanggal</th>
+        <th class="py-3 px-4">Produk</th>
+        <th class="py-3 px-4">Alokasi</th>
         <th class="py-3 px-4">Pelanggan</th>
-        <th class="py-3 px-4">Produk & Perlakuan Stok</th>
-        <th class="py-3 px-4">Alasan Retur</th>
         <th class="py-3 px-4 text-right">Pengembalian</th>
         <th class="py-3 px-4 text-center">Status</th>
         <th class="py-3 px-4 text-center">Aksi</th>
@@ -550,24 +983,24 @@
           {#each filteredCustomerReturns as r}
             <tr class="hover:bg-blue-50/40 transition-colors">
               <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
-                {r.returnNumber}
-                <div class="text-[10px] text-slate-400 font-normal">{r.date}</div>
+                {r.date}
+                <div class="text-[10px] text-slate-400 font-normal">{r.branchName}</div>
               </td>
-              <td class="py-3.5 px-4 font-mono text-brand-blue font-semibold">
-                {r.originalTrx}
-                <div class="text-[10px] text-slate-400 font-sans font-normal">{r.branchName}</div>
-              </td>
-              <td class="py-3.5 px-4 font-bold text-slate-800">{r.customerName}</td>
               <td class="py-3.5 px-4">
                 <div class="font-bold text-slate-800">{r.productName} ({r.qty} {r.unit})</div>
                 <div class="flex items-center gap-1.5 mt-0.5">
                   <span class="font-mono text-[10px] text-slate-500">Batch: {r.batchNo}</span>
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold {r.stockDisposition === 'LAYAK_JUAL' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">
-                    {r.stockDisposition === "LAYAK_JUAL" ? "Stok Layak Jual" : "Rak Karantina"}
-                  </span>
                 </div>
               </td>
-              <td class="py-3.5 px-4 text-slate-500 text-[11px] max-w-xs">{r.reason}</td>
+              <td>
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold {r.stockDisposition === 'LAYAK_JUAL' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">
+                  {r.stockDisposition === "LAYAK_JUAL" ? "Stok Layak Jual" : "Rak Karantina"}
+                </span>
+              </td>
+              <td class="py-3.5 px-4 text-slate-500 text-[11px] max-w-xs">
+                <div class="font-bold text-slate-800">{r.customerName}</div>
+                {r.reason}
+              </td>
               <td class="py-3.5 px-4 text-right">
                 <div class="font-mono font-black text-brand-red-600">{formatRupiah(r.refundAmount)}</div>
                 <div class="text-[10px] text-slate-400 font-semibold">
@@ -639,12 +1072,12 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Retur Beli</th>
-        <th class="py-3 px-4">Faktur PBF</th>
+        <th class="py-3 px-4">Nomor</th>
+        <th class="py-3 px-4">Faktur</th>
         <th class="py-3 px-4">Distributor</th>
-        <th class="py-3 px-4">Produk & Batch</th>
-        <th class="py-3 px-4">Alasan Klaim</th>
-        <th class="py-3 px-4 text-right">Nilai Klaim</th>
+        <th class="py-3 px-4">Produk</th>
+        <th class="py-3 px-4">Alasan</th>
+        <th class="py-3 px-4 text-right">Nilai</th>
         <th class="py-3 px-4 text-center">Status</th>
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
@@ -760,9 +1193,27 @@
             value={newReturForm.returCategory}
             onchange={(val) => {
               newReturForm.returCategory = val as "PENJUALAN" | "PEMBELIAN";
-              newReturForm.referenceNo =
-                val === "PENJUALAN" ? "PJ-1025-0319" : "FP-KF-2025-0891";
-              handleProductChange(newReturForm.productName);
+              if (val === "PENJUALAN") {
+                const branchSales = salesInvoices.filter(
+                  (s) => !s.branchId || s.branchId === newReturForm.branchId
+                );
+                if (branchSales.length > 0) {
+                  handleSaleInvoiceChange(branchSales[0].invoiceNo);
+                } else {
+                  newReturForm.referenceNo = "";
+                  newReturForm.customerName = customers[0]?.name || "Pelanggan Umum (Walk-in)";
+                }
+              } else {
+                const branchPurchases = purchaseInvoices.filter(
+                  (p) => !p.branchId || p.branchId === newReturForm.branchId
+                );
+                if (branchPurchases.length > 0) {
+                  handlePurchaseInvoiceChange(branchPurchases[0].invoiceNumber);
+                } else {
+                  newReturForm.referenceNo = "";
+                  newReturForm.supplierName = suppliers[0]?.name || "Distributor PBF";
+                }
+              }
             }}
             options={[
               { value: "PENJUALAN", label: "Retur Penjualan (Dari Pelanggan)" },
@@ -777,7 +1228,13 @@
             <Select
               id="ret-branch"
               value={newReturForm.branchId}
-              onchange={(val) => (newReturForm.branchId = val)}
+              onchange={async (val) => {
+                newReturForm.branchId = val;
+                await Promise.all([
+                  loadProductsForBranch(val),
+                  checkBranchShift(val)
+                ]);
+              }}
               options={branches.map((b) => ({ value: b.id, label: b.name }))}
             />
           {:else}
@@ -791,73 +1248,147 @@
 
         {#if newReturForm.returCategory === "PENJUALAN"}
           <div>
-            <label for="ret-ref-jl" class="font-bold text-slate-700 block mb-1">No. Struk Kasir Referensi</label>
-            <input
-              id="ret-ref-jl"
-              type="text"
-              bind:value={newReturForm.referenceNo}
-              placeholder="PJ-1025-..."
-              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold"
-            />
+            <label for="ret-ref-jl" class="font-bold text-slate-700 block mb-1 flex items-center gap-1">
+              <FileText class="w-3.5 h-3.5 text-brand-blue" />
+              <span>No. Struk Kasir Referensi</span>
+            </label>
+            {#if branchSalesInvoices.length > 0}
+              <Select
+                id="ret-ref-jl"
+                value={newReturForm.referenceNo}
+                onchange={handleSaleInvoiceChange}
+                options={[
+                  { value: "", label: "-- Input Manual / Walk-in --" },
+                  ...branchSalesInvoices.map((s) => ({
+                    value: s.invoiceNo,
+                    label: `${s.invoiceNo} • ${s.customerName || s.patientName || 'Umum'} (${formatRupiah(s.grandTotal)})`
+                  }))
+                ]}
+              />
+            {:else}
+              <input
+                id="ret-ref-jl"
+                type="text"
+                bind:value={newReturForm.referenceNo}
+                placeholder="Contoh: INV/... (Opsional)"
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold"
+              />
+            {/if}
           </div>
           <div>
-            <label for="ret-cust" class="font-bold text-slate-700 block mb-1">Pelanggan / Pasien</label>
-            <SearchableSelect
-              id="ret-cust"
-              value={newReturForm.customerName}
-              onchange={(val) => (newReturForm.customerName = val)}
-              searchPlaceholder="Cari pelanggan..."
-              options={customers.map((c) => ({
-                value: c.name,
-                label: c.name,
-                sublabel: c.code
-              }))}
-            />
+            <label for="ret-cust" class="font-bold text-slate-700 block mb-1">
+              Pelanggan / Pasien
+              {#if selectedSaleInvoice}
+                <span class="text-[10px] text-emerald-700 font-bold ml-1">(Dari Struk)</span>
+              {/if}
+            </label>
+            {#if selectedSaleInvoice}
+              <div class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-800">
+                {newReturForm.customerName || "Pelanggan Umum"}
+              </div>
+            {:else}
+              <SearchableSelect
+                id="ret-cust"
+                value={newReturForm.customerName}
+                onchange={(val) => (newReturForm.customerName = val)}
+                searchPlaceholder="Cari pelanggan..."
+                options={customers.map((c) => ({
+                  value: c.name,
+                  label: c.name,
+                  sublabel: c.code || c.phone || "Pelanggan"
+                }))}
+              />
+            {/if}
           </div>
         {:else}
           <div>
-            <label for="ret-ref-bl" class="font-bold text-slate-700 block mb-1">No. Faktur PBF Referensi</label>
-            <Select
-              id="ret-ref-bl"
-              value={newReturForm.referenceNo}
-              onchange={(val) => {
-                newReturForm.referenceNo = val;
-                const inv = purchaseInvoices.find((i) => i.invoiceNumber === val);
-                if (inv) newReturForm.supplierName = inv.supplierName;
-              }}
-              options={purchaseInvoices.map((inv) => ({
-                value: inv.invoiceNumber,
-                label: `${inv.invoiceNumber} (${inv.supplierName})`
-              }))}
-            />
+            <label for="ret-ref-bl" class="font-bold text-slate-700 block mb-1 flex items-center gap-1">
+              <FileText class="w-3.5 h-3.5 text-brand-blue" />
+              <span>No. Faktur PBF Referensi</span>
+            </label>
+            {#if branchPurchaseInvoices.length > 0}
+              <Select
+                id="ret-ref-bl"
+                value={newReturForm.referenceNo}
+                onchange={handlePurchaseInvoiceChange}
+                options={branchPurchaseInvoices.map((inv) => ({
+                  value: inv.invoiceNumber,
+                  label: `${inv.invoiceNumber} • ${inv.supplierName}`
+                }))}
+              />
+            {:else}
+              <input
+                id="ret-ref-bl"
+                type="text"
+                bind:value={newReturForm.referenceNo}
+                placeholder="FP-PBF-..."
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold"
+              />
+            {/if}
           </div>
           <div>
-            <label for="ret-sup" class="font-bold text-slate-700 block mb-1">Distributor PBF</label>
-            <SearchableSelect
-              id="ret-sup"
-              value={newReturForm.supplierName}
-              onchange={(val) => (newReturForm.supplierName = val)}
-              searchPlaceholder="Cari distributor PBF..."
-              options={suppliers.map((s) => ({
-                value: s.name,
-                label: s.name,
-                sublabel: s.code
-              }))}
-            />
+            <label for="ret-sup" class="font-bold text-slate-700 block mb-1">
+              Distributor PBF
+              {#if selectedPurchaseInvoice}
+                <span class="text-[10px] text-emerald-700 font-bold ml-1">(Dari Faktur)</span>
+              {/if}
+            </label>
+            {#if selectedPurchaseInvoice}
+              <div class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-800">
+                {newReturForm.supplierName || "Distributor PBF"}
+              </div>
+            {:else}
+              <SearchableSelect
+                id="ret-sup"
+                value={newReturForm.supplierName}
+                onchange={(val) => (newReturForm.supplierName = val)}
+                searchPlaceholder="Cari distributor PBF..."
+                options={suppliers.map((s) => ({
+                  value: s.name,
+                  label: s.name,
+                  sublabel: s.code || s.phone || "Distributor PBF"
+                }))}
+              />
+            {/if}
           </div>
         {/if}
 
         <div class="col-span-2">
-          <label for="ret-prod" class="font-bold text-slate-700 block mb-1">Produk Obat Diretur</label>
+          <label for="ret-prod" class="font-bold text-slate-700 block mb-1 flex items-center justify-between">
+            <span>
+              Produk Obat Diretur
+              {#if selectedSaleInvoice}
+                <span class="text-brand-blue font-bold text-[11px] ml-1">
+                  (Daftar Obat pada Struk {selectedSaleInvoice.invoiceNo})
+                </span>
+              {:else if selectedPurchaseInvoice}
+                <span class="text-brand-blue font-bold text-[11px] ml-1">
+                  (Daftar Obat pada Faktur PBF {selectedPurchaseInvoice.invoiceNumber})
+                </span>
+              {:else}
+                <span class="text-slate-500 font-normal text-[11px] ml-1">
+                  ({eligibleProducts.length} Obat Tersedia di Cabang)
+                </span>
+              {/if}
+            </span>
+            {#if maxAllowedQty !== undefined}
+              <span class="text-emerald-700 font-bold text-[11px]">
+                Maks. Retur: {maxAllowedQty} {newReturForm.unit}
+              </span>
+            {/if}
+          </label>
           <SearchableSelect
             id="ret-prod"
             value={newReturForm.productName}
-            onchange={handleProductChange}
-            searchPlaceholder="Cari nama obat..."
-            options={products.map((p) => ({
+            onchange={handleProductSelect}
+            searchPlaceholder="Cari nama obat yang dibeli..."
+            options={eligibleProducts.map((p: any) => ({
               value: p.name,
               label: p.name,
-              sublabel: `SKU: ${p.sku}`
+              sublabel:
+                p.purchasedQty !== undefined
+                  ? `Dibeli: ${p.purchasedQty} ${p.baseUnit || ''} @ ${formatRupiah(p.price)} • Batch: ${p.batchNo || '-'}`
+                  : `Stok Cabang: ${p.stock ?? p.totalStock ?? 0} ${p.baseUnit || ''} • SKU: ${p.sku || '-'}`
             }))}
           />
         </div>
@@ -868,7 +1399,8 @@
             id="ret-batch"
             type="text"
             bind:value={newReturForm.batchNo}
-            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono uppercase"
+            placeholder="Nomor batch obat"
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono uppercase font-bold"
           />
         </div>
 
@@ -879,6 +1411,7 @@
               id="ret-qty"
               type="number"
               min="1"
+              max={maxAllowedQty || 9999}
               bind:value={newReturForm.qty}
               class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-center"
             />
@@ -888,8 +1421,8 @@
             <Select
               id="ret-unit"
               value={newReturForm.unit}
-              onchange={(val) => (newReturForm.unit = val)}
-              options={["TABLET", "STRIP", "BOX", "BOTOL"]}
+              onchange={handleUnitChange}
+              options={availableUnits}
             />
           </div>
         </div>
@@ -931,6 +1464,29 @@
               ]}
             />
           </div>
+
+          <!-- PEMBERITAHUAN SHIFT KASIR UNTUK REFUND TUNAI -->
+          {#if newReturForm.compensationType === "REFUND_TUNAI"}
+            <div class="col-span-2">
+              {#if activeShift}
+                <div class="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-start gap-2">
+                  <CheckCircle2 class="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+                  <div>
+                    <div class="font-bold">Shift Kasir Aktif: Shift #{activeShift.shiftNumber} ({activeShift.shiftName || "Sedang Berjalan"})</div>
+                    <div class="text-[11px] text-emerald-700">Pengeluaran kas refund tunai akan dicatat otomatis ke laci kasir dan disinkronkan saat tutup shift.</div>
+                  </div>
+                </div>
+              {:else}
+                <div class="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2">
+                  <AlertCircle class="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                  <div>
+                    <div class="font-bold">Perhatian: Shift Kasir Belum Dibuka</div>
+                    <div class="text-[11px] text-amber-700">Pengembalian uang tunai (Refund Tunai) sebaiknya diproses saat shift kasir buka agar uang keluar dari laci kasir dapat dipertanggungjawabkan saat rekonsiliasi Z-Report.</div>
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {/if}
         {:else}
           <div>
             <label for="ret-settle" class="font-bold text-slate-700 block mb-1">Mekanisme Klaim PBF</label>
@@ -941,7 +1497,7 @@
                 (newReturForm.settlementType = val as "NOTA_KREDIT" | "TUKAR_BATCH")}
               options={[
                 { value: "NOTA_KREDIT", label: "Nota Kredit (Potong Hutang Faktur)" },
-                { value: "TUKAR_BATCH", label: "Tukar Guling Batch Baru" }
+                { value: "TUKAR_BATCH", label: "Tukar Batch Baru (Barang Pengganti)" }
               ]}
             />
           </div>
@@ -953,8 +1509,8 @@
             id="ret-reason"
             rows="2"
             bind:value={newReturForm.reason}
-            placeholder="Contoh: ED < 6 bulan / Kemasan blister cacat / Revisi resep dokter..."
-            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="Contoh: ED < 6 bulan / Kemasan blister cacat / Salah beli dosis resep..."
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
           ></textarea>
         </div>
       </div>
@@ -970,6 +1526,7 @@
         <button
           type="button"
           onclick={() => (isAddReturModalOpen = false)}
+          disabled={isSubmitting}
           class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
         >
           Batal
@@ -977,9 +1534,15 @@
         <button
           type="button"
           onclick={handleSaveNewRetur}
-          class="px-4 py-2 rounded-xl bg-brand-red-600 hover:bg-brand-red-700 text-white font-bold text-xs shadow-sm"
+          disabled={isSubmitting}
+          class="px-4 py-2 rounded-xl bg-brand-red-600 hover:bg-brand-red-700 text-white font-bold text-xs shadow-sm disabled:opacity-50 inline-flex items-center gap-1.5"
         >
-          Konfirmasi Retur
+          {#if isSubmitting}
+            <span class="animate-spin text-sm">&bull;</span>
+            <span>Menyimpan...</span>
+          {:else}
+            <span>Konfirmasi Retur</span>
+          {/if}
         </button>
       </div>
     </div>
@@ -1013,7 +1576,7 @@
       </div>
 
       <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
-        <div class="font-mono font-bold text-brand-blue">{selectedSupplierReturn.returnNumber} • Ref: {selectedSupplierReturn.invoiceRef}</div>
+        <div class="font-mono font-bold text-brand-blue">{selectedSupplierReturn.returnNumber} &bull; Ref: {selectedSupplierReturn.invoiceRef}</div>
         <div class="font-bold text-slate-900">{selectedSupplierReturn.supplierName}</div>
         <div class="text-slate-600">{selectedSupplierReturn.productName} ({selectedSupplierReturn.qty} {selectedSupplierReturn.unit})</div>
         <div class="pt-2 border-t border-slate-200 flex justify-between font-bold">
@@ -1041,6 +1604,7 @@
             id="res-cn"
             type="text"
             bind:value={resolveCreditNoteNo}
+            placeholder="Contoh: CN-012/PBF/2026"
             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold"
           />
         </div>
@@ -1099,6 +1663,10 @@
             <strong class="font-mono">{selectedCustomerReturn.originalTrx}</strong>
           </div>
           <div class="flex justify-between">
+            <span class="text-slate-500">Cabang:</span>
+            <strong>{selectedCustomerReturn.branchName}</strong>
+          </div>
+          <div class="flex justify-between">
             <span class="text-slate-500">Pelanggan:</span>
             <strong>{selectedCustomerReturn.customerName}</strong>
           </div>
@@ -1138,6 +1706,10 @@
           <div class="flex justify-between">
             <span class="text-slate-500">Faktur PBF:</span>
             <strong class="font-mono">{selectedSupplierReturn.invoiceRef}</strong>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500">Cabang:</span>
+            <strong>{selectedSupplierReturn.branchName}</strong>
           </div>
           <div class="flex justify-between">
             <span class="text-slate-500">Distributor:</span>

@@ -560,6 +560,14 @@ export const api = {
       if (params.limit) sp.append("limit", String(params.limit));
       const qs = sp.toString() ? `?${sp.toString()}` : "";
       return await apiFetch<any>(`/api/inventory/opname${qs}`);
+    },
+    async getLedger(params: { branchId?: string; productId?: string; limit?: number } = {}) {
+      const sp = new URLSearchParams();
+      if (params.branchId) sp.append("branch_id", params.branchId);
+      if (params.productId) sp.append("product_id", params.productId);
+      if (params.limit) sp.append("limit", String(params.limit));
+      const qs = sp.toString() ? `?${sp.toString()}` : "";
+      return await apiFetch<any>(`/api/inventory/ledger${qs}`);
     }
   },
   finance: {
@@ -665,6 +673,11 @@ export const api = {
       return await apiFetch<any>("/api/returns/customer", {
         method: "POST",
         body: JSON.stringify(payload)
+      });
+    },
+    async approveCustomerReturn(id: string) {
+      return await apiFetch<any>(`/api/returns/customer/${id}/approve`, {
+        method: "POST"
       });
     },
     async getSupplierReturns(params: { branchId?: string; limit?: number } = {}) {

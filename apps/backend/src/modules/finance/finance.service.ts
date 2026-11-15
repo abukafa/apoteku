@@ -158,6 +158,7 @@ class FinanceService {
     const payments = await db
       .select({
         id: schema.debtPayments.id,
+        branchId: schema.debtPayments.branchId,
         paymentNumber: schema.debtPayments.paymentNumber,
         paymentDate: schema.debtPayments.paymentDate,
         paymentMethod: schema.debtPayments.paymentMethod,
@@ -181,6 +182,7 @@ class FinanceService {
 
     return payments.map((p) => ({
       id: p.id,
+      branchId: p.branchId,
       paymentNumber: p.paymentNumber,
       paymentDate: p.paymentDate,
       paymentMethod: p.paymentMethod,
@@ -188,7 +190,8 @@ class FinanceService {
       receiptScanUrl: p.receiptScanUrl,
       invoiceNumber: p.invoiceNumber || "-",
       supplierName: p.supplierName || "Distributor PBF",
-      branchName: p.branchName || "Cabang"
+      branchName: p.branchName || "Cabang",
+      paidByName: "Bagian Keuangan"
     }));
   }
 

@@ -47,12 +47,18 @@
   // Types for Ledger & Adjustment History
   interface LedgerEntry {
     id: string;
+    branchId?: string;
+    branchName?: string;
     productId: string;
     productName: string;
+    sku?: string;
     date: string;
+    rawDate?: string;
     refNumber: string;
-    type: "PEMBELIAN" | "PENJUALAN" | "TRANSFER_OUT" | "TRANSFER_IN" | "OPNAME" | "DEFICIT_OVERSELL";
+    type: string;
+    rawMutationType?: string;
     batch: string;
+    expiryDate?: string;
     qtyIn: number;
     qtyOut: number;
     balance: number;
@@ -102,11 +108,11 @@
   let selectedBranchId = $state(authStore.user?.branchId || "1");
   let selectedProductIdForCard = $state<string>("");
 
-  async function fetchProducts() {
+  async function fetchProducts(force = true) {
     try {
-      await mockApi.ensureDataLoaded(selectedBranchId);
+      await mockApi.ensureDataLoaded(selectedBranchId, force);
       const [liveProds, liveBranches] = await Promise.all([
-        mockApi.searchProducts({ branchId: selectedBranchId }),
+        mockApi.searchProducts({ branchId: selectedBranchId, forceReload: force }),
         mockApi.getBranches()
       ]);
       if (liveProds && liveProds.length > 0) {
@@ -157,13 +163,25 @@
     } catch (_) {}
   }
 
+  async function loadStockLedger() {
+    try {
+      const res = await api.inventory.getLedger({ branchId: selectedBranchId });
+      if (res?.success && Array.isArray(res.data)) {
+        ledgerEntries = res.data;
+      }
+    } catch (e) {
+      console.error("Gagal memuat kartu stok ledger:", e);
+    }
+  }
+
   onMount(async () => {
     if (authStore.user?.branchId) {
       selectedBranchId = authStore.user.branchId;
     }
     await Promise.all([
       fetchProducts(),
-      loadOpnameHistory()
+      loadOpnameHistory(),
+      loadStockLedger()
     ]);
   });
   let selectedLedgerTypeFilter = $state("ALL");
@@ -250,17 +268,35 @@
     filteredProducts.slice((catalogPage - 1) * PAGE_SIZE, catalogPage * PAGE_SIZE)
   );
 
-  // Derived: Filtered Ledger Entries for Selected Product
+  // Derived: Filtered Ledger Entries for Selected Product with Dynamic Running Balance
   let productLedgerEntries = $derived.by(() => {
     const prod = selectedProductForCard;
     if (!prod) return [];
 
-    const existing = ledgerEntries.filter((e) => e.productId === prod.id);
-    const totalStock = getProductTotalStock(prod);
+    // Filter mutasi sesuai produk & cabang terpilih
+    const forProd = ledgerEntries
+      .filter(
+        (e) =>
+          e.productId === prod.id &&
+          (!selectedBranchId || selectedBranchId === "ALL" || !e.branchId || e.branchId === selectedBranchId)
+      )
+      .sort((a, b) => new Date(a.rawDate || a.date).getTime() - new Date(b.rawDate || b.date).getTime());
+
+    // Hitung saldo berjalan secara kronologis (dari transaksi terawal ke terbaru)
+    let running = 0;
+    const computed = forProd.map((e) => {
+      running += Number(e.qtyIn) - Number(e.qtyOut);
+      return {
+        ...e,
+        balance: running
+      };
+    });
+
+    // Urutkan transaksi terbaru di paling atas (descending) untuk kenyamanan kartu stok
     const list =
-      existing.length > 0
-        ? existing
-        : totalStock > 0
+      computed.length > 0
+        ? [...computed].reverse()
+        : getProductTotalStock(prod) > 0
           ? [
               {
                 id: `led-init-${prod.id}`,
@@ -268,11 +304,12 @@
                 productName: prod.name,
                 date: "-",
                 refNumber: `SALDO-${prod.sku}`,
-                type: "PEMBELIAN" as const,
+                type: "PEMBELIAN",
                 batch: prod.batches[0]?.batchNumber || "STOK-AKTIF",
-                qtyIn: totalStock,
+                expiryDate: prod.batches[0]?.expiryDate || "-",
+                qtyIn: getProductTotalStock(prod),
                 qtyOut: 0,
-                balance: totalStock,
+                balance: getProductTotalStock(prod),
                 unit: prod.baseUnit,
                 notes: "Saldo stok aktif tercatat di database",
                 operator: "Sistem"
@@ -1261,7 +1298,11 @@
             variant="soft"
             size="sm"
             align="right"
-            onchange={() => fetchProducts()}
+            onchange={() => {
+              fetchProducts();
+              loadOpnameHistory();
+              loadStockLedger();
+            }}
             options={branches.map((b) => ({
               value: b.id,
               label: `${b.name}`,
@@ -1558,6 +1599,8 @@
                   onclick={() => {
                     selectedProductIdForCard = p.id;
                     activeTab = "kartu_stok";
+                    loadStockLedger();
+                    fetchProducts(true);
                   }}
                   title="Lihat buku besar mutasi keluar/masuk obat ini"
                   class="px-2.5 py-1 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-600 hover:text-brand-blue text-[11px] font-bold transition-all"
@@ -1579,17 +1622,17 @@
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 pb-4">
         <div>
           <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-            Kartu Stok Buku Besar
+            Kartu Stok & Audit Mutasi
           </span>
-          <h2 class="text-lg font-black text-slate-900 mt-0.5">
-            {selectedProductForCard?.name}
+          <h2 class="text-xl font-black text-slate-900 mt-0.5 flex items-center gap-2">
+            <span>{selectedProductForCard?.name}</span>
           </h2>
-          <div class="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-1">
+          <div class="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-1.5">
             <span>SKU: <strong class="text-slate-700 font-mono">{selectedProductForCard?.sku}</strong></span>
             <span>Satuan Dasar: <strong class="text-slate-700">{selectedProductForCard?.baseUnit}</strong></span>
-            <span>
-              Saldo Sistem Saat Ini:
-              <strong class="text-emerald-700 font-mono">
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold">
+              <span>Saldo Sistem Saat Ini:</span>
+              <strong class="font-mono text-emerald-700 text-sm">
                 {getProductTotalStock(selectedProductForCard)} {selectedProductForCard?.baseUnit}
               </strong>
             </span>
@@ -1605,11 +1648,17 @@
               size="sm"
               align="right"
               options={[
-                { value: "ALL", label: "Semua Mutasi" },
+                { value: "ALL", label: "Semua Mutasi (Semua Alur Barang)" },
                 { value: "PEMBELIAN", label: "Pembelian PBF (+)" },
-                { value: "PENJUALAN", label: "Penjualan POS (-)" },
-                { value: "TRANSFER_OUT", label: "Transfer Cabang" },
-                { value: "OPNAME", label: "Stok Opname / Koreksi (+/-)" },
+                { value: "PENJUALAN", label: "Penjualan Kasir POS (-)" },
+                { value: "RESEP_DOKTER", label: "Pelayanan Resep Dokter (-)" },
+                { value: "PENGIRIMAN_CABANG", label: "Pengiriman Antar-Cabang (-)" },
+                { value: "PENERIMAAN_CABANG", label: "Penerimaan Antar-Cabang (+)" },
+                { value: "KONSINYASI", label: "Penerimaan Konsinyasi (+)" },
+                { value: "OPNAME", label: "Stok Opname / Koreksi Fisik (+/-)" },
+                { value: "RETUR_JUAL", label: "Retur Penjualan Pasien (+)" },
+                { value: "RETUR_BELI", label: "Retur Pembelian ke PBF (-)" },
+                { value: "VOID_BELI", label: "Pembatalan Faktur (-)" },
                 { value: "DEFICIT_OVERSELL", label: "Defisit Oversell (Audit APA)" }
               ]}
             />
@@ -1694,8 +1743,7 @@
           <thead>
             <tr class="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider text-[11px] border-b border-slate-100">
               <th class="py-3 px-4">Tanggal</th>
-              <th class="py-3 px-4">No. Ref</th>
-              <th class="py-3 px-4">Mutasi</th>
+              <th class="py-3 px-4">Jenis</th>
               <th class="py-3 px-4">Batch</th>
               <th class="py-3 px-4 text-right">Masuk</th>
               <th class="py-3 px-4 text-right">Keluar</th>
@@ -1705,26 +1753,83 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100 font-medium text-slate-700">
+            {#if productLedgerEntries.length === 0}
+              <tr>
+                <td colspan="9" class="py-12 text-center text-slate-400">
+                  <div class="flex flex-col items-center justify-center gap-2">
+                    <Package class="w-8 h-8 text-slate-300" />
+                    <p class="font-bold text-sm text-slate-600">Belum ada riwayat mutasi alur barang untuk obat ini di cabang aktif</p>
+                    <p class="text-xs text-slate-400">Seluruh transaksi penjualan, pembelian, pengiriman cabang, dan opname terekam otomatis di kartu stok ini.</p>
+                  </div>
+                </td>
+              </tr>
+            {/if}
             {#each productLedgerEntries as entry}
               <tr class="hover:bg-slate-50/50 {entry.type === 'OPNAME' ? 'bg-amber-50/30' : ''}">
-                <td class="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">{entry.date}</td>
-                <td class="py-3 px-4 font-mono font-bold text-brand-blue whitespace-nowrap">{entry.refNumber}</td>
+                <td class="py-3 px-4 font-mono text-slate-500 max-w-[160px]">
+                  {entry.date}
+                </td>
                 <td class="py-3 px-4">
                   <span
-                    class="px-2 py-0.5 rounded text-[10px] font-bold {entry.type === 'PEMBELIAN'
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : entry.type === 'PENJUALAN'
-                        ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                        : entry.type === 'OPNAME'
-                          ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                          : entry.type === 'DEFICIT_OVERSELL'
-                            ? 'bg-red-100 text-brand-red-700 border border-red-300'
-                            : 'bg-amber-50 text-amber-700 border border-amber-200'}"
+                    class="px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap {
+                      entry.type === 'PEMBELIAN'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : entry.type === 'PENJUALAN'
+                          ? 'bg-blue-50 text-blue-700 border-blue-200'
+                          : entry.type === 'RESEP_DOKTER'
+                            ? 'bg-teal-50 text-teal-700 border-teal-200'
+                            : entry.type === 'PENGIRIMAN_CABANG'
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : entry.type === 'PENERIMAAN_CABANG'
+                                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                : entry.type === 'KONSINYASI'
+                                  ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                  : entry.type === 'OPNAME'
+                                    ? 'bg-violet-50 text-violet-700 border-violet-200'
+                                    : entry.type === 'RETUR_JUAL'
+                                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                      : entry.type === 'RETUR_BELI'
+                                        ? 'bg-orange-50 text-orange-700 border-orange-200'
+                                        : entry.type === 'VOID_BELI'
+                                          ? 'bg-slate-100 text-slate-700 border-slate-300'
+                                          : entry.type === 'DEFICIT_OVERSELL'
+                                            ? 'bg-red-100 text-brand-red-700 border-red-300'
+                                            : 'bg-slate-50 text-slate-700 border-slate-200'
+                    }"
                   >
-                    {entry.type === 'DEFICIT_OVERSELL' ? 'DEFISIT OFFLINE' : entry.type}
+                    {
+                      entry.type === 'PEMBELIAN'
+                        ? 'PEMBELIAN PBF'
+                        : entry.type === 'PENJUALAN'
+                          ? 'KASIR POS'
+                          : entry.type === 'RESEP_DOKTER'
+                            ? 'RESEP DOKTER'
+                            : entry.type === 'PENGIRIMAN_CABANG'
+                              ? 'TRANSFER KELUAR'
+                              : entry.type === 'PENERIMAAN_CABANG'
+                                ? 'TRANSFER MASUK'
+                                : entry.type === 'KONSINYASI'
+                                  ? 'KONSINYASI'
+                                  : entry.type === 'OPNAME'
+                                    ? 'STOK OPNAME'
+                                    : entry.type === 'RETUR_JUAL'
+                                      ? 'RETUR PASIEN'
+                                      : entry.type === 'RETUR_BELI'
+                                        ? 'RETUR KE PBF'
+                                        : entry.type === 'VOID_BELI'
+                                          ? 'VOID FAKTUR'
+                                          : entry.type === 'DEFICIT_OVERSELL'
+                                            ? 'DEFISIT OFFLINE'
+                                            : entry.type
+                    }
                   </span>
                 </td>
-                <td class="py-3 px-4 font-mono">{entry.batch}</td>
+                <td class="py-3 px-4 font-mono text-slate-600 min-w-[120px]">
+                  <div>{entry.batch}</div>
+                  {#if entry.expiryDate && entry.expiryDate !== '-'}
+                    <div class="text-[10px] text-slate-400">ED: {entry.expiryDate}</div>
+                  {/if}
+                </td>
                 <td class="py-3 px-4 text-right font-bold text-emerald-600 font-mono">
                   {entry.qtyIn > 0 ? `+${entry.qtyIn}` : "-"}
                 </td>
@@ -1732,9 +1837,9 @@
                   {entry.qtyOut > 0 ? `-${entry.qtyOut}` : "-"}
                 </td>
                 <td class="py-3 px-4 text-right font-black text-slate-900 font-mono">
-                  {entry.balance} {entry.unit}
+                  {entry.balance}
                 </td>
-                <td class="py-3 px-4 text-slate-600 max-w-xs truncate" title={entry.notes}>
+                <td class="py-3 px-4 text-slate-600 max-w-xs" title={entry.notes}>
                   {entry.notes}
                 </td>
                 <td class="py-3 px-4 text-center text-slate-500 font-semibold whitespace-nowrap">

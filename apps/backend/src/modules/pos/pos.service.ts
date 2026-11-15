@@ -1,5 +1,5 @@
 import { db, schema } from "@apoteku/db";
-import { eq, and, gt, sql } from "drizzle-orm";
+import { eq, and, gt, sql, or, gte } from "drizzle-orm";
 import type { Static } from "elysia";
 import type { SyncSalesBodySchema } from "./pos.schema.js";
 
@@ -517,7 +517,7 @@ export class PosService {
                 const locCheck = await db
                   .select({ id: schema.inventoryLocations.id })
                   .from(schema.inventoryLocations)
-                  .where(eq(schema.inventoryLocations.id, item.locationId))
+                  .where(eq(schema.inventoryLocations.id, item.locationId!))
                   .limit(1);
                 if (locCheck.length > 0) itemLocationId = locCheck[0].id;
               } catch (_) {}
@@ -554,7 +554,7 @@ export class PosService {
 
             const validItemId = isValidUuid(item.id)
               ? item.id
-              : (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : v7());
+              : crypto.randomUUID();
 
             await db.insert(schema.salesTransactionItems).values({
               id: validItemId,
@@ -873,16 +873,27 @@ export class PosService {
    */
   async getActiveShift(tenantId: string, branchId: string) {
     try {
+      const isUuid = (val?: string | null) =>
+        Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val?.trim() || ""));
+
+      let targetBranch = branchId;
+      if (!isUuid(targetBranch)) {
+        const [b] = await db.select({ id: schema.branches.id }).from(schema.branches).limit(1);
+        if (b) targetBranch = b.id;
+      }
+
+      const shiftConditions = [
+        eq(schema.cashierShifts.branchId, targetBranch),
+        eq(schema.cashierShifts.isOpen, true)
+      ];
+      if (tenantId && isUuid(tenantId) && !tenantId.startsWith("01931818-8000")) {
+        shiftConditions.push(eq(schema.cashierShifts.tenantId, tenantId));
+      }
+
       const shiftRows = await db
         .select()
         .from(schema.cashierShifts)
-        .where(
-          and(
-            eq(schema.cashierShifts.tenantId, tenantId),
-            eq(schema.cashierShifts.branchId, branchId),
-            eq(schema.cashierShifts.isOpen, true)
-          )
-        )
+        .where(and(...shiftConditions))
         .limit(1);
 
       if (shiftRows.length === 0) {
@@ -903,7 +914,15 @@ export class PosService {
           changeAmount: schema.salesTransactions.changeAmount
         })
         .from(schema.salesTransactions)
-        .where(eq(schema.salesTransactions.cashierShiftId, shift.id));
+        .where(
+          or(
+            eq(schema.salesTransactions.cashierShiftId, shift.id),
+            and(
+              eq(schema.salesTransactions.branchId, shift.branchId),
+              gte(schema.salesTransactions.createdAt, shift.startTime)
+            )
+          )
+        );
 
       let cashSales = 0;
       let nonCashSales = 0;
@@ -923,8 +942,27 @@ export class PosService {
         }
       }
 
+      // Ambil refund tunai dari customer_returns selama shift ini
+      const [refundsAgg] = await db
+        .select({
+          totalCashRefunds: sql<number>`COALESCE(SUM(${schema.customerReturns.refundAmount}), 0)::numeric`
+        })
+        .from(schema.customerReturns)
+        .where(
+          and(
+            eq(schema.customerReturns.branchId, shift.branchId),
+            eq(schema.customerReturns.compensationType, "REFUND_TUNAI"),
+            eq(schema.customerReturns.status, "APPROVED"),
+            or(
+              eq(schema.customerReturns.cashierShiftId, shift.id),
+              gte(schema.customerReturns.createdAt, shift.startTime)
+            )
+          )
+        );
+
+      const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
       const initialCash = Number(shift.initialCash);
-      const expectedCash = initialCash + cashSales;
+      const expectedCash = initialCash + cashSales - cashRefunds;
       const totalSales = cashSales + nonCashSales;
 
       const shiftName = resolveShiftName(shift.shiftNumber, shift.notes);
@@ -941,9 +979,14 @@ export class PosService {
           initialCash,
           startingCash: initialCash,
           cashSales,
+          currentCashSales: cashSales,
           qrisSales,
           nonCashSales,
+          currentNonCashSales: nonCashSales,
           totalSales,
+          currentTotalSales: totalSales,
+          cashRefunds,
+          currentCashRefunds: cashRefunds,
           expectedCash,
           isOpen: shift.isOpen,
           notes: shift.notes
@@ -1077,7 +1120,15 @@ export class PosService {
           changeAmount: schema.salesTransactions.changeAmount
         })
         .from(schema.salesTransactions)
-        .where(eq(schema.salesTransactions.cashierShiftId, shift.id));
+        .where(
+          or(
+            eq(schema.salesTransactions.cashierShiftId, shift.id),
+            and(
+              eq(schema.salesTransactions.branchId, shift.branchId),
+              gte(schema.salesTransactions.createdAt, shift.startTime)
+            )
+          )
+        );
 
       let cashSales = 0;
       let nonCashSales = 0;
@@ -1092,8 +1143,27 @@ export class PosService {
         }
       }
 
+      // Ambil refund tunai dari customer_returns selama shift ini
+      const [refundsAgg] = await db
+        .select({
+          totalCashRefunds: sql<number>`COALESCE(SUM(${schema.customerReturns.refundAmount}), 0)::numeric`
+        })
+        .from(schema.customerReturns)
+        .where(
+          and(
+            eq(schema.customerReturns.branchId, shift.branchId),
+            eq(schema.customerReturns.compensationType, "REFUND_TUNAI"),
+            eq(schema.customerReturns.status, "APPROVED"),
+            or(
+              eq(schema.customerReturns.cashierShiftId, shift.id),
+              gte(schema.customerReturns.createdAt, shift.startTime)
+            )
+          )
+        );
+
+      const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
       const initialCash = Number(shift.initialCash);
-      const expectedCash = initialCash + cashSales;
+      const expectedCash = initialCash + cashSales - cashRefunds;
       const cashDifference = actualCash - expectedCash;
       const totalSales = cashSales + nonCashSales;
       const endTime = new Date();

@@ -1933,7 +1933,7 @@
           <th class="py-3 px-4 text-right">Sebelum</th>
           <th class="py-3 px-4 text-right">Sesudah</th>
           <th class="py-3 px-4 text-center">Selisih</th>
-          <th class="py-3 px-4 text-right">Dampak HPP</th>
+          <th class="py-3 px-4 text-right">Dampak</th>
           <th class="py-3 px-4">Catatan</th>
           <th class="py-3 px-4 text-center">Petugas</th>
         {/snippet}
@@ -1980,10 +1980,10 @@
                       ? 'text-brand-blue-700'
                       : 'text-slate-400'}"
                 >
-                  {item.valueDifference > 0 ? `+${formatRupiah(item.valueDifference)}` : formatRupiah(item.valueDifference)}
+                  {item.valueDifference > 0 ? `+${formatRupiah(item.valueDifference, false)}` : formatRupiah(item.valueDifference, false)}
                 </div>
                 <div class="text-[10px] text-slate-400">
-                  @ {formatRupiah(item.costPerUnit)}/{item.unit}
+                  {formatRupiah(item.costPerUnit, false)}/{item.unit}
                 </div>
               </td>
               <td class="py-3.5 px-4 max-w-xs">

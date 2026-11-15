@@ -146,7 +146,7 @@ export interface CheckoutPayload {
   customerName?: string;
   doctorId?: string;
   doctorName?: string;
-  paymentMethod: 'CASH' | 'QRIS' | 'DEBIT' | 'TRANSFER';
+  paymentMethod: 'CASH' | 'QRIS' | 'DEBIT' | 'TRANSFER' | 'TEMPO';
   items: CartItem[];
   subtotal: number;
   invoiceDiscount: number;
@@ -156,6 +156,8 @@ export interface CheckoutPayload {
   cashPaid: number;
   changeAmount: number;
   notes?: string;
+  tempoDueDate?: string;
+  downPayment?: number;
 }
 
 export interface CheckoutResult {

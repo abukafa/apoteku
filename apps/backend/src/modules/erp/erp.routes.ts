@@ -853,7 +853,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         .select()
         .from(schema.customers)
         .orderBy(schema.customers.name)
-        .limit(500);
+        .limit(1000);
 
       return {
         success: true,
@@ -863,8 +863,12 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           name: c.name,
           phone: c.phone || "",
           address: c.address || "",
+          customerType: c.customerType || "UMUM",
           priceTier: c.customerType === "MEMBER" ? "member" : "general",
-          loyaltyPoints: c.pointBalance || 0
+          pointBalance: c.pointBalance || 0,
+          loyaltyPoints: c.pointBalance || 0,
+          isActive: c.isActive !== false,
+          createdAt: c.createdAt
         }))
       };
     } catch (err: any) {
@@ -872,7 +876,114 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
     }
   })
 
-  // 3B. TAMBAH CUSTOMER BARU
+  // 3A. BUKU PIUTANG / BON PASIEN (RECEIVABLES)
+  .get("/customers/receivables", async () => {
+    try {
+      const unpaidSales = await db
+        .select({
+          id: schema.salesTransactions.id,
+          invoiceRef: schema.salesTransactions.invoiceNo,
+          customerId: schema.salesTransactions.customerId,
+          patientName: schema.salesTransactions.patientName,
+          customerName: schema.customers.name,
+          customerCode: schema.customers.code,
+          customerPhone: schema.customers.phone,
+          grandTotal: schema.salesTransactions.grandTotal,
+          paidAmount: schema.salesTransactions.paidAmount,
+          createdAt: schema.salesTransactions.createdAt
+        })
+        .from(schema.salesTransactions)
+        .leftJoin(schema.customers, eq(schema.salesTransactions.customerId, schema.customers.id))
+        .where(sql`${schema.salesTransactions.grandTotal} > ${schema.salesTransactions.paidAmount}`)
+        .orderBy(desc(schema.salesTransactions.createdAt));
+
+      const mapped = unpaidSales.map((s) => {
+        const total = Number(s.grandTotal);
+        const paid = Number(s.paidAmount || 0);
+        const debt = Math.max(0, total - paid);
+        const saleDate = new Date(s.createdAt);
+        const dueDate = new Date(saleDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+        const isDueSoon = new Date().getTime() > dueDate.getTime() - 3 * 24 * 60 * 60 * 1000;
+
+        return {
+          id: s.id,
+          transactionId: s.id,
+          customerId: s.customerId,
+          customerName: s.customerName || s.patientName || "Pelanggan Umum",
+          code: s.customerCode || "-",
+          phone: s.customerPhone || "-",
+          invoiceRef: s.invoiceRef,
+          totalDebt: debt,
+          dueDate: dueDate.toISOString().slice(0, 10),
+          status: isDueSoon ? "DUE_SOON" : "ACTIVE"
+        };
+      });
+
+      return {
+        success: true,
+        data: mapped
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message, data: [] };
+    }
+  })
+
+  // 3B. TERIMA BAYAR PIUTANG / BON PASIEN
+  .post("/customers/receivables/pay", async ({ body }: { body: any }) => {
+    try {
+      const { transactionId, amountPaid, paymentMethod, operator } = body;
+      const numAmount = Number(amountPaid);
+      if (!transactionId || numAmount <= 0) {
+        return { success: false, error: "ID transaksi dan nominal pembayaran wajib diisi" };
+      }
+
+      const [sale] = await db
+        .select()
+        .from(schema.salesTransactions)
+        .where(eq(schema.salesTransactions.id, transactionId))
+        .limit(1);
+
+      if (!sale) {
+        return { success: false, error: "Transaksi penjualan / bon tidak ditemukan" };
+      }
+
+      const currentPaid = Number(sale.paidAmount || 0);
+      const newPaid = currentPaid + numAmount;
+
+      await db
+        .update(schema.salesTransactions)
+        .set({
+          paidAmount: String(newPaid),
+          changeAmount: String(Math.max(0, newPaid - Number(sale.grandTotal)))
+        })
+        .where(eq(schema.salesTransactions.id, transactionId));
+
+      const acc = (paymentMethod || "KAS_TUNAI").toUpperCase().includes("BCA") ? "BANK_BCA" : "KAS_LACI";
+      await db.insert(schema.cashMutations).values({
+        id: crypto.randomUUID(),
+        tenantId: sale.tenantId,
+        branchId: sale.branchId,
+        type: "IN",
+        category: "Pelunasan Piutang Pasien",
+        account: acc,
+        refNumber: sale.invoiceNo,
+        amount: String(numAmount),
+        description: `Pelunasan piutang pasien nota ${sale.invoiceNo} (${sale.patientName || "Umum"})`,
+        operator: operator || "Kasir",
+        transactionDate: new Date(),
+        createdAt: new Date()
+      });
+
+      return {
+        success: true,
+        message: `Pembayaran piutang nota ${sale.invoiceNo} sebesar Rp ${numAmount.toLocaleString("id-ID")} berhasil dicatat.`
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  })
+
+  // 3C. TAMBAH CUSTOMER BARU
   .post("/customers", async ({ body }: { body: any }) => {
     try {
       if (!body.name || !body.name.trim()) {
@@ -882,11 +993,24 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
       const [tenant] = await db.select({ id: schema.tenants.id }).from(schema.tenants).limit(1);
       if (!tenant) throw new Error("Tenant aktif tidak ditemukan");
 
-      let code = (body.code || "").trim();
+      let code = (body.code || "").trim().toUpperCase();
       if (!code) {
         const [countRow] = await db.select({ count: sql<number>`COUNT(*)::int` }).from(schema.customers);
         code = `CUST-${String(Number(countRow?.count || 0) + 1).padStart(4, "0")}`;
+        const [existingCode] = await db
+          .select({ id: schema.customers.id })
+          .from(schema.customers)
+          .where(eq(schema.customers.code, code))
+          .limit(1);
+        if (existingCode) {
+          code = `CUST-${Date.now().toString().slice(-6)}`;
+        }
       }
+
+      const rawType = String(body.customerType || (body.priceTier === "member" ? "MEMBER" : "UMUM")).toUpperCase();
+      const customerType = ["MEMBER", "RESEP", "GROSIR"].includes(rawType) ? rawType : "UMUM";
+      const pointBalance = Number(body.pointBalance ?? body.loyaltyPoints ?? 0);
+      const isActive = body.isActive !== false;
 
       const [created] = await db
         .insert(schema.customers)
@@ -897,9 +1021,9 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           name: body.name.trim(),
           phone: body.phone ? body.phone.trim() : null,
           address: body.address ? body.address.trim() : null,
-          customerType: body.priceTier === "member" ? "MEMBER" : "UMUM",
-          pointBalance: Number(body.loyaltyPoints || 0),
-          isActive: true
+          customerType,
+          pointBalance,
+          isActive
         })
         .returning();
 
@@ -912,8 +1036,11 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           name: created.name,
           phone: created.phone || "",
           address: created.address || "",
+          customerType: created.customerType,
           priceTier: created.customerType === "MEMBER" ? "member" : "general",
-          loyaltyPoints: created.pointBalance || 0
+          pointBalance: created.pointBalance || 0,
+          loyaltyPoints: created.pointBalance || 0,
+          isActive: created.isActive !== false
         }
       };
     } catch (err: any) {
@@ -921,19 +1048,27 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
     }
   })
 
-  // 3C. UPDATE CUSTOMER
+  // 3D. UPDATE CUSTOMER
   .put("/customers/:id", async ({ params, body }: { params: { id: string }; body: any }) => {
     try {
       const updateData: any = {};
       if (body.name !== undefined) updateData.name = body.name.trim();
-      if (body.code !== undefined) updateData.code = body.code.trim();
+      if (body.code !== undefined) updateData.code = body.code.trim().toUpperCase();
       if (body.phone !== undefined) updateData.phone = body.phone ? body.phone.trim() : null;
       if (body.address !== undefined) updateData.address = body.address ? body.address.trim() : null;
-      if (body.priceTier !== undefined) {
+      if (body.customerType !== undefined) {
+        const rawType = String(body.customerType).toUpperCase();
+        updateData.customerType = ["MEMBER", "RESEP", "GROSIR"].includes(rawType) ? rawType : "UMUM";
+      } else if (body.priceTier !== undefined) {
         updateData.customerType = body.priceTier === "member" ? "MEMBER" : "UMUM";
       }
-      if (body.loyaltyPoints !== undefined) {
+      if (body.pointBalance !== undefined) {
+        updateData.pointBalance = Number(body.pointBalance);
+      } else if (body.loyaltyPoints !== undefined) {
         updateData.pointBalance = Number(body.loyaltyPoints);
+      }
+      if (body.isActive !== undefined) {
+        updateData.isActive = Boolean(body.isActive);
       }
 
       const [updated] = await db
@@ -941,6 +1076,10 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         .set(updateData)
         .where(eq(schema.customers.id, params.id))
         .returning();
+
+      if (!updated) {
+        return { success: false, error: "Pelanggan tidak ditemukan" };
+      }
 
       return {
         success: true,
@@ -951,8 +1090,11 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           name: updated.name,
           phone: updated.phone || "",
           address: updated.address || "",
+          customerType: updated.customerType,
           priceTier: updated.customerType === "MEMBER" ? "member" : "general",
-          loyaltyPoints: updated.pointBalance || 0
+          pointBalance: updated.pointBalance || 0,
+          loyaltyPoints: updated.pointBalance || 0,
+          isActive: updated.isActive !== false
         }
       };
     } catch (err: any) {
@@ -960,7 +1102,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
     }
   })
 
-  // 3D. HAPUS CUSTOMER
+  // 3E. HAPUS CUSTOMER
   .delete("/customers/:id", async ({ params }: { params: { id: string } }) => {
     try {
       await db.delete(schema.customers).where(eq(schema.customers.id, params.id));

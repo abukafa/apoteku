@@ -581,11 +581,11 @@
   </div>
 
   <!-- TAB NAVIGATION -->
-  <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold">
+  <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold overflow-x-auto no-scrollbar">
     <button
       type="button"
       onclick={() => (activeTab = "penjualan")}
-      class="pb-3 px-3 transition-colors relative {activeTab === 'penjualan' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'penjualan' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <span>Laporan Omzet & Shift Kasir ({branchSalesRecords.length})</span>
       {#if activeTab === "penjualan"}
@@ -596,7 +596,7 @@
     <button
       type="button"
       onclick={() => (activeTab = "sipnap")}
-      class="pb-3 px-3 transition-colors relative {activeTab === 'sipnap' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'sipnap' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-1.5">
         <ShieldAlert class="w-4 h-4 text-rose-600" />
@@ -610,7 +610,7 @@
     <button
       type="button"
       onclick={() => (activeTab = "pareto")}
-      class="pb-3 px-3 transition-colors relative {activeTab === 'pareto' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'pareto' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
     >
       <div class="flex items-center gap-1.5">
         <PieChart class="w-4 h-4 text-amber-500" />

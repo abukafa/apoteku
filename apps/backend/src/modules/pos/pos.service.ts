@@ -934,6 +934,15 @@ export class PosService {
 
         if (s.paymentMethod === "CASH") {
           cashSales += netCash > 0 ? netCash : total;
+        } else if (s.paymentMethod === "TEMPO") {
+          // Uang muka (DP tunai) masuk ke kas laci, sisa piutang ke non-cash
+          if (netCash > 0) {
+            cashSales += netCash;
+          }
+          const remainingDebt = Math.max(0, total - netCash);
+          if (remainingDebt > 0) {
+            nonCashSales += remainingDebt;
+          }
         } else {
           nonCashSales += total;
           if (s.paymentMethod === "QRIS") {
@@ -960,9 +969,27 @@ export class PosService {
           )
         );
 
+      // Ambil mutasi kas laci kasir (KAS_LACI) selama shift ini
+      const [mutationsAgg] = await db
+        .select({
+          cashIn: sql<number>`COALESCE(SUM(CASE WHEN ${schema.cashMutations.type} = 'IN' THEN ${schema.cashMutations.amount} ELSE 0 END), 0)::numeric`,
+          cashOut: sql<number>`COALESCE(SUM(CASE WHEN ${schema.cashMutations.type} = 'OUT' THEN ${schema.cashMutations.amount} ELSE 0 END), 0)::numeric`
+        })
+        .from(schema.cashMutations)
+        .where(
+          and(
+            eq(schema.cashMutations.branchId, shift.branchId),
+            eq(schema.cashMutations.account, "KAS_LACI"),
+            sql`${schema.cashMutations.category} != 'RETUR_PENJUALAN'`,
+            gte(schema.cashMutations.transactionDate, shift.startTime)
+          )
+        );
+
+      const drawerMutIn = Number(mutationsAgg?.cashIn || 0);
+      const drawerMutOut = Number(mutationsAgg?.cashOut || 0);
       const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
       const initialCash = Number(shift.initialCash);
-      const expectedCash = initialCash + cashSales - cashRefunds;
+      const expectedCash = initialCash + cashSales - cashRefunds + drawerMutIn - drawerMutOut;
       const totalSales = cashSales + nonCashSales;
 
       const shiftName = resolveShiftName(shift.shiftNumber, shift.notes);
@@ -987,6 +1014,8 @@ export class PosService {
           currentTotalSales: totalSales,
           cashRefunds,
           currentCashRefunds: cashRefunds,
+          pettyCashOut: drawerMutOut,
+          pettyCashIn: drawerMutIn,
           expectedCash,
           isOpen: shift.isOpen,
           notes: shift.notes
@@ -1138,6 +1167,15 @@ export class PosService {
         const total = Number(s.grandTotal);
         if (s.paymentMethod === "CASH") {
           cashSales += netCash > 0 ? netCash : total;
+        } else if (s.paymentMethod === "TEMPO") {
+          // Uang muka (DP tunai) masuk ke kas laci, sisa piutang ke non-cash
+          if (netCash > 0) {
+            cashSales += netCash;
+          }
+          const remainingDebt = Math.max(0, total - netCash);
+          if (remainingDebt > 0) {
+            nonCashSales += remainingDebt;
+          }
         } else {
           nonCashSales += total;
         }
@@ -1161,9 +1199,27 @@ export class PosService {
           )
         );
 
+      // Ambil mutasi kas laci kasir (KAS_LACI) selama shift ini
+      const [mutationsAgg] = await db
+        .select({
+          cashIn: sql<number>`COALESCE(SUM(CASE WHEN ${schema.cashMutations.type} = 'IN' THEN ${schema.cashMutations.amount} ELSE 0 END), 0)::numeric`,
+          cashOut: sql<number>`COALESCE(SUM(CASE WHEN ${schema.cashMutations.type} = 'OUT' THEN ${schema.cashMutations.amount} ELSE 0 END), 0)::numeric`
+        })
+        .from(schema.cashMutations)
+        .where(
+          and(
+            eq(schema.cashMutations.branchId, shift.branchId),
+            eq(schema.cashMutations.account, "KAS_LACI"),
+            sql`${schema.cashMutations.category} != 'RETUR_PENJUALAN'`,
+            gte(schema.cashMutations.transactionDate, shift.startTime)
+          )
+        );
+
+      const drawerMutIn = Number(mutationsAgg?.cashIn || 0);
+      const drawerMutOut = Number(mutationsAgg?.cashOut || 0);
       const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
       const initialCash = Number(shift.initialCash);
-      const expectedCash = initialCash + cashSales - cashRefunds;
+      const expectedCash = initialCash + cashSales - cashRefunds + drawerMutIn - drawerMutOut;
       const cashDifference = actualCash - expectedCash;
       const totalSales = cashSales + nonCashSales;
       const endTime = new Date();

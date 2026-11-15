@@ -89,8 +89,10 @@
   let cart = $state<CartItem[]>([]);
   let invoiceDiscount = $state(0);
   let taxRate = $state(0); // 0 or 0.11 (PPN 11%)
-  let selectedPaymentMethod = $state<"CASH" | "QRIS" | "DEBIT" | "TRANSFER">("CASH");
+  let selectedPaymentMethod = $state<"CASH" | "QRIS" | "DEBIT" | "TRANSFER" | "TEMPO">("CASH");
   let cashPaid = $state(0);
+  let tempoDownPayment = $state(0);
+  let tempoDueDate = $state("");
 
   // QRIS Payment State
   let qrisStatus = $state<"WAITING" | "PAID" | "EXPIRED">("WAITING");
@@ -157,8 +159,12 @@
   let shiftCashSales = $state(0);
   let shiftQrisSales = $state(0);
   let shiftCashRefunds = $state(0);
+  let shiftPettyCashOut = $state(0);
+  let shiftPettyCashIn = $state(0);
   let shiftActualCash = $state(0);
-  let shiftExpectedCash = $derived(shiftInitialCash + shiftCashSales - shiftCashRefunds);
+  let shiftExpectedCash = $derived(
+    shiftInitialCash + shiftCashSales - shiftCashRefunds + shiftPettyCashIn - shiftPettyCashOut
+  );
   let shiftDiscrepancy = $derived(shiftActualCash - shiftExpectedCash);
   let shiftNotes = $state("");
   let shiftClosureSuccess = $state("");
@@ -195,7 +201,9 @@
           shiftCashSales = Number(res.shift.cashSales || res.shift.currentCashSales || 0);
           shiftQrisSales = Number(res.shift.qrisSales || res.shift.currentNonCashSales || 0);
           shiftCashRefunds = Number(res.shift.currentCashRefunds ?? res.shift.cashRefunds ?? 0);
-          shiftActualCash = Number(res.shift.expectedCash ?? (shiftInitialCash + shiftCashSales - shiftCashRefunds));
+          shiftPettyCashOut = Number(res.shift.pettyCashOut || 0);
+          shiftPettyCashIn = Number(res.shift.pettyCashIn || 0);
+          shiftActualCash = Number(res.shift.expectedCash ?? (shiftInitialCash + shiftCashSales - shiftCashRefunds + shiftPettyCashIn - shiftPettyCashOut));
         }
       } catch (err) {
         console.warn("[POS] Gagal memuat rekap shift kasir dari API:", err);
@@ -1014,6 +1022,10 @@
 
     cashPaid = totals.grandTotal;
     selectedPaymentMethod = "CASH";
+    tempoDownPayment = 0;
+    const due = new Date();
+    due.setDate(due.getDate() + 30);
+    tempoDueDate = due.toISOString().slice(0, 10);
     qrisStatus = "WAITING";
     if (qrisTimerInterval) clearInterval(qrisTimerInterval);
     showCheckoutModal = true;
@@ -1051,6 +1063,27 @@
       return;
     }
 
+    if (selectedPaymentMethod === "TEMPO") {
+      if (!selectedCustomer || selectedCustomer.id === "cust-general") {
+        alertStore.warning(
+          "Pilih Pelanggan Terlebih Dahulu",
+          "Transaksi Hutang / Bon (Tempo) wajib mencantumkan data pelanggan terdaftar. Silakan tutup modal ini dan pilih pelanggan di panel kasir sebelum melanjutkan."
+        );
+        return;
+      }
+      if (tempoDownPayment < 0) {
+        alertStore.warning("Uang Muka Tidak Valid", "Nominal uang muka tidak boleh negatif.");
+        return;
+      }
+      if (tempoDownPayment >= totals.grandTotal) {
+        alertStore.warning(
+          "Uang Muka Melebihi / Menyamai Total",
+          "Jika pembayaran lunas penuh, silakan gunakan metode Tunai / Cash."
+        );
+        return;
+      }
+    }
+
     if (qrisTimerInterval) clearInterval(qrisTimerInterval);
 
     const customerTypeMap: Record<string, "UMUM" | "RESEP" | "GROSIR" | "MEMBER" | "DELIVERY"> = {
@@ -1084,8 +1117,18 @@
       embalaseAmount: 0,
       roundingAmount: totals.roundingDifference,
       grandTotal: totals.grandTotal,
-      cashPaid: selectedPaymentMethod === "QRIS" ? totals.grandTotal : cashPaid,
-      changeAmount: selectedPaymentMethod === "QRIS" ? 0 : changeAmount
+      cashPaid:
+        selectedPaymentMethod === "QRIS"
+          ? totals.grandTotal
+          : selectedPaymentMethod === "TEMPO"
+          ? Number(tempoDownPayment || 0)
+          : cashPaid,
+      changeAmount:
+        selectedPaymentMethod === "CASH"
+          ? changeAmount
+          : 0,
+      tempoDueDate: selectedPaymentMethod === "TEMPO" ? tempoDueDate : undefined,
+      downPayment: selectedPaymentMethod === "TEMPO" ? Number(tempoDownPayment || 0) : undefined
     };
 
     const result = await mockApi.checkoutSale(payload);
@@ -1135,8 +1178,17 @@
       p.roundingAmount !== 0 ? `Pembulatan     : Rp ${p.roundingAmount.toLocaleString("id-ID")}` : "",
       "----------------------------------------",
       `TOTAL AKHIR    : Rp ${p.grandTotal.toLocaleString("id-ID")}`,
-      `Pembayaran     : Rp ${p.cashPaid.toLocaleString("id-ID")} (${p.paymentMethod})`,
-      `Kembalian      : Rp ${p.changeAmount.toLocaleString("id-ID")}`,
+      ...(p.paymentMethod === "TEMPO"
+        ? [
+            `STATUS METODE  : HUTANG / BON (TEMPO)`,
+            `Uang Muka (DP) : Rp ${(p.cashPaid || 0).toLocaleString("id-ID")}`,
+            `Sisa Piutang   : Rp ${Math.max(0, p.grandTotal - (p.cashPaid || 0)).toLocaleString("id-ID")}`,
+            p.tempoDueDate ? `Jatuh Tempo    : ${p.tempoDueDate}` : ""
+          ]
+        : [
+            `Pembayaran     : Rp ${p.cashPaid.toLocaleString("id-ID")} (${p.paymentMethod})`,
+            `Kembalian      : Rp ${p.changeAmount.toLocaleString("id-ID")}`
+          ]),
       "========================================",
       "    Terima kasih atas kunjungan Anda    ",
       "         Semoga Lekas Sembuh            ",
@@ -1769,7 +1821,7 @@
       <!-- Payment Method Selector -->
       <div class="space-y-1.5">
         <span class="block text-xs font-bold text-slate-700">Metode Pembayaran</span>
-        <div class="grid grid-cols-2 gap-2">
+        <div class="grid grid-cols-3 gap-2">
           <button
             type="button"
             onclick={() => {
@@ -1791,6 +1843,17 @@
           >
             <QrCode class="w-4 h-4" />
             QRIS Dinamis
+          </button>
+          <button
+            type="button"
+            onclick={() => {
+              selectedPaymentMethod = "TEMPO";
+              if (qrisTimerInterval) clearInterval(qrisTimerInterval);
+            }}
+            class="p-2.5 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1.5 {selectedPaymentMethod === 'TEMPO' ? 'border-brand-blue bg-brand-blue text-white shadow-2xs' : 'border-surface-border hover:bg-slate-50 text-slate-700'}"
+          >
+            <Clock class="w-4 h-4" />
+            Bon / Tempo
           </button>
         </div>
       </div>
@@ -1965,22 +2028,114 @@
             </div>
           {/if}
         </div>
+      {:else if selectedPaymentMethod === "TEMPO"}
+        <!-- TEMPO / BON PASIEN -->
+        <div class="bg-amber-50/70 p-3.5 rounded-2xl border border-amber-200 text-left space-y-3 animate-in fade-in duration-150">
+          <div class="flex items-center justify-between pb-2 border-b border-amber-200 text-xs">
+            <div class="flex items-center gap-1.5 font-bold text-amber-900">
+              <Clock class="w-4 h-4 text-amber-600" />
+              <span>Transaksi Bon / Tempo Pasien</span>
+            </div>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-200/70 text-amber-900 font-bold">
+              PIUTANG
+            </span>
+          </div>
+
+          <!-- Customer Validation Warning / Profile -->
+          {#if !selectedCustomer || selectedCustomer.id === "cust-general"}
+            <div class="bg-red-50 p-2.5 rounded-xl border border-red-200 text-xs text-red-700 flex items-start gap-2">
+              <AlertCircle class="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <div>
+                <span class="font-bold block">Pelanggan Terdaftar Belum Dipilih!</span>
+                <span class="text-[11px] leading-tight block mt-0.5">Transaksi bon tidak dapat ditujukan ke "Pasien Umum". Silakan tutup modal ini dan pilih nama pelanggan di panel kasir terlebih dahulu.</span>
+              </div>
+            </div>
+          {:else}
+            <div class="bg-white/90 p-2.5 rounded-xl border border-amber-200 text-xs space-y-1">
+              <div class="text-slate-500 text-[10.5px]">Debitur / Penanggung Jawab Bon:</div>
+              <div class="font-bold text-slate-900 text-sm flex items-center justify-between">
+                <span>{selectedCustomer.name}</span>
+                <span class="text-[11px] font-mono font-normal text-slate-600">#{selectedCustomer.code || "-"}</span>
+              </div>
+              <div class="text-[11px] text-slate-600 flex items-center gap-2">
+                <span>Telp: {selectedCustomer.phone || "-"}</span>
+                <span>&bull;</span>
+                <span class="truncate max-w-[200px]">Alamat: {selectedCustomer.address || "-"}</span>
+              </div>
+            </div>
+          {/if}
+
+          <!-- Down payment (DP) & Due Date -->
+          <div class="grid grid-cols-2 gap-2.5 pt-1">
+            <div class="space-y-1">
+              <label for="tempoDpInput" class="text-[11px] font-bold text-slate-700 block">
+                Uang Muka / DP Tunai (Rp)
+              </label>
+              <input
+                id="tempoDpInput"
+                type="number"
+                min="0"
+                max={totals.grandTotal}
+                bind:value={tempoDownPayment}
+                class="w-full p-2 text-sm font-bold rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-amber-500/20 focus:outline-none"
+                placeholder="0"
+              />
+              <span class="text-[10px] text-slate-500 block">Isi 0 jika tanpa uang muka</span>
+            </div>
+
+            <div class="space-y-1">
+              <label for="tempoDueDateInput" class="text-[11px] font-bold text-slate-700 block">
+                Jatuh Tempo Pembayaran
+              </label>
+              <input
+                id="tempoDueDateInput"
+                type="date"
+                bind:value={tempoDueDate}
+                class="w-full p-2 text-xs font-semibold rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-amber-500/20 focus:outline-none"
+              />
+              <span class="text-[10px] text-slate-500 block">Batas akhir pelunasan</span>
+            </div>
+          </div>
+
+          <!-- Debt Summary Calculation -->
+          <div class="bg-white p-3 rounded-xl border border-amber-200 space-y-1.5 text-xs">
+            <div class="flex justify-between items-center text-slate-600">
+              <span>Total Tagihan:</span>
+              <span class="font-mono font-bold text-slate-800">Rp {totals.grandTotal.toLocaleString("id-ID")}</span>
+            </div>
+            <div class="flex justify-between items-center text-emerald-600">
+              <span>Uang Muka Diterima (DP):</span>
+              <span class="font-mono font-bold">Rp {(Number(tempoDownPayment) || 0).toLocaleString("id-ID")}</span>
+            </div>
+            <div class="flex justify-between items-center text-sm font-black pt-1.5 border-t border-slate-100 text-brand-red-600">
+              <span>Sisa Piutang (Bon Pasien):</span>
+              <span class="font-mono">
+                Rp {Math.max(0, totals.grandTotal - (Number(tempoDownPayment) || 0)).toLocaleString("id-ID")}
+              </span>
+            </div>
+          </div>
+
+          <div class="text-[10.5px] text-slate-500 flex items-center gap-1.5 italic">
+            <CheckCircle2 class="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span>Sisa piutang otomatis dicatat di Buku Piutang Pasien (/pelanggan).</span>
+          </div>
+        </div>
       {/if}
 
       <!-- Submit Checkout Button -->
       <div class="flex items-center gap-2 pt-2">
         <button
           onclick={() => (showCheckoutModal = false)}
-          class="flex-1 py-2.5 px-4 rounded-xl border border-surface-border text-slate-600 font-semibold text-xs hover:bg-slate-50"
+          class="flex-1 py-2.5 px-4 rounded-xl border border-surface-border text-slate-600 font-semibold text-xs hover:bg-slate-50 cursor-pointer"
         >
           Kembali
         </button>
         <button
           onclick={handleCheckoutSubmit}
-          class="flex-1 py-2.5 px-4 rounded-xl font-bold text-xs shadow-card flex items-center justify-center gap-1.5 transition-all {selectedPaymentMethod === 'QRIS' && qrisStatus !== 'PAID' ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}"
+          class="flex-1 py-2.5 px-4 rounded-xl font-bold text-xs shadow-card flex items-center justify-center gap-1.5 transition-all cursor-pointer {selectedPaymentMethod === 'QRIS' && qrisStatus !== 'PAID' ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : selectedPaymentMethod === 'TEMPO' && (!selectedCustomer || selectedCustomer.id === 'cust-general') ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}"
         >
           <CheckCircle2 class="w-4 h-4" />
-          <span>{selectedPaymentMethod === 'QRIS' && qrisStatus === 'PAID' ? 'Cetak Nota' : 'Cetak Nota'}</span>
+          <span>{selectedPaymentMethod === 'TEMPO' ? 'Simpan Transaksi Bon' : 'Cetak Nota'}</span>
         </button>
       </div>
     </div>
@@ -2184,6 +2339,18 @@
                 <span>Penjualan Non-Tunai / QRIS:</span>
                 <span class="font-mono text-slate-500">Rp {shiftQrisSales.toLocaleString("id-ID")}</span>
               </div>
+              {#if shiftPettyCashOut > 0}
+                <div class="flex justify-between text-amber-800 font-semibold bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200">
+                  <span>Pengeluaran Kas Kecil Laci:</span>
+                  <span class="font-mono font-bold text-brand-red-600">- Rp {shiftPettyCashOut.toLocaleString("id-ID")}</span>
+                </div>
+              {/if}
+              {#if shiftPettyCashIn > 0}
+                <div class="flex justify-between text-emerald-800 font-semibold bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-200">
+                  <span>Pemasukan / Tambahan Kas Laci:</span>
+                  <span class="font-mono font-bold text-emerald-600">+ Rp {shiftPettyCashIn.toLocaleString("id-ID")}</span>
+                </div>
+              {/if}
               {#if shiftCashRefunds > 0}
                 <div class="flex justify-between text-rose-600 font-semibold bg-rose-50 px-2.5 py-1.5 rounded-lg border border-rose-200">
                   <span>Refund Tunai Retur Penjualan:</span>
@@ -2194,7 +2361,7 @@
                 <div class="flex justify-between items-center bg-blue-50/80 p-2.5 rounded-xl border border-blue-200">
                   <div>
                     <span class="block text-brand-blue font-bold text-xs">Total Uang Seharusnya di Laci:</span>
-                    <span class="text-[10px] text-slate-500 font-normal">(Modal Awal + Tunai - Refund Tunai)</span>
+                    <span class="text-[10px] text-slate-500 font-normal">(Modal + Tunai - Kas Kecil - Refund)</span>
                   </div>
                   <span class="font-mono text-base font-black text-brand-blue">Rp {shiftExpectedCash.toLocaleString("id-ID")}</span>
                 </div>

@@ -243,6 +243,20 @@ export const api = {
       return await apiFetch<any>(`/api/customers/${id}`, {
         method: "DELETE"
       });
+    },
+    async getReceivables() {
+      return await apiFetch<any>("/api/customers/receivables");
+    },
+    async payReceivable(payload: {
+      transactionId: string;
+      amountPaid: number;
+      paymentMethod?: string;
+      operator?: string;
+    }) {
+      return await apiFetch<any>("/api/customers/receivables/pay", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
     }
   },
   suppliers: {

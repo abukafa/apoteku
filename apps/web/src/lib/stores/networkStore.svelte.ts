@@ -324,7 +324,12 @@ export class NetworkState {
           tuslahAmount: Number(p.tuslahAmount || 0),
           embalaseAmount: Number(p.embalaseAmount || 0),
           grandTotal: Number(p.grandTotal || 0),
-          paidAmount: Number(p.cashPaid || p.grandTotal || 0),
+          paidAmount:
+            p.paymentMethod === "TEMPO"
+              ? Number(p.cashPaid !== undefined && p.cashPaid !== null ? p.cashPaid : 0)
+              : p.paymentMethod === "QRIS"
+              ? Number(p.grandTotal || 0)
+              : Number(p.cashPaid ?? p.grandTotal ?? 0),
           changeAmount: Number(p.changeAmount || 0),
           createdAt: u.createdAt,
           items: trxItems

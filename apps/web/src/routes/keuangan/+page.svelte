@@ -8,6 +8,7 @@
     Wallet,
     CreditCard,
     TrendingUp,
+    TrendingDown,
     CheckCircle2,
     Lock,
     Eye,
@@ -56,6 +57,9 @@
     cashDifference: number;
     totalNonCash: number;
     totalSales: number;
+    pettyCashOut?: number;
+    pettyCashIn?: number;
+    cashRefunds?: number;
     isOpen: boolean;
     notes: string;
   }
@@ -425,24 +429,24 @@
     />
     <MetricCard
       title="Total Kas Masuk (IN)"
-      value={formatRupiah(totalCashIn)}
+      value={formatRupiah(totalCashIn, false)}
       subtext="{branchCashEntries.filter((e) => e.type === 'IN').length} Mutasi penerimaan"
-      icon={ArrowUpRight}
+      icon={ArrowDownLeft}
       variant="success"
     />
     <MetricCard
       title="Kas Keluar (OUT)"
-      value={formatRupiah(totalCashOut)}
+      value={formatRupiah(totalCashOut, false)}
       subtext="{branchCashEntries.filter((e) => e.type === 'OUT').length} Beban & pembayaran"
-      icon={ArrowDownLeft}
+      icon={ArrowUpRight}
       variant="warning"
     />
     <MetricCard
       title="Kas Bersih (Net)"
-      value={formatRupiah(totalCashIn - totalCashOut)}
+      value={formatRupiah(totalCashIn - totalCashOut, false)}
       subtext="Selisih kas masuk vs keluar"
-      icon={TrendingUp}
-      variant="default"
+      icon={(totalCashIn - totalCashOut) > 0 ? TrendingUp : TrendingDown}
+      variant={(totalCashIn - totalCashOut) > 0 ? "brand" : "danger"}
     />
   </div>
 
@@ -525,7 +529,7 @@
       {#snippet header()}
         <th class="py-3 px-4">Waktu</th>
         <th class="py-3 px-4">Referensi</th>
-        <th class="py-3 px-4">Kategori & Akun</th>
+        <th class="py-3 px-4">Akun</th>
         <th class="py-3 px-4">Keterangan</th>
         <th class="py-3 px-4 text-right">Masuk</th>
         <th class="py-3 px-4 text-right">Keluar</th>
@@ -547,12 +551,16 @@
               {entry.time}
               <div class="font-sans text-[10px] text-slate-400">{entry.branchName}</div>
             </td>
-            <td class="py-3.5 px-4 font-mono font-bold text-brand-blue">{entry.refNumber}</td>
-            <td class="py-3.5 px-4">
-              <span class="px-2 py-0.5 rounded text-[10px] font-bold {entry.type === 'IN' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-brand-red-700'}">
+            <td class="py-3.5 px-4 font-mono font-bold text-brand-blue whitespace-nowrap">
+              {entry.refNumber}
+              <div class="text-[10px] font-mono text-slate-400 mt-0.5">
                 {entry.category}
-              </span>
-              <div class="text-[10px] font-mono text-slate-400 mt-0.5">{entry.account}</div>
+              </div>
+            </td>
+            <td class="py-3.5 px-4">
+              <div class="px-2 py-0.5 rounded text-center text-[8px] {entry.type === 'IN' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-brand-red-700'}">
+                {entry.account}
+              </div>
             </td>
             <td class="py-3.5 px-4 text-slate-700 text-xs">{entry.description}</td>
             <td class="py-3.5 px-4 text-right font-mono font-bold text-emerald-600">
@@ -731,6 +739,19 @@
               { value: "BANK_BCA", label: "Rekening Bank BCA" }
             ]}
           />
+          {#if expenseForm.account === "KAS_LACI"}
+            <span class="pl-2 text-[10px] text-amber-600 block mt-1 font-medium leading-tight">
+              Memotong/menambah saldo kas kecil.
+            </span>
+          {:else if expenseForm.account === "KAS_BRANKAS"}
+            <span class="pl-2 text-[10px] text-slate-500 block mt-1 font-medium leading-tight">
+              Kas brankas apotek/pusat.
+            </span>
+          {:else}
+            <span class="pl-2 text-[10px] text-blue-600 block mt-1 font-medium leading-tight">
+              Mutasi rekening bank.
+            </span>
+          {/if}
         </div>
 
         <div class="col-span-2">
@@ -740,12 +761,13 @@
             value={expenseForm.category}
             onchange={(val) => (expenseForm.category = val)}
             options={[
-              "Perlengkapan",
-              "Kebersihan",
-              "Tagihan",
-              "Biaya",
-              "Konsumsi",
-              "Modal Kasir"
+              "Perlengkapan Kasir (Kertas, Plastik, ATK)",
+              "Kebersihan & Operasional",
+              "Konsumsi Karyawan",
+              "Listrik, Air & Internet",
+              "Sewa & Pemeliharaan Gedung",
+              "Biaya Lain-Lain",
+              "Tambah Modal Laci Kasir"
             ]}
           />
         </div>
@@ -855,6 +877,24 @@
           <span class="text-slate-500">Non-Tunai (QRIS/EDC):</span>
           <strong class="font-mono text-emerald-700">{formatRupiah(selectedShiftForClose.totalNonCash)}</strong>
         </div>
+        {#if (selectedShiftForClose.pettyCashOut ?? 0) > 0}
+          <div class="flex justify-between text-amber-800 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
+            <span>Pengeluaran Kas Kecil Laci:</span>
+            <strong class="font-mono text-brand-red-600">- {formatRupiah(selectedShiftForClose.pettyCashOut || 0)}</strong>
+          </div>
+        {/if}
+        {#if (selectedShiftForClose.pettyCashIn ?? 0) > 0}
+          <div class="flex justify-between text-emerald-800 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">
+            <span>Pemasukan / Modal Kas Laci:</span>
+            <strong class="font-mono text-emerald-600">+ {formatRupiah(selectedShiftForClose.pettyCashIn || 0)}</strong>
+          </div>
+        {/if}
+        {#if (selectedShiftForClose.cashRefunds ?? 0) > 0}
+          <div class="flex justify-between text-rose-800 bg-rose-50 px-2 py-1 rounded-lg border border-rose-200">
+            <span>Refund Retur Penjualan:</span>
+            <strong class="font-mono text-rose-600">- {formatRupiah(selectedShiftForClose.cashRefunds || 0)}</strong>
+          </div>
+        {/if}
         <div class="pt-2 border-t border-slate-200 flex justify-between font-bold text-sm">
           <span>Tunai Sistem (Expected):</span>
           <span class="font-mono text-slate-900">{formatRupiah(selectedShiftForClose.expectedCash)}</span>

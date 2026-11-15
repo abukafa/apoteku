@@ -37,26 +37,28 @@
       const res = await api.customers.list();
       if (res?.success && Array.isArray(res.data)) {
         customers = res.data;
-      } else {
-        await mockApi.ensureDataLoaded();
-        const live = await mockApi.getCustomers();
-        if (live && live.length > 0) {
-          customers = live as any;
-        }
       }
-    } catch (_) {
-      try {
-        await mockApi.ensureDataLoaded();
-        const live = await mockApi.getCustomers();
-        if (live && live.length > 0) {
-          customers = live as any;
-        }
-      } catch (err) {}
+    } catch (e) {
+      console.error("[Pelanggan] Gagal memuat daftar pelanggan dari API:", e);
+    }
+  }
+
+  async function loadReceivables() {
+    try {
+      const res = await api.customers.getReceivables();
+      if (res?.success && Array.isArray(res.data)) {
+        debtCustomers = res.data;
+      } else {
+        debtCustomers = [];
+      }
+    } catch (e) {
+      console.warn("[Pelanggan] Gagal memuat buku piutang:", e);
+      debtCustomers = [];
     }
   }
 
   onMount(async () => {
-    await loadCustomers();
+    await Promise.all([loadCustomers(), loadReceivables()]);
   });
 
   // Customer Add / Edit State
@@ -199,14 +201,26 @@
     isReceiveDebtPaymentOpen = true;
   }
 
-  function handleSaveDebtPayment() {
+  async function handleSaveDebtPayment() {
     if (!selectedDebtCustomer || debtPaymentAmount <= 0) return;
-    selectedDebtCustomer.totalDebt = Math.max(0, selectedDebtCustomer.totalDebt - debtPaymentAmount);
-    if (selectedDebtCustomer.totalDebt === 0) {
-      selectedDebtCustomer.status = "PAID";
+    try {
+      const res = await api.customers.payReceivable({
+        transactionId: selectedDebtCustomer.transactionId || selectedDebtCustomer.id,
+        amountPaid: debtPaymentAmount,
+        paymentMethod: debtPaymentMethod,
+        operator: "Kasir"
+      });
+      if (res?.success) {
+        isReceiveDebtPaymentOpen = false;
+        selectedDebtCustomer = null;
+        await loadReceivables();
+        alertStore.toast(res.message || "Pembayaran piutang berhasil dicatat.", "success");
+      } else {
+        alertStore.danger("Gagal Mencatat Pembayaran", res?.error || "Gagal mencatat pembayaran piutang.");
+      }
+    } catch (err: any) {
+      alertStore.danger("Gagal Mencatat Pembayaran", err.message || "Terjadi kesalahan koneksi.");
     }
-    isReceiveDebtPaymentOpen = false;
-    selectedDebtCustomer = null;
   }
 
   // Filtered (searches across all customers before pagination)
@@ -402,7 +416,7 @@
                   #{c.code || "-"}
                 </span>
               </td>
-              <td class="py-3.5 px-4">
+              <td class="py-3.5 px-4 truncate max-w-[160px]">
                 <div class="font-bold text-slate-800">{c.name}</div>
                 {#if c.isActive === false}
                   <span class="inline-block px-1.5 py-0.2 rounded bg-red-100 text-red-700 text-[9px] font-bold">NONAKTIF</span>
@@ -471,41 +485,53 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each paginatedDebtCustomers as d}
-          <tr class="hover:bg-blue-50/40 transition-colors">
-            <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{d.invoiceRef}</td>
-            <td class="py-3.5 px-4 font-bold text-slate-800">{d.customerName}</td>
-            <td class="py-3.5 px-4 font-mono text-slate-600 text-xs">{d.phone}</td>
-            <td class="py-3.5 px-4 font-mono {d.status === 'DUE_SOON' ? 'text-brand-red-600 font-bold' : 'text-slate-600'}">
-              {d.dueDate}
-            </td>
-            <td class="py-3.5 px-4 text-right font-mono font-black text-brand-blue">
-              {formatRupiah(d.totalDebt)}
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              {#if d.status === "DUE_SOON"}
-                <Badge type="DANGER" label="JATUH TEMPO" />
-              {:else}
-                <Badge type="WARNING" label="BERJALAN" />
-              {/if}
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              {#if d.totalDebt > 0}
-                <button
-                  type="button"
-                  onclick={() => openDebtPayment(d)}
-                  class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
-                >
-                  Terima Bayar
-                </button>
-              {:else}
-                <span class="text-emerald-600 font-bold text-[11px] flex items-center justify-center gap-1">
-                  <CheckCircle2 class="w-3.5 h-3.5" /> Lunas
-                </span>
-              {/if}
+        {#if paginatedDebtCustomers.length === 0}
+          <tr>
+            <td colspan="7" class="py-12 text-center text-xs text-slate-400">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <CreditCard class="w-8 h-8 text-slate-300" />
+                <span class="font-medium text-slate-600">Tidak ada catatan piutang atau bon berjalan.</span>
+                <span class="text-[11px] text-slate-400">Semua transaksi penjualan kasir saat ini telah lunas tercatat.</span>
+              </div>
             </td>
           </tr>
-        {/each}
+        {:else}
+          {#each paginatedDebtCustomers as d}
+            <tr class="hover:bg-blue-50/40 transition-colors">
+              <td class="py-3.5 px-4 font-mono font-bold text-slate-900 max-w-[200px]">{d.invoiceRef}</td>
+              <td class="py-3.5 px-4 font-bold text-slate-800 max-w-[160px]">{d.customerName}</td>
+              <td class="py-3.5 px-4 font-mono text-slate-600 text-xs">{d.phone}</td>
+              <td class="py-3.5 px-4 font-mono {d.status === 'DUE_SOON' ? 'text-brand-red-600 font-bold' : 'text-slate-600'}">
+                {d.dueDate}
+              </td>
+              <td class="py-3.5 px-4 text-right font-mono font-black text-brand-blue">
+                {formatRupiah(d.totalDebt)}
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                {#if d.status === "DUE_SOON"}
+                  <Badge type="DANGER" label="JATUH TEMPO" />
+                {:else}
+                  <Badge type="WARNING" label="BERJALAN" />
+                {/if}
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                {#if d.totalDebt > 0}
+                  <button
+                    type="button"
+                    onclick={() => openDebtPayment(d)}
+                    class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
+                  >
+                    Terima Bayar
+                  </button>
+                {:else}
+                  <span class="text-emerald-600 font-bold text-[11px] flex items-center justify-center gap-1">
+                    <CheckCircle2 class="w-3.5 h-3.5" /> Lunas
+                  </span>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        {/if}
       {/snippet}
     </DataTable>
   {/if}
@@ -728,84 +754,4 @@
   </div>
 {/if}
 
-<!-- MODAL TERIMA PEMBAYARAN PIUTANG PASIEN -->
-{#if isReceiveDebtPaymentOpen && selectedDebtCustomer}
-  <div
-    use:portal
-    data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
-    onclick={(e) => {
-      if (e.target === e.currentTarget) isReceiveDebtPaymentOpen = false;
-    }}
-    role="presentation"
-  >
-    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-md w-full p-6 shadow-2xl border border-white/80 space-y-4 animate-in fade-in zoom-in-95 duration-150 my-auto">
-      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
-        <div class="flex items-center gap-2 text-slate-900 font-bold">
-          <CreditCard class="w-5 h-5 text-brand-blue" />
-          <span>Penerimaan Pembayaran Piutang Pasien</span>
-        </div>
-        <button
-          onclick={() => (isReceiveDebtPaymentOpen = false)}
-          class="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
-          aria-label="Tutup"
-        >
-          <X class="w-5 h-5" />
-        </button>
-      </div>
 
-      <div class="space-y-3 text-xs">
-        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
-          <div class="text-slate-500 text-[11px]">Nama Pasien / Debitur:</div>
-          <div class="font-bold text-slate-900 text-sm">{selectedDebtCustomer.customerName}</div>
-          <div class="font-mono text-slate-600 text-xs">No. Bon: {selectedDebtCustomer.invoiceRef}</div>
-          <div class="flex justify-between pt-2 border-t border-slate-200 font-bold">
-            <span class="text-slate-500">Saldo Piutang:</span>
-            <span class="text-brand-red-600 font-mono">{formatRupiah(selectedDebtCustomer.totalDebt)}</span>
-          </div>
-        </div>
-
-        <div>
-          <label for="pay-meth" class="font-bold text-slate-700 block mb-1">Metode Penerimaan</label>
-          <Select
-            id="pay-meth"
-            bind:value={debtPaymentMethod}
-            options={[
-              "KAS_TUNAI (Tunai Kasir)",
-              "TRANSFER_BCA (Rekening BCA Apotek)",
-              "QRIS_DINAMIS (Scan QRIS Kasir)"
-            ]}
-          />
-        </div>
-
-        <div>
-          <label for="debt-pay-amount" class="font-bold text-slate-700 block mb-1">Nominal Diterima (Rp)</label>
-          <input
-            id="debt-pay-amount"
-            type="number"
-            bind:value={debtPaymentAmount}
-            max={selectedDebtCustomer.totalDebt}
-            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 text-sm"
-          />
-        </div>
-      </div>
-
-      <div class="border-t border-slate-100 pt-3 flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onclick={() => (isReceiveDebtPaymentOpen = false)}
-          class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
-        >
-          Batal
-        </button>
-        <button
-          type="button"
-          onclick={handleSaveDebtPayment}
-          class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm"
-        >
-          Simpan & Cetak Kwitansi
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}

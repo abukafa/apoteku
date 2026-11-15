@@ -95,13 +95,31 @@ class ShiftService {
         )
       );
 
+    // Hitung mutasi kas laci kasir (KAS_LACI) selama shift ini (pengeluaran kas kecil & penambahan modal/piutang)
+    const [mutationsAgg] = await db
+      .select({
+        cashIn: sql<number>`COALESCE(SUM(CASE WHEN ${schema.cashMutations.type} = 'IN' THEN ${schema.cashMutations.amount} ELSE 0 END), 0)::numeric`,
+        cashOut: sql<number>`COALESCE(SUM(CASE WHEN ${schema.cashMutations.type} = 'OUT' THEN ${schema.cashMutations.amount} ELSE 0 END), 0)::numeric`
+      })
+      .from(schema.cashMutations)
+      .where(
+        and(
+          eq(schema.cashMutations.branchId, branchId),
+          eq(schema.cashMutations.account, "KAS_LACI"),
+          sql`${schema.cashMutations.category} != 'RETUR_PENJUALAN'`,
+          gte(schema.cashMutations.transactionDate, shift.startTime)
+        )
+      );
+
     const agg = salesAgg[0] || { cashSales: 0, nonCashSales: 0, totalSales: 0, trxCount: 0 };
     const initial = Number(shift.initialCash);
     const cashSales = Number(agg.cashSales);
     const nonCashSales = Number(agg.nonCashSales);
     const totalSales = Number(agg.totalSales);
     const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
-    const expectedCash = initial + cashSales - cashRefunds;
+    const drawerMutIn = Number(mutationsAgg?.cashIn || 0);
+    const drawerMutOut = Number(mutationsAgg?.cashOut || 0);
+    const expectedCash = initial + cashSales - cashRefunds + drawerMutIn - drawerMutOut;
 
     return {
       ...shift,
@@ -110,6 +128,10 @@ class ShiftService {
       currentNonCashSales: nonCashSales,
       currentTotalSales: totalSales,
       currentCashRefunds: cashRefunds,
+      drawerMutIn,
+      drawerMutOut,
+      pettyCashIn: drawerMutIn,
+      pettyCashOut: drawerMutOut,
       expectedCash,
       trxCount: agg.trxCount
     };
@@ -235,13 +257,31 @@ class ShiftService {
         )
       );
 
+    // Hitung mutasi kas laci kasir (KAS_LACI) selama shift ini
+    const [mutationsAgg] = await db
+      .select({
+        cashIn: sql<number>`COALESCE(SUM(CASE WHEN ${schema.cashMutations.type} = 'IN' THEN ${schema.cashMutations.amount} ELSE 0 END), 0)::numeric`,
+        cashOut: sql<number>`COALESCE(SUM(CASE WHEN ${schema.cashMutations.type} = 'OUT' THEN ${schema.cashMutations.amount} ELSE 0 END), 0)::numeric`
+      })
+      .from(schema.cashMutations)
+      .where(
+        and(
+          eq(schema.cashMutations.branchId, shift.branchId),
+          eq(schema.cashMutations.account, "KAS_LACI"),
+          sql`${schema.cashMutations.category} != 'RETUR_PENJUALAN'`,
+          gte(schema.cashMutations.transactionDate, shift.startTime)
+        )
+      );
+
     const agg = salesAgg[0] || { cashSales: 0, nonCashSales: 0, totalSales: 0 };
     const initial = Number(shift.initialCash);
     const cashSales = Number(agg.cashSales);
     const totalNonCash = Number(agg.nonCashSales);
     const totalSales = Number(agg.totalSales);
     const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
-    const expectedCash = initial + cashSales - cashRefunds;
+    const drawerMutIn = Number(mutationsAgg?.cashIn || 0);
+    const drawerMutOut = Number(mutationsAgg?.cashOut || 0);
+    const expectedCash = initial + cashSales - cashRefunds + drawerMutIn - drawerMutOut;
     const actualCash = Number(params.actualCash);
     const cashDifference = actualCash - expectedCash;
 
@@ -314,40 +354,66 @@ class ShiftService {
       .orderBy(desc(schema.cashierShifts.startTime))
       .limit(limit);
 
-    return shifts.map((s) => {
-      let shiftLabel = `Shift ${s.shiftNumber}`;
-      if (s.notes && s.notes.startsWith("[")) {
-        const match = s.notes.match(/^\[(.*?)\]/);
-        if (match && match[1]) shiftLabel = match[1];
-      } else if (s.shiftNumber === 1) {
-        shiftLabel = "Shift 1 - Pagi";
-      } else if (s.shiftNumber === 2) {
-        shiftLabel = "Shift 2 - Siang";
-      } else if (s.shiftNumber === 3) {
-        shiftLabel = "Shift 3 - Malam";
-      } else if (s.shiftNumber === 4) {
-        shiftLabel = "Shift 4 - Lembur";
-      }
+    return await Promise.all(
+      shifts.map(async (s) => {
+        let shiftLabel = `Shift ${s.shiftNumber}`;
+        if (s.notes && s.notes.startsWith("[")) {
+          const match = s.notes.match(/^\[(.*?)\]/);
+          if (match && match[1]) shiftLabel = match[1];
+        } else if (s.shiftNumber === 1) {
+          shiftLabel = "Shift 1 - Pagi";
+        } else if (s.shiftNumber === 2) {
+          shiftLabel = "Shift 2 - Siang";
+        } else if (s.shiftNumber === 3) {
+          shiftLabel = "Shift 3 - Malam";
+        } else if (s.shiftNumber === 4) {
+          shiftLabel = "Shift 4 - Lembur";
+        }
 
-      return {
-        id: s.id,
-        shiftCode: `SHF-${s.shiftNumber.toString().padStart(3, "0")}`,
-        branchId: s.branchId,
-        branchName: s.branchName || "Cabang",
-        cashierName: "Kasir Petugas",
-        shiftLabel,
-        startTime: s.startTime.toISOString(),
-        endTime: s.endTime ? s.endTime.toISOString() : "",
-        initialCash: Number(s.initialCash),
-        expectedCash: Number(s.expectedCash),
-        actualCash: Number(s.actualCash),
-        cashDifference: Number(s.cashDifference),
-        totalNonCash: Number(s.totalNonCash),
-        totalSales: Number(s.totalSales),
-        isOpen: s.isOpen,
-        notes: s.notes || ""
-      };
-    });
+        let expectedCash = Number(s.expectedCash);
+        let totalNonCash = Number(s.totalNonCash);
+        let totalSales = Number(s.totalSales);
+        let pettyCashOut = 0;
+        let pettyCashIn = 0;
+        let cashRefunds = 0;
+
+        if (s.isOpen) {
+          try {
+            const live = await this.getCurrentShift(s.branchId, s.tenantId);
+            if (live) {
+              expectedCash = live.expectedCash;
+              totalNonCash = live.currentNonCashSales;
+              totalSales = live.currentTotalSales;
+              pettyCashOut = live.drawerMutOut || 0;
+              pettyCashIn = live.drawerMutIn || 0;
+              cashRefunds = live.currentCashRefunds || 0;
+            }
+          } catch (_) {}
+        }
+
+        return {
+          id: s.id,
+          shiftCode: `SHF-${s.shiftNumber.toString().padStart(3, "0")}`,
+          branchId: s.branchId,
+          branchName: s.branchName || "Cabang",
+          cashierName: "Kasir Petugas",
+          shiftLabel,
+          startTime: s.startTime.toISOString(),
+          endTime: s.endTime ? s.endTime.toISOString() : "",
+          initialCash: Number(s.initialCash),
+          expectedCash,
+          actualCash: Number(s.actualCash),
+          cashDifference: Number(s.cashDifference),
+          totalNonCash,
+          totalSales,
+          pettyCashOut,
+          pettyCashIn,
+          cashRefunds,
+          isOpen: s.isOpen,
+          notes: s.notes || ""
+        };
+      })
+    );
   }
 }
 

@@ -214,6 +214,9 @@
       {#if receipt.isReprint}
         <div class="text-[9px] font-bold uppercase tracking-wider pt-0.5">** CETAK ULANG / COPY STRUK **</div>
       {/if}
+      {#if receipt.paymentMethod === "TEMPO"}
+        <div class="text-[9.5px] font-black uppercase tracking-wider pt-0.5">** TRANSAKSI BON / TEMPO **</div>
+      {/if}
     </div>
 
     <hr class="thermal-receipt-double-divider" />
@@ -320,14 +323,25 @@
         <span>TOTAL AKHIR</span>
         <span>{formatThermalRupiah(receipt.grandTotal)}</span>
       </div>
-      <div class="thermal-receipt-row">
-        <span>Pembayaran ({receipt.paymentMethod || "CASH"})</span>
-        <span>{formatThermalRupiah(receipt.paidAmount)}</span>
-      </div>
-      <div class="thermal-receipt-row">
-        <span>Kembalian</span>
-        <span>{formatThermalRupiah(receipt.changeAmount)}</span>
-      </div>
+      {#if receipt.paymentMethod === "TEMPO"}
+        <div class="thermal-receipt-row font-semibold">
+          <span>Uang Muka (DP)</span>
+          <span>{formatThermalRupiah(receipt.paidAmount)}</span>
+        </div>
+        <div class="thermal-receipt-row font-bold text-red-600">
+          <span>Sisa Piutang (Bon)</span>
+          <span>{formatThermalRupiah(Math.max(0, (receipt.grandTotal || 0) - (receipt.paidAmount || 0)))}</span>
+        </div>
+      {:else}
+        <div class="thermal-receipt-row">
+          <span>Pembayaran ({receipt.paymentMethod || "CASH"})</span>
+          <span>{formatThermalRupiah(receipt.paidAmount)}</span>
+        </div>
+        <div class="thermal-receipt-row">
+          <span>Kembalian</span>
+          <span>{formatThermalRupiah(receipt.changeAmount)}</span>
+        </div>
+      {/if}
     </div>
 
     <hr class="thermal-receipt-double-divider" />

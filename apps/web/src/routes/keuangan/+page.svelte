@@ -25,6 +25,7 @@
   import { api } from "$lib/services/api";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { alertStore } from "$lib/stores/alertStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { formatRupiah } from "@apoteku/core";
 
   interface CashLedgerEntry {
@@ -461,7 +462,7 @@
         {formatRupiah(qrisBalance)}
       </div>
       <div class="text-xs text-blue-100/80">
-        Rekening Tujuan: <strong>BCA 0541238910</strong> (Apotek Hafidz Farma) • Auto-sweep setiap 23:00 WIB
+        Rekening Tujuan: <strong>{tenantStore.current.bankName} {tenantStore.current.bankAccountNumber}</strong> ({tenantStore.current.bankAccountHolder}) &bull; Auto-sweep setiap 23:00 WIB
       </div>
     </div>
 
@@ -981,9 +982,9 @@
         <div class="space-y-3 text-xs">
           <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1.5">
             <div class="text-slate-500 text-[11px]">Rekening Bank Tujuan:</div>
-            <div class="font-bold text-slate-800 text-sm">Bank Central Asia (BCA)</div>
-            <div class="font-mono text-slate-700">No. Rek: <strong>0541238910</strong></div>
-            <div class="text-[11px] text-slate-500">A/N: Apotek Hafidz Farma</div>
+            <div class="font-bold text-slate-800 text-sm">{tenantStore.current.bankName}</div>
+            <div class="font-mono text-slate-700">No. Rek: <strong>{tenantStore.current.bankAccountNumber}</strong></div>
+            <div class="text-[11px] text-slate-500">A/N: {tenantStore.current.bankAccountHolder}</div>
           </div>
 
           <div>

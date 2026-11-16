@@ -30,7 +30,10 @@
     MapPin,
     Edit3,
     Percent,
-    Layers
+    Layers,
+    UploadCloud,
+    ImageIcon,
+    AlertCircle
   } from "lucide-svelte";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
@@ -38,6 +41,7 @@
   import Select from "$lib/components/ui/Select.svelte";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { alertStore } from "$lib/stores/alertStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
 
@@ -60,13 +64,168 @@
   // Master Tenant State (`tenants`)
   let tenantForm = $state({
     id: "",
-    code: "HAFIDZ-FARMA",
+    code: "AHF",
     name: "Apotek Hafidz Farma",
+    legalName: "PT Hafidz Farma Medika",
+    tagline: "Ikhtiar Sehat Keluarga",
+    logoUrl: "/img/brand.png",
+    pharmacistName: "apt. Ghina Nadhifah, S.Farm.",
+    responsiblePerson: "apt. Ghina Nadhifah, S.Farm.",
+    sipaNumber: "500.16.7.2/0289/SIPA/DPMPTSP/II/2026",
+    sipaExpiry: "2029-12-31",
+    siaNumber: "503/0124/SIA/DPMPTSP/2024",
+    nib: "1234000567891",
+    npwp: "01.234.567.8-123.000",
+    address: "Jl. Raya Cirebon - Kuningan No. 45, Cilimus",
+    city: "Kuningan",
+    province: "Jawa Barat",
+    postalCode: "45553",
+    phone: "(0232) 876543",
+    whatsapp: "0812-3456-7890",
+    email: "info@hafidzfarma.com",
+    website: "https://hafidzfarma.com",
+    bankName: "BCA",
+    bankAccountNumber: "0541238910",
+    bankAccountHolder: "Apotek Hafidz Farma",
+    signatureUrl: "/signatures/apt-ghina.png",
+    stampUrl: "/stamps/apotek-hafidz-farma.png",
+    receiptHeader: "APOTEK HAFIDZ FARMA\nJl. Raya Cirebon - Kuningan No. 45\nTelp: (0232) 876543 / WA: 0812-3456-7890",
+    receiptFooter: "Semoga Lekas Sembuh • Terima Kasih atas Kepercayaan Anda\nObat yang sudah dibeli tidak dapat ditukar/dikembalikan",
     taxPercent: 11,
     isActive: true
   });
   let isSavingTenant = $state(false);
   let tenantError = $state("");
+
+  // Media Upload State (Logo, TTD, Cap Stempel)
+  let isUploadingLogo = $state(false);
+  let logoUploadError = $state("");
+  let logoFileInput = $state<HTMLInputElement | null>(null);
+
+  let isUploadingSignature = $state(false);
+  let signatureUploadError = $state("");
+  let signatureFileInput = $state<HTMLInputElement | null>(null);
+
+  let isUploadingStamp = $state(false);
+  let stampUploadError = $state("");
+  let stampFileInput = $state<HTMLInputElement | null>(null);
+
+  async function handleLogoUpload(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      logoUploadError = "File harus berupa gambar (PNG, JPG, SVG, WebP).";
+      input.value = "";
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      logoUploadError = "Ukuran gambar logo maksimal 5 MB.";
+      input.value = "";
+      return;
+    }
+
+    isUploadingLogo = true;
+    logoUploadError = "";
+    try {
+      const res = await api.media.uploadFile(file, "branding");
+      if (res?.success && res.url) {
+        tenantForm.logoUrl = res.url;
+        await tenantStore.updateTenant({
+          ...tenantForm,
+          logoUrl: res.url
+        });
+        saveSuccessMessage = "Logo apotek berhasil diupload dan disimpan secara dinamis!";
+        setTimeout(() => (saveSuccessMessage = ""), 3500);
+      } else {
+        logoUploadError = res?.error || "Gagal mengupload logo.";
+      }
+    } catch (err: any) {
+      logoUploadError = err?.message || "Terjadi kesalahan saat mengupload logo.";
+    } finally {
+      isUploadingLogo = false;
+      input.value = "";
+    }
+  }
+
+  async function handleSignatureUpload(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      signatureUploadError = "File tanda tangan harus berupa gambar (PNG transparan disarankan).";
+      input.value = "";
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      signatureUploadError = "Ukuran file tanda tangan maksimal 5 MB.";
+      input.value = "";
+      return;
+    }
+
+    isUploadingSignature = true;
+    signatureUploadError = "";
+    try {
+      const res = await api.media.uploadFile(file, "signatures");
+      if (res?.success && res.url) {
+        tenantForm.signatureUrl = res.url;
+        await tenantStore.updateTenant({
+          ...tenantForm,
+          signatureUrl: res.url
+        });
+        saveSuccessMessage = "Tanda tangan digital APA berhasil diupload!";
+        setTimeout(() => (saveSuccessMessage = ""), 3500);
+      } else {
+        signatureUploadError = res?.error || "Gagal mengupload tanda tangan.";
+      }
+    } catch (err: any) {
+      signatureUploadError = err?.message || "Terjadi kesalahan upload tanda tangan.";
+    } finally {
+      isUploadingSignature = false;
+      input.value = "";
+    }
+  }
+
+  async function handleStampUpload(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      stampUploadError = "File cap/stempel harus berupa gambar (PNG transparan disarankan).";
+      input.value = "";
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      stampUploadError = "Ukuran file cap/stempel maksimal 5 MB.";
+      input.value = "";
+      return;
+    }
+
+    isUploadingStamp = true;
+    stampUploadError = "";
+    try {
+      const res = await api.media.uploadFile(file, "branding");
+      if (res?.success && res.url) {
+        tenantForm.stampUrl = res.url;
+        await tenantStore.updateTenant({
+          ...tenantForm,
+          stampUrl: res.url
+        });
+        saveSuccessMessage = "Cap / Stempel resmi apotek berhasil diupload!";
+        setTimeout(() => (saveSuccessMessage = ""), 3500);
+      } else {
+        stampUploadError = res?.error || "Gagal mengupload stempel.";
+      }
+    } catch (err: any) {
+      stampUploadError = err?.message || "Terjadi kesalahan upload stempel.";
+    } finally {
+      isUploadingStamp = false;
+      input.value = "";
+    }
+  }
 
   // Modal Tambah/Edit Cabang (`branches`)
   let isBranchModalOpen = $state(false);
@@ -305,18 +464,14 @@
 
   async function loadMasterFoundationData() {
     try {
-      const [tenantRes, branchRes, userRes] = await Promise.all([
-        api.tenant.get().catch(() => null),
+      const [tenantData, branchRes, userRes] = await Promise.all([
+        tenantStore.fetchTenant(true).catch(() => null),
         api.branches.list().catch(() => null),
         api.users.list().catch(() => null)
       ]);
-      if (tenantRes?.success && tenantRes.data) {
+      if (tenantStore.current) {
         tenantForm = {
-          id: tenantRes.data.id || "",
-          code: tenantRes.data.code || "HAFIDZ-FARMA",
-          name: tenantRes.data.name || "Apotek Hafidz Farma",
-          taxPercent: Number(tenantRes.data.taxPercent ?? 11),
-          isActive: tenantRes.data.isActive !== false
+          ...tenantStore.current
         };
       }
       if (branchRes?.success && Array.isArray(branchRes.data) && branchRes.data.length > 0) {
@@ -365,24 +520,12 @@
     }
     isSavingTenant = true;
     try {
-      const res = await api.tenant.update({
-        id: tenantForm.id || undefined,
-        code: tenantForm.code.trim().toUpperCase(),
-        name: tenantForm.name.trim(),
-        taxPercent: Number(tenantForm.taxPercent) || 0,
-        isActive: tenantForm.isActive
+      const res = await tenantStore.updateTenant({
+        ...tenantForm
       });
-      if (res?.success) {
-        if (res.data) {
-          tenantForm = {
-            id: res.data.id,
-            code: res.data.code,
-            name: res.data.name,
-            taxPercent: Number(res.data.taxPercent ?? 11),
-            isActive: res.data.isActive !== false
-          };
-        }
-        saveSuccessMessage = res.message || "Data organisasi (tenant) berhasil diperbarui!";
+      if (res?.success && res.data) {
+        tenantForm = { ...res.data };
+        saveSuccessMessage = "Data organisasi dan legalitas apotek berhasil diperbarui!";
         setTimeout(() => (saveSuccessMessage = ""), 3000);
       } else {
         tenantError = res?.error || "Gagal memperbarui data tenant.";
@@ -977,42 +1120,531 @@
           </div>
         {/if}
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-          <div class="sm:col-span-2">
-            <label for="tn-name" class="font-bold text-slate-700 block mb-1">Nama Resmi jaringan / Entitas Apotek</label>
-            <input
-              id="tn-name"
-              type="text"
-              bind:value={tenantForm.name}
-              placeholder="Contoh: Apotek Hafidz Farma"
-              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-900 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
-            />
+        <div class="space-y-6 text-xs">
+          <!-- 1. IDENTITAS & BRANDING -->
+          <div>
+            <h4 class="font-bold text-slate-900 mb-3 text-xs uppercase tracking-wider flex items-center gap-1.5 text-brand-blue-700">
+              <span>1. Identitas & Informasi Bisnis Apotek</span>
+            </h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+              <div class="sm:col-span-2">
+                <label for="tn-name" class="font-bold text-slate-700 block mb-1">Nama Merek / Entitas Apotek</label>
+                <input
+                  id="tn-name"
+                  type="text"
+                  bind:value={tenantForm.name}
+                  placeholder="Contoh: Apotek Hafidz Farma"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-900 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div class="sm:col-span-2">
+                <label for="tn-legal" class="font-bold text-slate-700 block mb-1">Nama Badan Usaha (PT / CV)</label>
+                <input
+                  id="tn-legal"
+                  type="text"
+                  bind:value={tenantForm.legalName}
+                  placeholder="PT Hafidz Farma Medika"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div class="sm:col-span-2">
+                <label for="tn-code" class="font-bold text-slate-700 block mb-1">Kode Tenant Unik</label>
+                <input
+                  id="tn-code"
+                  type="text"
+                  bind:value={tenantForm.code}
+                  placeholder="AHF"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-brand-blue-700 uppercase focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div class="sm:col-span-2">
+                <label for="tn-tagline" class="font-bold text-slate-700 block mb-1">Semboyan / Tagline Apotek</label>
+                <input
+                  id="tn-tagline"
+                  type="text"
+                  bind:value={tenantForm.tagline}
+                  placeholder="Ikhtiar Sehat Keluarga"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <!-- UPLOAD & PENGATURAN LOGO APOTEK -->
+              <div class="sm:col-span-4 bg-slate-50/90 p-4 rounded-2xl border border-slate-200">
+                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div class="flex items-center gap-4">
+                    <div class="relative group w-20 h-20 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-center justify-center p-2 overflow-hidden shrink-0">
+                      <img
+                        src={tenantForm.logoUrl || '/img/brand.png'}
+                        alt="Logo Apotek"
+                        class="w-full h-full object-contain"
+                        onerror={(e) => {
+                          (e.currentTarget as HTMLImageElement).src = '/img/brand.png';
+                        }}
+                      />
+                      {#if isUploadingLogo}
+                        <div class="absolute inset-0 bg-white/80 backdrop-blur-xs flex items-center justify-center">
+                          <div class="w-5 h-5 border-2 border-brand-blue border-t-transparent rounded-full animate-spin"></div>
+                        </div>
+                      {/if}
+                    </div>
+
+                    <div>
+                      <h5 class="text-xs font-bold text-slate-800">Logo Resmi Apotek</h5>
+                      <p class="text-[11px] text-slate-500 mt-0.5 max-w-md leading-relaxed">
+                        Logo ini otomatis ditampilkan di Sidebar navigasi, halaman Login, Dokumen Resmi, dan Struk Kasir. Gunakan gambar PNG transparan dengan rasio 1:1
+                      </p>
+                      {#if logoUploadError}
+                        <p class="text-[11px] font-semibold text-red-600 mt-1 flex items-center gap-1">
+                          <AlertCircle class="w-3.5 h-3.5 shrink-0" />
+                          <span>{logoUploadError}</span>
+                        </p>
+                      {/if}
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-2 w-full sm:w-auto">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      bind:this={logoFileInput}
+                      onchange={handleLogoUpload}
+                      class="hidden"
+                    />
+
+                    <button
+                      type="button"
+                      disabled={isUploadingLogo || !isSuperOrOwner}
+                      onclick={() => logoFileInput?.click()}
+                      class="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:border-brand-blue hover:text-brand-blue text-slate-700 text-xs font-bold transition-all shadow-xs inline-flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      {#if isUploadingLogo}
+                        <div class="w-3.5 h-3.5 border-2 border-brand-blue border-t-transparent rounded-full animate-spin"></div>
+                        <span>Mengupload...</span>
+                      {:else}
+                        <UploadCloud class="w-3.5 h-3.5 text-brand-blue" />
+                        <span>Upload / Ganti Logo</span>
+                      {/if}
+                    </button>
+
+                    {#if tenantForm.logoUrl && tenantForm.logoUrl !== '/img/brand.png'}
+                      <button
+                        type="button"
+                        disabled={isUploadingLogo || !isSuperOrOwner}
+                        onclick={() => {
+                          tenantForm.logoUrl = '/img/brand.png';
+                        }}
+                        title="Kembalikan ke logo default"
+                        class="px-2.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-red-600 text-xs font-semibold transition-all shadow-xs cursor-pointer"
+                      >
+                        Reset Default
+                      </button>
+                    {/if}
+                  </div>
+                </div>
+
+                <div class="mt-3 pt-3 border-t border-slate-200/60 flex items-center gap-2">
+                  <span class="text-[10px] font-mono font-medium text-slate-400 shrink-0">Path / URL Logo:</span>
+                  <input
+                    id="tn-logo"
+                    type="text"
+                    bind:value={tenantForm.logoUrl}
+                    placeholder="/img/brand.png atau https://..."
+                    class="w-full bg-transparent border-0 px-1 py-0.5 font-mono text-[11px] text-slate-600 focus:ring-0 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div>
-            <label for="tn-code" class="font-bold text-slate-700 block mb-1">Kode Tenant Unik</label>
-            <input
-              id="tn-code"
-              type="text"
-              bind:value={tenantForm.code}
-              placeholder="HAFIDZ-FARMA"
-              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-brand-blue-700 uppercase focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
-            />
+          <!-- 2. LEGALITAS FARMASI (APA & PERIZINAN) -->
+          <div class="pt-4 border-t border-slate-100">
+            <h4 class="font-bold text-slate-900 mb-3 text-xs uppercase tracking-wider flex items-center gap-1.5 text-brand-blue-700">
+              <span>2. Legalitas Farmasi & SIPA Kemenkes / BPOM</span>
+            </h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <label for="tn-apa" class="font-bold text-slate-700 block mb-1">Apoteker Pengelola Apotek (APA)</label>
+                <input
+                  id="tn-apa"
+                  type="text"
+                  bind:value={tenantForm.pharmacistName}
+                  placeholder="apt. Ghina Nadhifah, S.Farm."
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-pjt" class="font-bold text-slate-700 block mb-1">Penanggung Jawab Teknis</label>
+                <input
+                  id="tn-pjt"
+                  type="text"
+                  bind:value={tenantForm.responsiblePerson}
+                  placeholder="apt. Ghina Nadhifah, S.Farm."
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-sipa" class="font-bold text-slate-700 block mb-1">Nomor SIPA Resmi</label>
+                <input
+                  id="tn-sipa"
+                  type="text"
+                  bind:value={tenantForm.sipaNumber}
+                  placeholder="500.16.7.2/0289/SIPA/DPMPTSP/II/2026"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-sipa-exp" class="font-bold text-slate-700 block mb-1">Masa Berlaku SIPA</label>
+                <input
+                  id="tn-sipa-exp"
+                  type="text"
+                  bind:value={tenantForm.sipaExpiry}
+                  placeholder="YYYY-MM-DD (2029-12-31)"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-sia" class="font-bold text-slate-700 block mb-1">Surat Izin Apotek (SIA)</label>
+                <input
+                  id="tn-sia"
+                  type="text"
+                  bind:value={tenantForm.siaNumber}
+                  placeholder="503/0124/SIA/DPMPTSP/2024"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-nib" class="font-bold text-slate-700 block mb-1">Nomor Induk Berusaha (NIB)</label>
+                <input
+                  id="tn-nib"
+                  type="text"
+                  bind:value={tenantForm.nib}
+                  placeholder="1234000567891"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div class="sm:col-span-2">
+                <label for="tn-npwp" class="font-bold text-slate-700 block mb-1">NPWP Apotek</label>
+                <input
+                  id="tn-npwp"
+                  type="text"
+                  bind:value={tenantForm.npwp}
+                  placeholder="01.234.567.8-123.000"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+            </div>
           </div>
 
-          <div>
-            <label for="tn-tax" class="font-bold text-slate-700 block mb-1">Tarif PPN Default (%)</label>
-            <div class="relative">
-              <input
-                id="tn-tax"
-                type="number"
-                step="0.01"
-                min="0"
-                max="100"
-                bind:value={tenantForm.taxPercent}
-                class="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3 pr-8 py-2 font-mono font-bold text-slate-900 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
-              />
-              <Percent class="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5" />
+          <!-- 3. ALAMAT & KONTAK -->
+          <div class="pt-4 border-t border-slate-100">
+            <h4 class="font-bold text-slate-900 mb-3 text-xs uppercase tracking-wider flex items-center gap-1.5 text-brand-blue-700">
+              <span>3. Domisili Alamat & Kontak Resmi</span>
+            </h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+              <div class="sm:col-span-2">
+                <label for="tn-addr" class="font-bold text-slate-700 block mb-1">Alamat Lengkap Apotek</label>
+                <input
+                  id="tn-addr"
+                  type="text"
+                  bind:value={tenantForm.address}
+                  placeholder="Jl. Raya Cirebon - Kuningan No. 45"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-city" class="font-bold text-slate-700 block mb-1">Kota / Kabupaten</label>
+                <input
+                  id="tn-city"
+                  type="text"
+                  bind:value={tenantForm.city}
+                  placeholder="Kuningan"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-post" class="font-bold text-slate-700 block mb-1">Kode Pos</label>
+                <input
+                  id="tn-post"
+                  type="text"
+                  bind:value={tenantForm.postalCode}
+                  placeholder="45553"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-phone" class="font-bold text-slate-700 block mb-1">Nomor Telepon Kantor</label>
+                <input
+                  id="tn-phone"
+                  type="text"
+                  bind:value={tenantForm.phone}
+                  placeholder="(0232) 876543"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-wa" class="font-bold text-slate-700 block mb-1">Nomor WhatsApp CS</label>
+                <input
+                  id="tn-wa"
+                  type="text"
+                  bind:value={tenantForm.whatsapp}
+                  placeholder="0812-3456-7890"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-email" class="font-bold text-slate-700 block mb-1">Email Resmi</label>
+                <input
+                  id="tn-email"
+                  type="email"
+                  bind:value={tenantForm.email}
+                  placeholder="info@hafidzfarma.com"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-web" class="font-bold text-slate-700 block mb-1">Website</label>
+                <input
+                  id="tn-web"
+                  type="text"
+                  bind:value={tenantForm.website}
+                  placeholder="https://hafidzfarma.com"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. REKENING BANK & KEUANGAN -->
+          <div class="pt-4 border-t border-slate-100">
+            <h4 class="font-bold text-slate-900 mb-3 text-xs uppercase tracking-wider flex items-center gap-1.5 text-brand-blue-700">
+              <span>4. Rekening Bank Pembayaran & Pajak</span>
+            </h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <label for="tn-bank" class="font-bold text-slate-700 block mb-1">Nama Bank Utama</label>
+                <input
+                  id="tn-bank"
+                  type="text"
+                  bind:value={tenantForm.bankName}
+                  placeholder="BCA"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-acc-no" class="font-bold text-slate-700 block mb-1">Nomor Rekening Bank</label>
+                <input
+                  id="tn-acc-no"
+                  type="text"
+                  bind:value={tenantForm.bankAccountNumber}
+                  placeholder="0541238910"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-acc-name" class="font-bold text-slate-700 block mb-1">Atas Nama Rekening</label>
+                <input
+                  id="tn-acc-name"
+                  type="text"
+                  bind:value={tenantForm.bankAccountHolder}
+                  placeholder="Apotek Hafidz Farma"
+                  class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                />
+              </div>
+
+              <div>
+                <label for="tn-tax" class="font-bold text-slate-700 block mb-1">Tarif PPN Default (%)</label>
+                <div class="relative">
+                  <input
+                    id="tn-tax"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    bind:value={tenantForm.taxPercent}
+                    class="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3 pr-8 py-2 font-mono font-bold text-slate-900 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                  />
+                  <Percent class="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. CETAK DOKUMEN & TTD DIGITAL -->
+          <div class="pt-4 border-t border-slate-100">
+            <h4 class="font-bold text-slate-900 mb-3 text-xs uppercase tracking-wider flex items-center gap-1.5 text-brand-blue-700">
+              <span>5. Legalitas Percetakan & Tanda Tangan Digital Dokumen</span>
+            </h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+              <!-- TTD DIGITAL APOTEKER -->
+              <div class="sm:col-span-2 bg-slate-50/90 p-3.5 rounded-2xl border border-slate-200 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-start justify-between gap-2 mb-2">
+                    <div>
+                      <label for="tn-sig" class="font-bold text-slate-800 block text-xs">TTD Digital Apoteker (APA)</label>
+                      <p class="text-[10px] text-slate-500">Muncul di SP, SIPNAP, dan Laporan Resmi</p>
+                    </div>
+                    <div class="w-14 h-10 rounded-lg bg-white border border-slate-200 flex items-center justify-center p-1 shrink-0 overflow-hidden shadow-2xs">
+                      {#if tenantForm.signatureUrl}
+                        <img
+                          src={tenantForm.signatureUrl}
+                          alt="TTD APA"
+                          class="max-w-full max-h-full object-contain"
+                          onerror={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                      {:else}
+                        <span class="text-[9px] text-slate-300">Belum ada</span>
+                      {/if}
+                    </div>
+                  </div>
+
+                  {#if signatureUploadError}
+                    <p class="text-[10px] font-semibold text-red-600 mb-2 flex items-center gap-1">
+                      <AlertCircle class="w-3 h-3 shrink-0" />
+                      <span>{signatureUploadError}</span>
+                    </p>
+                  {/if}
+                </div>
+
+                <div class="space-y-2 pt-2 border-t border-slate-200/60">
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      bind:this={signatureFileInput}
+                      onchange={handleSignatureUpload}
+                      class="hidden"
+                    />
+                    <button
+                      type="button"
+                      disabled={isUploadingSignature || !isSuperOrOwner}
+                      onclick={() => signatureFileInput?.click()}
+                      class="w-full justify-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:border-brand-blue hover:text-brand-blue text-slate-700 text-[11px] font-bold transition-all shadow-2xs inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {#if isUploadingSignature}
+                        <div class="w-3 h-3 border-2 border-brand-blue border-t-transparent rounded-full animate-spin"></div>
+                        <span>Mengupload TTD...</span>
+                      {:else}
+                        <UploadCloud class="w-3.5 h-3.5 text-brand-blue" />
+                        <span>Upload File TTD</span>
+                      {/if}
+                    </button>
+                  </div>
+                  <input
+                    id="tn-sig"
+                    type="text"
+                    bind:value={tenantForm.signatureUrl}
+                    placeholder="/signatures/apt-ghina.png"
+                    class="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 font-mono text-[10px] text-slate-700 focus:ring-1 focus:ring-brand-blue"
+                  />
+                </div>
+              </div>
+
+              <!-- CAP / STEMPEL APOTEK -->
+              <div class="sm:col-span-2 bg-slate-50/90 p-3.5 rounded-2xl border border-slate-200 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-start justify-between gap-2 mb-2">
+                    <div>
+                      <label for="tn-stamp" class="font-bold text-slate-800 block text-xs">Cap / Stempel Resmi Apotek</label>
+                      <p class="text-[10px] text-slate-500">Muncul di SP PBF dan Berita Acara Resmi</p>
+                    </div>
+                    <div class="w-14 h-10 rounded-lg bg-white border border-slate-200 flex items-center justify-center p-1 shrink-0 overflow-hidden shadow-2xs">
+                      {#if tenantForm.stampUrl}
+                        <img
+                          src={tenantForm.stampUrl}
+                          alt="Stempel Apotek"
+                          class="max-w-full max-h-full object-contain"
+                          onerror={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                      {:else}
+                        <span class="text-[9px] text-slate-300">Belum ada</span>
+                      {/if}
+                    </div>
+                  </div>
+
+                  {#if stampUploadError}
+                    <p class="text-[10px] font-semibold text-red-600 mb-2 flex items-center gap-1">
+                      <AlertCircle class="w-3 h-3 shrink-0" />
+                      <span>{stampUploadError}</span>
+                    </p>
+                  {/if}
+                </div>
+
+                <div class="space-y-2 pt-2 border-t border-slate-200/60">
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      bind:this={stampFileInput}
+                      onchange={handleStampUpload}
+                      class="hidden"
+                    />
+                    <button
+                      type="button"
+                      disabled={isUploadingStamp || !isSuperOrOwner}
+                      onclick={() => stampFileInput?.click()}
+                      class="w-full justify-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:border-brand-blue hover:text-brand-blue text-slate-700 text-[11px] font-bold transition-all shadow-2xs inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {#if isUploadingStamp}
+                        <div class="w-3 h-3 border-2 border-brand-blue border-t-transparent rounded-full animate-spin"></div>
+                        <span>Mengupload Cap...</span>
+                      {:else}
+                        <UploadCloud class="w-3.5 h-3.5 text-brand-blue" />
+                        <span>Upload File Stempel</span>
+                      {/if}
+                    </button>
+                  </div>
+                  <input
+                    id="tn-stamp"
+                    type="text"
+                    bind:value={tenantForm.stampUrl}
+                    placeholder="/stamps/apotek-hafidz-farma.png"
+                    class="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 font-mono text-[10px] text-slate-700 focus:ring-1 focus:ring-brand-blue"
+                  />
+                </div>
+              </div>
+
+              <div class="sm:col-span-2">
+                <label for="tn-hdr" class="font-bold text-slate-700 block mb-1">Catatan Header Struk Kasir</label>
+                <textarea
+                  id="tn-hdr"
+                  rows="2"
+                  bind:value={tenantForm.receiptHeader}
+                  placeholder="APOTEK HAFIDZ FARMA&#10;Jl. Raya Cirebon - Kuningan No. 45"
+                  class="w-full h-24 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-mono text-[11px] focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                ></textarea>
+              </div>
+
+              <div class="sm:col-span-2">
+                <label for="tn-ftr" class="font-bold text-slate-700 block mb-1">Catatan Footer Struk Kasir</label>
+                <textarea
+                  id="tn-ftr"
+                  rows="2"
+                  bind:value={tenantForm.receiptFooter}
+                  placeholder="Semoga Lekas Sembuh • Terima Kasih"
+                  class="w-full h-24 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-mono text-[11px] focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue"
+                ></textarea>
+              </div>
             </div>
           </div>
         </div>

@@ -16,6 +16,41 @@ export const tenants = pgTable("tenants", {
   id: uuid("id").defaultRandom().primaryKey(),
   code: varchar("code", { length: 50 }).notNull().unique(),
   name: varchar("name", { length: 255 }).notNull(),
+  legalName: varchar("legal_name", { length: 255 }),
+  tagline: varchar("tagline", { length: 255 }),
+  logoUrl: text("logo_url"),
+
+  // Data Apoteker & Legal Perizinan
+  pharmacistName: varchar("pharmacist_name", { length: 255 }),
+  responsiblePerson: varchar("responsible_person", { length: 255 }),
+  sipaNumber: varchar("sipa_number", { length: 100 }),
+  sipaExpiry: varchar("sipa_expiry", { length: 50 }),
+  siaNumber: varchar("sia_number", { length: 100 }),
+  nib: varchar("nib", { length: 100 }),
+  npwp: varchar("npwp", { length: 50 }),
+
+  // Kontak & Lokasi Domisili
+  address: text("address"),
+  city: varchar("city", { length: 100 }),
+  province: varchar("province", { length: 100 }),
+  postalCode: varchar("postal_code", { length: 20 }),
+  phone: varchar("phone", { length: 50 }),
+  whatsapp: varchar("whatsapp", { length: 50 }),
+  email: varchar("email", { length: 100 }),
+  website: varchar("website", { length: 100 }),
+
+  // Rekening Bank
+  bankName: varchar("bank_name", { length: 100 }),
+  bankAccountNumber: varchar("bank_account_number", { length: 100 }),
+  bankAccountHolder: varchar("bank_account_holder", { length: 255 }),
+  bankAccounts: text("bank_accounts"),
+
+  // Percetakan Dokumen & Legalitas Cetak
+  signatureUrl: text("signature_url"),
+  stampUrl: text("stamp_url"),
+  receiptHeader: text("receipt_header"),
+  receiptFooter: text("receipt_footer"),
+
   taxPercent: numeric("tax_percent", { precision: 5, scale: 2 }).default("11.00").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()

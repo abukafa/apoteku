@@ -104,7 +104,10 @@ export const api = {
     }
   },
   media: {
-    async uploadFile(file: File, category: "prescriptions" | "invoices" | "general" = "general") {
+    async uploadFile(
+      file: File,
+      category: "prescriptions" | "invoices" | "general" | "branding" | "signatures" = "general"
+    ) {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("category", category);
@@ -395,8 +398,35 @@ export const api = {
       id?: string;
       code?: string;
       name?: string;
+      legalName?: string;
+      tagline?: string;
+      logoUrl?: string;
+      pharmacistName?: string;
+      responsiblePerson?: string;
+      sipaNumber?: string;
+      sipaExpiry?: string;
+      siaNumber?: string;
+      nib?: string;
+      npwp?: string;
+      address?: string;
+      city?: string;
+      province?: string;
+      postalCode?: string;
+      phone?: string;
+      whatsapp?: string;
+      email?: string;
+      website?: string;
+      bankName?: string;
+      bankAccountNumber?: string;
+      bankAccountHolder?: string;
+      bankAccounts?: any;
+      signatureUrl?: string;
+      stampUrl?: string;
+      receiptHeader?: string;
+      receiptFooter?: string;
       taxPercent?: number;
       isActive?: boolean;
+      [key: string]: any;
     }) {
       return await apiFetch<any>("/api/tenant", {
         method: "PUT",

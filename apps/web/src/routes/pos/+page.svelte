@@ -14,6 +14,7 @@
   import { calculateCartTotals, selectFefoBatches, EscPosBuilder, calculateCashierShiftReconciliation } from "@apoteku/core";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { alertStore } from "$lib/stores/alertStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { localDb } from "@apoteku/db/client-indexeddb";
   import { networkStore } from "$lib/stores/networkStore.svelte";
   import { api } from "$lib/services/api";
@@ -1162,11 +1163,11 @@
     const p = res.payload;
     const lines = [
       "========================================",
-      "          APOTEK HAFIDZ FARMA          ",
-      `      ${selectedBranch?.name || "KOTA TASIKMALAYA"}      `,
-      `Telp: ${selectedBranch?.phone || "-"}`,
-      `SIA: ${selectedBranch?.sia || "-"}`,
-      `Apoteker: ${selectedBranch?.pharmacistName || "-"}`,
+      `          ${(tenantStore.current?.name || "APOTEK HAFIDZ FARMA").toUpperCase()}          `,
+      `      ${selectedBranch?.name || tenantStore.current?.city || "KOTA TASIKMALAYA"}      `,
+      `Telp: ${selectedBranch?.phone || tenantStore.current?.phone || "-"}`,
+      `SIA: ${selectedBranch?.sia || tenantStore.current?.siaNumber || "-"}`,
+      `Apoteker: ${selectedBranch?.pharmacistName || tenantStore.current?.pharmacistName || "-"}`,
       "========================================",
       `No. Faktur: ${res.invoiceNumber}`,
       `Waktu     : ${new Date(res.transactionTime).toLocaleString("id-ID")}`,
@@ -1200,7 +1201,7 @@
       "========================================",
       "    Terima kasih atas kunjungan Anda    ",
       "         Semoga Lekas Sembuh            ",
-      "     -- Ikhtiar Sehat Keluarga --       ",
+      `     -- ${tenantStore.current?.tagline || "Ikhtiar Sehat Keluarga"} --       `,
       "========================================"
     ].filter(Boolean);
 

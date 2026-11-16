@@ -30,6 +30,7 @@
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { formatRupiah, formatPurchaseOrderNumber } from "@apoteku/core";
 
   interface InvoiceItemRow {
@@ -423,8 +424,8 @@
     branchId: authStore.user?.branchId || "1",
     orderType: "REGULER",
     supplierName: "PT. Kimia Farma Trading & Distribution",
-    pharmacistName: "apt. Hafidz Nurul, S.Farm.",
-    sipa: "SIPA-503/044/Dinkes/2024",
+    pharmacistName: tenantStore.current.pharmacistName,
+    sipa: tenantStore.current.sipaNumber,
     items: [] as SpItemRow[]
   });
 
@@ -2950,9 +2951,9 @@
     <div class="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs print-sheet-card">
       <!-- KOP APOTEK RESMI -->
       <div class="border-b-2 border-slate-900 pb-3 text-center space-y-0.5">
-        <div class="font-black text-sm uppercase tracking-wide text-slate-900">APOTEK HAFIDZ FARMA</div>
-        <div class="text-[11px] text-slate-600">SIA: 503/0014/SIA/DPMPTSP/2024 • Jl. Letjen Mashudi No. 45, Tasikmalaya</div>
-        <div class="text-[10px] text-slate-500 font-mono">Telp: (0265) 345678 • Email: apotek.hafidzfarma@gmail.com</div>
+        <div class="font-black text-sm uppercase tracking-wide text-slate-900">{tenantStore.current.name}</div>
+        <div class="text-[11px] text-slate-600">SIA: {tenantStore.current.siaNumber} &bull; {tenantStore.current.address}, {tenantStore.current.city}</div>
+        <div class="text-[10px] text-slate-500 font-mono">Telp: {tenantStore.current.phone} &bull; Email: {tenantStore.current.email}</div>
       </div>
 
       <!-- JUDUL SP SESUAI PERATURAN BPOM -->
@@ -3033,13 +3034,21 @@
           <div>• Lembar 3: Arsip Apotek (Dokumen Kendali)</div>
         </div>
         <div class="text-right space-y-1">
-          <div>Tasikmalaya, {selectedSpForPrint.orderDate}</div>
+          <div>{tenantStore.current.city}, {selectedSpForPrint.orderDate}</div>
           <div class="text-slate-500 text-[10px]">Apoteker Pengelola Apotek (APA),</div>
-          <div class="h-12 flex items-end justify-end">
-            <span class="text-[9px] text-slate-400 italic">(Tanda Tangan & Stempel)</span>
+          <div class="h-14 flex items-center justify-end relative">
+            {#if tenantStore.current.signatureUrl}
+              <img src={tenantStore.current.signatureUrl} alt="TTD APA" class="h-12 w-auto object-contain" />
+            {/if}
+            {#if tenantStore.current.stampUrl}
+              <img src={tenantStore.current.stampUrl} alt="Stempel Apotek" class="h-12 w-auto object-contain -ml-6 opacity-85" />
+            {/if}
+            {#if !tenantStore.current.signatureUrl && !tenantStore.current.stampUrl}
+              <span class="text-[9px] text-slate-400 italic">(Tanda Tangan & Stempel)</span>
+            {/if}
           </div>
-          <div class="font-bold text-slate-900 underline">{selectedSpForPrint.pharmacistName}</div>
-          <div class="text-[10px] text-slate-500 font-mono">SIPA: {selectedSpForPrint.sipa}</div>
+          <div class="font-bold text-slate-900 underline">{selectedSpForPrint.pharmacistName || tenantStore.current.pharmacistName}</div>
+          <div class="text-[10px] text-slate-500 font-mono">SIPA: {selectedSpForPrint.sipa || tenantStore.current.sipaNumber}</div>
         </div>
       </div>
 

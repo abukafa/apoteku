@@ -1,14 +1,20 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import "../app.css";
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import Navbar from "$lib/components/Navbar.svelte";
   import AlertHost from "$lib/components/ui/AlertHost.svelte";
 
   let { children } = $props();
   let isMobileOpen = $state(false);
+
+  onMount(() => {
+    tenantStore.fetchTenant();
+  });
 
   // Standalone routes without sidebar and top navbar: /login, /register, unauthenticated state, and /pos (if not GUEST)
   let isStandaloneRoute = $derived(

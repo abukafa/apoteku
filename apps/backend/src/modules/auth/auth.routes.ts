@@ -1054,6 +1054,32 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             id: tenantRow.id,
             code: tenantRow.code,
             name: tenantRow.name,
+            legalName: tenantRow.legalName || "PT Hafidz Farma Medika",
+            tagline: tenantRow.tagline || "Ikhtiar Sehat Keluarga",
+            logoUrl: tenantRow.logoUrl || "/img/brand.png",
+            pharmacistName: tenantRow.pharmacistName || "apt. Ghina Nadhifah, S.Farm.",
+            responsiblePerson: tenantRow.responsiblePerson || tenantRow.pharmacistName || "apt. Ghina Nadhifah, S.Farm.",
+            sipaNumber: tenantRow.sipaNumber || "500.16.7.2/0289/SIPA/DPMPTSP/II/2026",
+            sipaExpiry: tenantRow.sipaExpiry || "2029-12-31",
+            siaNumber: tenantRow.siaNumber || "503/0124/SIA/DPMPTSP/2024",
+            nib: tenantRow.nib || "1234000567891",
+            npwp: tenantRow.npwp || "01.234.567.8-123.000",
+            address: tenantRow.address || "Jl. Raya Cirebon - Kuningan No. 45, Cilimus",
+            city: tenantRow.city || "Kuningan",
+            province: tenantRow.province || "Jawa Barat",
+            postalCode: tenantRow.postalCode || "45553",
+            phone: tenantRow.phone || "(0232) 876543",
+            whatsapp: tenantRow.whatsapp || "0812-3456-7890",
+            email: tenantRow.email || "info@hafidzfarma.com",
+            website: tenantRow.website || "https://hafidzfarma.com",
+            bankName: tenantRow.bankName || "BCA",
+            bankAccountNumber: tenantRow.bankAccountNumber || "0541238910",
+            bankAccountHolder: tenantRow.bankAccountHolder || tenantRow.name,
+            bankAccounts: tenantRow.bankAccounts || "[]",
+            signatureUrl: tenantRow.signatureUrl || "/signatures/apt-ghina.png",
+            stampUrl: tenantRow.stampUrl || "/stamps/apotek-hafidz-farma.png",
+            receiptHeader: tenantRow.receiptHeader || "APOTEK HAFIDZ FARMA\nJl. Raya Cirebon - Kuningan No. 45\nTelp: (0232) 876543 / WA: 0812-3456-7890",
+            receiptFooter: tenantRow.receiptFooter || "Semoga Lekas Sembuh • Terima Kasih atas Kepercayaan Anda\nObat yang sudah dibeli tidak dapat ditukar/dikembalikan",
             taxPercent: Number(tenantRow.taxPercent || 11),
             isActive: tenantRow.isActive,
             createdAt: tenantRow.createdAt
@@ -1088,6 +1114,32 @@ export const authRoutes = new Elysia({ prefix: "/api" })
         const updatePayload: Record<string, any> = {};
         if (body.code !== undefined) updatePayload.code = body.code.trim().toUpperCase();
         if (body.name !== undefined) updatePayload.name = body.name.trim();
+        if (body.legalName !== undefined) updatePayload.legalName = body.legalName?.trim() || null;
+        if (body.tagline !== undefined) updatePayload.tagline = body.tagline?.trim() || null;
+        if (body.logoUrl !== undefined) updatePayload.logoUrl = body.logoUrl?.trim() || null;
+        if (body.pharmacistName !== undefined) updatePayload.pharmacistName = body.pharmacistName?.trim() || null;
+        if (body.responsiblePerson !== undefined) updatePayload.responsiblePerson = body.responsiblePerson?.trim() || null;
+        if (body.sipaNumber !== undefined) updatePayload.sipaNumber = body.sipaNumber?.trim() || null;
+        if (body.sipaExpiry !== undefined) updatePayload.sipaExpiry = body.sipaExpiry?.trim() || null;
+        if (body.siaNumber !== undefined) updatePayload.siaNumber = body.siaNumber?.trim() || null;
+        if (body.nib !== undefined) updatePayload.nib = body.nib?.trim() || null;
+        if (body.npwp !== undefined) updatePayload.npwp = body.npwp?.trim() || null;
+        if (body.address !== undefined) updatePayload.address = body.address?.trim() || null;
+        if (body.city !== undefined) updatePayload.city = body.city?.trim() || null;
+        if (body.province !== undefined) updatePayload.province = body.province?.trim() || null;
+        if (body.postalCode !== undefined) updatePayload.postalCode = body.postalCode?.trim() || null;
+        if (body.phone !== undefined) updatePayload.phone = body.phone?.trim() || null;
+        if (body.whatsapp !== undefined) updatePayload.whatsapp = body.whatsapp?.trim() || null;
+        if (body.email !== undefined) updatePayload.email = body.email?.trim() || null;
+        if (body.website !== undefined) updatePayload.website = body.website?.trim() || null;
+        if (body.bankName !== undefined) updatePayload.bankName = body.bankName?.trim() || null;
+        if (body.bankAccountNumber !== undefined) updatePayload.bankAccountNumber = body.bankAccountNumber?.trim() || null;
+        if (body.bankAccountHolder !== undefined) updatePayload.bankAccountHolder = body.bankAccountHolder?.trim() || null;
+        if (body.bankAccounts !== undefined) updatePayload.bankAccounts = typeof body.bankAccounts === "string" ? body.bankAccounts : JSON.stringify(body.bankAccounts);
+        if (body.signatureUrl !== undefined) updatePayload.signatureUrl = body.signatureUrl?.trim() || null;
+        if (body.stampUrl !== undefined) updatePayload.stampUrl = body.stampUrl?.trim() || null;
+        if (body.receiptHeader !== undefined) updatePayload.receiptHeader = body.receiptHeader || null;
+        if (body.receiptFooter !== undefined) updatePayload.receiptFooter = body.receiptFooter || null;
         if (body.taxPercent !== undefined) updatePayload.taxPercent = String(Number(body.taxPercent));
         if (body.isActive !== undefined) updatePayload.isActive = Boolean(body.isActive);
 
@@ -1109,6 +1161,32 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             id: updated.id,
             code: updated.code,
             name: updated.name,
+            legalName: updated.legalName || "PT Hafidz Farma Medika",
+            tagline: updated.tagline || "Ikhtiar Sehat Keluarga",
+            logoUrl: updated.logoUrl || "/img/brand.png",
+            pharmacistName: updated.pharmacistName || "apt. Ghina Nadhifah, S.Farm.",
+            responsiblePerson: updated.responsiblePerson || updated.pharmacistName || "apt. Ghina Nadhifah, S.Farm.",
+            sipaNumber: updated.sipaNumber || "500.16.7.2/0289/SIPA/DPMPTSP/II/2026",
+            sipaExpiry: updated.sipaExpiry || "2029-12-31",
+            siaNumber: updated.siaNumber || "503/0124/SIA/DPMPTSP/2024",
+            nib: updated.nib || "1234000567891",
+            npwp: updated.npwp || "01.234.567.8-123.000",
+            address: updated.address || "Jl. Raya Cirebon - Kuningan No. 45, Cilimus",
+            city: updated.city || "Kuningan",
+            province: updated.province || "Jawa Barat",
+            postalCode: updated.postalCode || "45553",
+            phone: updated.phone || "(0232) 876543",
+            whatsapp: updated.whatsapp || "0812-3456-7890",
+            email: updated.email || "info@hafidzfarma.com",
+            website: updated.website || "https://hafidzfarma.com",
+            bankName: updated.bankName || "BCA",
+            bankAccountNumber: updated.bankAccountNumber || "0541238910",
+            bankAccountHolder: updated.bankAccountHolder || updated.name,
+            bankAccounts: updated.bankAccounts || "[]",
+            signatureUrl: updated.signatureUrl || "/signatures/apt-ghina.png",
+            stampUrl: updated.stampUrl || "/stamps/apotek-hafidz-farma.png",
+            receiptHeader: updated.receiptHeader || "APOTEK HAFIDZ FARMA\nJl. Raya Cirebon - Kuningan No. 45\nTelp: (0232) 876543 / WA: 0812-3456-7890",
+            receiptFooter: updated.receiptFooter || "Semoga Lekas Sembuh • Terima Kasih atas Kepercayaan Anda\nObat yang sudah dibeli tidak dapat ditukar/dikembalikan",
             taxPercent: Number(updated.taxPercent || 11),
             isActive: updated.isActive,
             createdAt: updated.createdAt
@@ -1124,6 +1202,32 @@ export const authRoutes = new Elysia({ prefix: "/api" })
         id: t.Optional(t.String()),
         code: t.Optional(t.String()),
         name: t.Optional(t.String()),
+        legalName: t.Optional(t.String()),
+        tagline: t.Optional(t.String()),
+        logoUrl: t.Optional(t.String()),
+        pharmacistName: t.Optional(t.String()),
+        responsiblePerson: t.Optional(t.String()),
+        sipaNumber: t.Optional(t.String()),
+        sipaExpiry: t.Optional(t.String()),
+        siaNumber: t.Optional(t.String()),
+        nib: t.Optional(t.String()),
+        npwp: t.Optional(t.String()),
+        address: t.Optional(t.String()),
+        city: t.Optional(t.String()),
+        province: t.Optional(t.String()),
+        postalCode: t.Optional(t.String()),
+        phone: t.Optional(t.String()),
+        whatsapp: t.Optional(t.String()),
+        email: t.Optional(t.String()),
+        website: t.Optional(t.String()),
+        bankName: t.Optional(t.String()),
+        bankAccountNumber: t.Optional(t.String()),
+        bankAccountHolder: t.Optional(t.String()),
+        bankAccounts: t.Optional(t.Any()),
+        signatureUrl: t.Optional(t.String()),
+        stampUrl: t.Optional(t.String()),
+        receiptHeader: t.Optional(t.String()),
+        receiptFooter: t.Optional(t.String()),
         taxPercent: t.Optional(t.Number()),
         isActive: t.Optional(t.Boolean())
       }),

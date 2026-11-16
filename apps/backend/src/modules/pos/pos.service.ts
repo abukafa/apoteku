@@ -110,20 +110,47 @@ export class PosService {
 
       // If database has records, build from DB
       if (tenantData.length > 0 && branchData.length > 0) {
+        const t0 = tenantData[0];
         const tenant = {
-          id: tenantData[0].id,
-          name: tenantData[0].name,
-          taxPercent: Number(tenantData[0].taxPercent || 11)
+          id: t0.id,
+          name: t0.name,
+          legalName: t0.legalName || "PT Hafidz Farma Medika",
+          tagline: t0.tagline || "Ikhtiar Sehat Keluarga",
+          logoUrl: t0.logoUrl || "/img/brand.png",
+          pharmacistName: t0.pharmacistName || "apt. Ghina Nadhifah, S.Farm.",
+          responsiblePerson: t0.responsiblePerson || t0.pharmacistName || "apt. Ghina Nadhifah, S.Farm.",
+          sipaNumber: t0.sipaNumber || "500.16.7.2/0289/SIPA/DPMPTSP/II/2026",
+          sipaExpiry: t0.sipaExpiry || "2029-12-31",
+          siaNumber: t0.siaNumber || "503/0124/SIA/DPMPTSP/2024",
+          nib: t0.nib || "1234000567891",
+          npwp: t0.npwp || "01.234.567.8-123.000",
+          address: t0.address || "Jl. Raya Cirebon - Kuningan No. 45, Cilimus",
+          city: t0.city || "Kuningan",
+          province: t0.province || "Jawa Barat",
+          postalCode: t0.postalCode || "45553",
+          phone: t0.phone || "(0232) 876543",
+          whatsapp: t0.whatsapp || "0812-3456-7890",
+          email: t0.email || "info@hafidzfarma.com",
+          website: t0.website || "https://hafidzfarma.com",
+          bankName: t0.bankName || "BCA",
+          bankAccountNumber: t0.bankAccountNumber || "0541238910",
+          bankAccountHolder: t0.bankAccountHolder || t0.name,
+          bankAccounts: t0.bankAccounts || "[]",
+          signatureUrl: t0.signatureUrl || "/signatures/apt-ghina.png",
+          stampUrl: t0.stampUrl || "/stamps/apotek-hafidz-farma.png",
+          receiptHeader: t0.receiptHeader || "APOTEK HAFIDZ FARMA\nJl. Raya Cirebon - Kuningan No. 45\nTelp: (0232) 876543 / WA: 0812-3456-7890",
+          receiptFooter: t0.receiptFooter || "Semoga Lekas Sembuh • Terima Kasih atas Kepercayaan Anda\nObat yang sudah dibeli tidak dapat ditukar/dikembalikan",
+          taxPercent: Number(t0.taxPercent || 11)
         };
 
         const branch = {
           id: branchData[0].id,
           code: branchData[0].code,
           name: branchData[0].name,
-          address: branchData[0].address || "Jl. Kesehatan No. 1",
-          phone: branchData[0].phone || "021-5551234",
-          receiptHeader: branchData[0].receiptHeader || "APOTEK MODERN",
-          receiptFooter: branchData[0].receiptFooter || "Semoga Lekas Sembuh"
+          address: branchData[0].address || t0.address || "Jl. Raya Cirebon - Kuningan No. 45, Cilimus",
+          phone: branchData[0].phone || t0.phone || "(0232) 876543",
+          receiptHeader: branchData[0].receiptHeader || t0.receiptHeader || "APOTEK HAFIDZ FARMA",
+          receiptFooter: branchData[0].receiptFooter || t0.receiptFooter || "Semoga Lekas Sembuh"
         };
 
         // Shift kasir aktif

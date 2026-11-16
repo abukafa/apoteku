@@ -25,6 +25,7 @@
   import { api } from "$lib/services/api";
   import { alertStore } from "$lib/stores/alertStore.svelte";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { formatRupiah } from "@apoteku/core";
 
   interface DoctorRecord {
@@ -201,10 +202,10 @@
   // Interactive Etiket State (used by Modal & Tab 2 Generator)
   let selectedEtiket = $state({
     recipeNumber: "",
-    branchName: authStore.user?.branchName || "APOTEK HAFIDZ FARMA",
-    branchAddress: "",
-    branchPhone: "",
-    pharmacistName: authStore.user?.fullName || "Apoteker Penjaga",
+    branchName: authStore.user?.branchName || tenantStore.current.name,
+    branchAddress: tenantStore.current.address,
+    branchPhone: tenantStore.current.phone,
+    pharmacistName: authStore.user?.fullName || tenantStore.current.pharmacistName,
     patientName: "",
     drugName: "",
     signa: "",
@@ -217,7 +218,7 @@
   // Sinkronkan identitas cabang & apoteker ke etiket selama user belum mengklik cetak resep tertentu
   $effect(() => {
     if (activeBranchObj && !selectedEtiket.recipeNumber) {
-      selectedEtiket.branchName = activeBranchObj.name || "APOTEK HAFIDZ FARMA";
+      selectedEtiket.branchName = activeBranchObj.name || tenantStore.current.name;
       selectedEtiket.branchAddress = activeBranchObj.address || "";
       selectedEtiket.branchPhone = activeBranchObj.phone || "";
     }
@@ -903,10 +904,10 @@
   ): EtiketLabelItem[] {
     const baseHeader = {
       recipeNumber: r.recipeNumber,
-      branchName: (r.branchName || "APOTEK HAFIDZ FARMA").toUpperCase(),
-      branchAddress: r.branchAddress || activeBranchObj?.address || "",
-      branchPhone: r.branchPhone || activeBranchObj?.phone || "",
-      pharmacistName: r.verifiedByName || authStore.user?.fullName || "Apoteker Penjaga",
+      branchName: (r.branchName || activeBranchObj?.name || tenantStore.current.name).toUpperCase(),
+      branchAddress: r.branchAddress || activeBranchObj?.address || tenantStore.current.address,
+      branchPhone: r.branchPhone || activeBranchObj?.phone || tenantStore.current.phone,
+      pharmacistName: r.verifiedByName || authStore.user?.fullName || tenantStore.current.pharmacistName,
       patientName: r.patientName,
       instruction: r.instruction || "Sesudah Makan",
       date: r.date.split(" ")[0] || formatTodayDdMmYyyy(),

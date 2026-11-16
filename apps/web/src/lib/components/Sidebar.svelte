@@ -26,6 +26,7 @@
     User
   } from "lucide-svelte";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
 
   let { isMobileOpen = $bindable(false) } = $props();
 
@@ -164,9 +165,9 @@
         class="w-full h-full"
       />
       <img
-        src="/img/brand.png"
-        alt="Hafidz Farma Apotek"
-        class="absolute h-32 w-auto object-contain"
+        src={tenantStore.current.logoUrl || "/img/brand.png"}
+        alt={tenantStore.current.name || "Hafidz Farma Apotek"}
+        class="absolute h-32 w-auto object-contain max-w-[200px]"
       />
       <!-- Close button on mobile -->
       <button

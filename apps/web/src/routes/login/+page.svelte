@@ -15,6 +15,7 @@
     WifiOff
   } from "lucide-svelte";
   import { authStore, type ActiveUser } from "$lib/stores/authStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { api } from "$lib/services/api";
 
   interface SavedAccount {
@@ -501,8 +502,8 @@
       <div class="flex items-center justify-between">
         <div class="inline-flex items-center justify-center max-w-[200px] mx-auto">
           <img
-            src="/img/brand.png"
-            alt="Apotek Hafidz Farma"
+            src={tenantStore.current.logoUrl || "/img/brand.png"}
+            alt={tenantStore.current.name || "Apotek Hafidz Farma"}
             class="h-28 w-auto object-contain"
           />
         </div>

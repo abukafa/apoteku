@@ -66,7 +66,9 @@ export const mediaRoutes = new Elysia({ prefix: "/api/uploads" }).post(
         t.Union([
           t.Literal("prescriptions"),
           t.Literal("invoices"),
-          t.Literal("general")
+          t.Literal("general"),
+          t.Literal("branding"),
+          t.Literal("signatures")
         ])
       )
     }),

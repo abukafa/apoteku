@@ -2464,6 +2464,10 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         }
       }
 
+      const [tenant] = await db.select().from(schema.tenants).limit(1);
+      const defaultPharmacist = tenant?.pharmacistName || "apt. Ghina Nadhifah, S.Farm.";
+      const defaultSipa = tenant?.sipaNumber || "500.16.7.2/0289/SIPA/DPMPTSP/II/2026";
+
       return {
         success: true,
         data: orders.map((o) => {
@@ -2480,8 +2484,8 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             branchName: o.branchName || "Apotek Hafidz Farma 1",
             orderDate: o.orderDate,
             status: o.status,
-            pharmacistName: "apt. Ghina Nadhifah, S.Farm.",
-            sipa: "500.16.7.2/0289/SIPA/DPMPTSP/II/2026",
+            pharmacistName: defaultPharmacist,
+            sipa: defaultSipa,
             totalItems: items.length > 0 ? items.length : 1,
             estimatedAmount: Number(o.totalAmount || 0),
             items

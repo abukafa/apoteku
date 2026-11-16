@@ -20,6 +20,7 @@
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { formatRupiah, calculateGrossMarginPercent } from "@apoteku/core";
 
   interface SalesShiftReportRow {
@@ -824,9 +825,9 @@
     <div class="bg-white rounded-2xl max-w-5xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs max-h-[92vh] overflow-y-auto scrollbar-minimalist print-sheet-card">
       <!-- KOP APOTEK RESMI -->
       <div class="border-b-2 border-slate-900 pb-3 text-center space-y-0.5">
-        <div class="font-black text-base uppercase tracking-wider text-slate-900">APOTEK HAFIDZ FARMA</div>
-        <div class="text-[11px] text-slate-600">SIA: 503/0014/SIA/DPMPTSP/2024 • Jl. Letjen Mashudi No. 45, Tasikmalaya • Telp: (0265) 345678</div>
-        <div class="text-[10px] text-slate-500 font-mono">Email: apotek.hafidzfarma@gmail.com • Sistem Informasi Manajemen Farmasi Terpadu</div>
+        <div class="font-black text-base uppercase tracking-wider text-slate-900">{tenantStore.current.name}</div>
+        <div class="text-[11px] text-slate-600">SIA: {tenantStore.current.siaNumber} &bull; {tenantStore.current.address}, {tenantStore.current.city} &bull; Telp: {tenantStore.current.phone}</div>
+        <div class="text-[10px] text-slate-500 font-mono">Email: {tenantStore.current.email} &bull; Sistem Informasi Manajemen Farmasi Terpadu</div>
       </div>
 
       <!-- JUDUL LAPORAN & METADATA -->
@@ -1056,19 +1057,27 @@
         <div class="space-y-1 border-l-2 border-slate-300 pl-3">
           <div class="font-bold text-slate-800">Catatan Pelaporan & Kepatuhan Farmasi:</div>
           <div class="text-[10px] text-slate-500 leading-relaxed">
-            1. Dokumen ini sah dan diterbitkan secara digital oleh Sistem ERP & POS Apotek Hafidz Farma.<br />
+            1. Dokumen ini sah dan diterbitkan secara digital oleh Sistem ERP & POS {tenantStore.current.name}.<br />
             2. Pelaporan Narkotika/Psikotropika mengacu pada Permenkes No. 3/2015 dan terintegrasi SIPNAP Kemenkes.<br />
             3. Berita acara fisik dan kartu stok manual tersimpan di lemari khusus berpintu ganda.
           </div>
         </div>
         <div class="text-right space-y-1">
-          <div>Tasikmalaya, {new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</div>
+          <div>{tenantStore.current.city}, {new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</div>
           <div class="text-slate-500 text-[10px]">Apoteker Pengelola Apotek (APA),</div>
-          <div class="h-12 flex items-end justify-end">
-            <span class="text-[9px] text-slate-400 italic">(Tanda Tangan & Cap Apotek)</span>
+          <div class="h-14 flex items-center justify-end relative">
+            {#if tenantStore.current.signatureUrl}
+              <img src={tenantStore.current.signatureUrl} alt="TTD APA" class="h-12 w-auto object-contain" />
+            {/if}
+            {#if tenantStore.current.stampUrl}
+              <img src={tenantStore.current.stampUrl} alt="Stempel Apotek" class="h-12 w-auto object-contain -ml-6 opacity-85" />
+            {/if}
+            {#if !tenantStore.current.signatureUrl && !tenantStore.current.stampUrl}
+              <span class="text-[9px] text-slate-400 italic">(Tanda Tangan & Cap Apotek)</span>
+            {/if}
           </div>
-          <div class="font-bold text-slate-900 underline">apt. Hafidz Nurul, S.Farm.</div>
-          <div class="text-[10px] text-slate-500 font-mono">SIPA: 503/044/Dinkes/2024 • STRA: 19930812/STRA-ITB/2017/23412</div>
+          <div class="font-bold text-slate-900 underline">{tenantStore.current.pharmacistName}</div>
+          <div class="text-[10px] text-slate-500 font-mono">SIPA: {tenantStore.current.sipaNumber}</div>
         </div>
       </div>
 

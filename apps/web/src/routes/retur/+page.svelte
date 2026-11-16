@@ -25,6 +25,7 @@
   import { api } from "$lib/services/api";
   import { mockApi } from "$lib/services/mock-api";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { formatRupiah } from "@apoteku/core";
 
   interface CustomerReturnRecord {
@@ -1654,9 +1655,9 @@
     <div class="bg-white rounded-2xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs print-sheet-card">
       <!-- KOP APOTEK RESMI -->
       <div class="border-b-2 border-slate-900 pb-3 text-center space-y-0.5">
-        <div class="font-black text-sm uppercase tracking-wide text-slate-900">APOTEK HAFIDZ FARMA</div>
-        <div class="text-[11px] text-slate-600">SIA: 503/0014/SIA/DPMPTSP/2024 • Jl. Letjen Mashudi No. 45, Tasikmalaya</div>
-        <div class="text-[10px] text-slate-500 font-mono">Telp: (0265) 345678 • Pengendalian Mutu & Retur Farmasi</div>
+        <div class="font-black text-sm uppercase tracking-wide text-slate-900">{tenantStore.current.name}</div>
+        <div class="text-[11px] text-slate-600">SIA: {tenantStore.current.siaNumber} &bull; {tenantStore.current.address}, {tenantStore.current.city}</div>
+        <div class="text-[10px] text-slate-500 font-mono">Telp: {tenantStore.current.phone} &bull; Pengendalian Mutu & Retur Farmasi</div>
       </div>
 
       {#if selectedDetailType === "PENJUALAN" && selectedCustomerReturn}

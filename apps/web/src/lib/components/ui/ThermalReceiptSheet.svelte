@@ -1,5 +1,6 @@
 <script module lang="ts">
   import { tick } from "svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
 
   export interface ThermalReceiptBatch {
     batchNumber: string;
@@ -73,11 +74,11 @@
     }));
 
     return {
-      storeName: "APOTEK HAFIDZ FARMA",
-      branchName: branch?.name || "KOTA TASIKMALAYA",
-      branchPhone: branch?.phone || "-",
-      sia: branch?.sia || "-",
-      pharmacistName: branch?.pharmacistName || "-",
+      storeName: (tenantStore.current?.name || "APOTEK HAFIDZ FARMA").toUpperCase(),
+      branchName: branch?.name || tenantStore.current?.city || "KOTA TASIKMALAYA",
+      branchPhone: branch?.phone || tenantStore.current?.phone || "-",
+      sia: branch?.sia || tenantStore.current?.siaNumber || "-",
+      pharmacistName: branch?.pharmacistName || tenantStore.current?.pharmacistName || "-",
       invoiceNumber: result?.invoiceNumber || "-",
       transactionTime: result?.transactionTime || new Date().toISOString(),
       cashierName: p.cashierName || "Kasir Utama",
@@ -116,11 +117,11 @@
     }));
 
     return {
-      storeName: "APOTEK HAFIDZ FARMA",
-      branchName: trx?.branchName || branchFallback?.name || "KOTA TASIKMALAYA",
-      branchPhone: trx?.branchPhone || branchFallback?.phone || "-",
-      sia: trx?.sia || branchFallback?.sia || null,
-      pharmacistName: trx?.pharmacistName || branchFallback?.pharmacistName || null,
+      storeName: (tenantStore.current?.name || "APOTEK HAFIDZ FARMA").toUpperCase(),
+      branchName: trx?.branchName || branchFallback?.name || tenantStore.current?.city || "KOTA TASIKMALAYA",
+      branchPhone: trx?.branchPhone || branchFallback?.phone || tenantStore.current?.phone || "-",
+      sia: trx?.sia || branchFallback?.sia || tenantStore.current?.siaNumber || null,
+      pharmacistName: trx?.pharmacistName || branchFallback?.pharmacistName || tenantStore.current?.pharmacistName || null,
       invoiceNumber: trx?.invoiceNo || trx?.invoiceNumber || "-",
       transactionTime: trx?.transactionTime || trx?.createdAt || new Date().toISOString(),
       cashierName: trx?.cashierName || "Kasir Utama",
@@ -202,14 +203,14 @@
     aria-hidden="true"
   >
     <div class="text-center space-y-0.5 mb-1.5">
-      <div class="font-bold text-[12px] tracking-wide">{receipt.storeName || "APOTEK HAFIDZ FARMA"}</div>
-      <div class="font-semibold text-[10.5px]">{receipt.branchName || "KOTA TASIKMALAYA"}</div>
-      <div class="text-[9.5px]">Telp: {receipt.branchPhone || "-"}</div>
-      {#if receipt.sia}
-        <div class="text-[9.5px]">SIA: {receipt.sia}</div>
+      <div class="font-bold text-[12px] tracking-wide">{receipt.storeName || tenantStore.current.name}</div>
+      <div class="font-semibold text-[10.5px]">{receipt.branchName || tenantStore.current.city}</div>
+      <div class="text-[9.5px]">Telp: {receipt.branchPhone || tenantStore.current.phone}</div>
+      {#if receipt.sia || tenantStore.current.siaNumber}
+        <div class="text-[9.5px]">SIA: {receipt.sia || tenantStore.current.siaNumber}</div>
       {/if}
-      {#if receipt.pharmacistName}
-        <div class="text-[9.5px]">Apoteker: {receipt.pharmacistName}</div>
+      {#if receipt.pharmacistName || tenantStore.current.pharmacistName}
+        <div class="text-[9.5px]">Apoteker: {receipt.pharmacistName || tenantStore.current.pharmacistName}</div>
       {/if}
       {#if receipt.isReprint}
         <div class="text-[9px] font-bold uppercase tracking-wider pt-0.5">** CETAK ULANG / COPY STRUK **</div>
@@ -349,7 +350,7 @@
     <div class="text-center space-y-0.5 text-[9.5px] pt-0.5">
       <div class="font-semibold">Terima kasih atas kunjungan Anda</div>
       <div>Semoga Lekas Sembuh</div>
-      <div>-- Ikhtiar Sehat Keluarga --</div>
+      <div>-- {tenantStore.current.tagline || "Ikhtiar Sehat Keluarga"} --</div>
     </div>
   </div>
 {/if}

@@ -129,6 +129,9 @@ export const api = {
     }
   },
   erp: {
+    async getDashboard() {
+      return await apiFetch<any>("/api/dashboard");
+    },
     async getStats() {
       return await apiFetch<any>("/api/stats");
     },
@@ -656,9 +659,31 @@ export const api = {
     async getFinancialSummary() {
       return await apiFetch<any>("/api/reports/financial");
     },
-    async getSipnap(category = "ALL") {
-      const q = category ? `?category=${encodeURIComponent(category)}` : "";
-      return await apiFetch<any>(`/api/reports/sipnap${q}`);
+    async getSalesShifts(params: { branchId?: string; period?: string } = {}) {
+      const sp = new URLSearchParams();
+      if (params.branchId) sp.append("branchId", params.branchId);
+      if (params.period) sp.append("period", params.period);
+      const qs = sp.toString() ? `?${sp.toString()}` : "";
+      return await apiFetch<any>(`/api/reports/sales-shifts${qs}`);
+    },
+    async getSipnap(params: { category?: string; branchId?: string; period?: string } | string = "ALL") {
+      const sp = new URLSearchParams();
+      if (typeof params === "string") {
+        if (params && params !== "ALL") sp.append("category", params);
+      } else {
+        if (params.category && params.category !== "ALL") sp.append("category", params.category);
+        if (params.branchId) sp.append("branchId", params.branchId);
+        if (params.period) sp.append("period", params.period);
+      }
+      const qs = sp.toString() ? `?${sp.toString()}` : "";
+      return await apiFetch<any>(`/api/reports/sipnap${qs}`);
+    },
+    async getPareto(params: { branchId?: string; period?: string } = {}) {
+      const sp = new URLSearchParams();
+      if (params.branchId) sp.append("branchId", params.branchId);
+      if (params.period) sp.append("period", params.period);
+      const qs = sp.toString() ? `?${sp.toString()}` : "";
+      return await apiFetch<any>(`/api/reports/pareto${qs}`);
     }
   },
   returns: {

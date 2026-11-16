@@ -289,17 +289,93 @@
   }
 }
 
+/* =========================================================================
+   STANDAR CETAK DOKUMEN RESMI (A4, A5, & ISOLASI FULL-PAGE PRINTING)
+   ========================================================================= */
 @media print {
-  @page {
-    size: 58mm auto; /* Ubah ke 80mm auto untuk thermal ukuran besar */
-    margin: 0;
+  /* Isolasi Cetak Lembar Dokumen: Sembunyikan semua elemen di luar modal cetak */
+  body:has(.print-active-sheet) > *:not(.print-active-sheet) {
+    display: none !important;
   }
-  
-  body {
-    width: 58mm; /* Sesuaikan dengan ukuran @page */
-    margin: 0;
-    padding: 2mm; /* Area aman agar teks tidak terpotong */
-    font-family: monospace; /* Font khas struk kasir */
-    font-size: 12px;
+
+  html:has(.print-active-sheet),
+  body:has(.print-active-sheet) {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Sembunyikan elemen non-cetak: tombol, navbar, sidebar, header portal */
+  .no-print,
+  button,
+  nav,
+  aside,
+  [data-no-print] {
+    display: none !important;
+  }
+
+  /* Hilangkan efek backdrop gelap modal portal saat mode cetak */
+  .modal-overlay:has(.print-sheet-card),
+  .modal-overlay.print-active-sheet {
+    position: static !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+
+  /* Transformasikan modal card menjadi lembar dokumen cetak utuh (Full Paper) */
+  .print-sheet-card {
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Format teks dokumen cetak resmi */
+  .print-sheet-card * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Cegah pemotongan tabel & tanda tangan antar-halaman secara canggung */
+  table {
+    page-break-inside: auto !important;
+    width: 100% !important;
+  }
+  tr {
+    page-break-inside: avoid !important;
+    page-break-after: auto !important;
+  }
+  thead {
+    display: table-header-group !important;
+  }
+  tfoot {
+    display: table-footer-group !important;
+  }
+  .print-avoid-break {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 }

@@ -815,6 +815,16 @@
 
 <svelte:head>
   <title>Retur &bull; Hafidz Farma</title>
+  {#if isDetailModalOpen}
+    <style>
+      @media print {
+        @page {
+          size: A5 portrait;
+          margin: 10mm;
+        }
+      }
+    </style>
+  {/if}
 </svelte:head>
 
 <div class="space-y-6">
@@ -1630,121 +1640,171 @@
   </div>
 {/if}
 
-<!-- MODAL DETAIL & CETAK NOTA RETUR -->
+<!-- MODAL DETAIL & CETAK NOTA RETUR RESMI (A5 PORTRAIT / A4) -->
 {#if isDetailModalOpen}
   <div
     use:portal
     data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    class="modal-overlay print-active-sheet fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
       if (e.target === e.currentTarget) isDetailModalOpen = false;
     }}
     role="presentation"
   >
-    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs print-sheet-card">
+      <!-- KOP APOTEK RESMI -->
+      <div class="border-b-2 border-slate-900 pb-3 text-center space-y-0.5">
+        <div class="font-black text-sm uppercase tracking-wide text-slate-900">APOTEK HAFIDZ FARMA</div>
+        <div class="text-[11px] text-slate-600">SIA: 503/0014/SIA/DPMPTSP/2024 • Jl. Letjen Mashudi No. 45, Tasikmalaya</div>
+        <div class="text-[10px] text-slate-500 font-mono">Telp: (0265) 345678 • Pengendalian Mutu & Retur Farmasi</div>
+      </div>
+
       {#if selectedDetailType === "PENJUALAN" && selectedCustomerReturn}
-        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-2">
           <div>
             <div class="font-mono font-bold text-brand-blue">{selectedCustomerReturn.returnNumber}</div>
-            <div class="font-bold text-slate-900 text-sm">Bukti Retur Penjualan Kasir</div>
+            <div class="font-black text-slate-900 text-sm uppercase">BUKTI RETUR PENJUALAN KASIR</div>
+            <div class="text-[10px] text-slate-500">Waktu: {selectedCustomerReturn.date} &bull; Kasir: {selectedCustomerReturn.cashier}</div>
           </div>
           <button
             onclick={() => (isDetailModalOpen = false)}
-            class="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+            class="p-1 text-slate-400 hover:text-slate-600 rounded-lg no-print"
             aria-label="Tutup"
           >
             <X class="w-5 h-5" />
           </button>
         </div>
 
-        <div class="space-y-1.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+        <div class="space-y-1.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-[11px]">
           <div class="flex justify-between">
             <span class="text-slate-500">Struk Referensi:</span>
-            <strong class="font-mono">{selectedCustomerReturn.originalTrx}</strong>
+            <strong class="font-mono text-slate-900">{selectedCustomerReturn.originalTrx}</strong>
           </div>
           <div class="flex justify-between">
-            <span class="text-slate-500">Cabang:</span>
+            <span class="text-slate-500">Cabang Pelayanan:</span>
             <strong>{selectedCustomerReturn.branchName}</strong>
           </div>
           <div class="flex justify-between">
-            <span class="text-slate-500">Pelanggan:</span>
+            <span class="text-slate-500">Nama Pelanggan:</span>
             <strong>{selectedCustomerReturn.customerName}</strong>
           </div>
           <div class="flex justify-between">
-            <span class="text-slate-500">Produk & Batch:</span>
-            <strong>{selectedCustomerReturn.productName} ({selectedCustomerReturn.batchNo})</strong>
+            <span class="text-slate-500">Produk Retur:</span>
+            <strong class="text-slate-900">{selectedCustomerReturn.productName}</strong>
           </div>
           <div class="flex justify-between">
-            <span class="text-slate-500">Perlakuan Stok:</span>
-            <strong>{selectedCustomerReturn.stockDisposition === "LAYAK_JUAL" ? "Masuk Stok Layak Jual" : "Masuk Rak Karantina"}</strong>
+            <span class="text-slate-500">Batch & Exp Date:</span>
+            <span class="font-mono font-bold text-slate-800">{selectedCustomerReturn.batchNo}</span>
           </div>
           <div class="flex justify-between">
-            <span class="text-slate-500">Kompensasi:</span>
-            <strong>{selectedCustomerReturn.compensationType === "REFUND_TUNAI" ? "Refund Tunai" : "Tukar Barang"}</strong>
+            <span class="text-slate-500">Jumlah Diretur:</span>
+            <strong>{selectedCustomerReturn.qty} {selectedCustomerReturn.unit}</strong>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500">Alasan Retur:</span>
+            <span class="text-rose-700 font-medium">{selectedCustomerReturn.reason}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500">Disposisi Stok:</span>
+            <strong class="{selectedCustomerReturn.stockDisposition === 'LAYAK_JUAL' ? 'text-emerald-700' : 'text-amber-700'}">
+              {selectedCustomerReturn.stockDisposition === "LAYAK_JUAL" ? "Masuk Stok Layak Jual (Restock)" : "Masuk Rak Karantina / Pemusnahan"}
+            </strong>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500">Metode Kompensasi:</span>
+            <strong>{selectedCustomerReturn.compensationType === "REFUND_TUNAI" ? "Pengembalian Tunai (Cash Refund)" : "Tukar Produk Baru"}</strong>
           </div>
           <div class="pt-2 border-t border-slate-200 flex justify-between font-bold text-sm">
-            <span>Nilai Pengembalian:</span>
+            <span>Total Pengembalian:</span>
             <span class="font-mono text-brand-red-600">{formatRupiah(selectedCustomerReturn.refundAmount)}</span>
           </div>
         </div>
+
+        <div class="grid grid-cols-2 gap-4 pt-4 text-center text-[11px] text-slate-600 print-avoid-break">
+          <div class="border-t border-slate-200 pt-2">
+            <div class="font-bold text-slate-800">Petugas Farmasi</div>
+            <div class="mt-8 text-slate-500">({selectedCustomerReturn.cashier})</div>
+          </div>
+          <div class="border-t border-slate-200 pt-2">
+            <div class="font-bold text-slate-800">Pelanggan</div>
+            <div class="mt-8 text-slate-500">({selectedCustomerReturn.customerName})</div>
+          </div>
+        </div>
+
       {:else if selectedDetailType === "PEMBELIAN" && selectedSupplierReturn}
-        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-2">
           <div>
             <div class="font-mono font-bold text-brand-blue">{selectedSupplierReturn.returnNumber}</div>
-            <div class="font-bold text-slate-900 text-sm">Nota Retur Pembelian PBF</div>
+            <div class="font-black text-slate-900 text-sm uppercase">NOTA RETUR PEMBELIAN PBF</div>
+            <div class="text-[10px] text-slate-500">Waktu: {selectedSupplierReturn.date} &bull; Petugas: {selectedSupplierReturn.pic}</div>
           </div>
           <button
             onclick={() => (isDetailModalOpen = false)}
-            class="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+            class="p-1 text-slate-400 hover:text-slate-600 rounded-lg no-print"
             aria-label="Tutup"
           >
             <X class="w-5 h-5" />
           </button>
         </div>
 
-        <div class="space-y-1.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+        <div class="space-y-1.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-[11px]">
           <div class="flex justify-between">
-            <span class="text-slate-500">Faktur PBF:</span>
-            <strong class="font-mono">{selectedSupplierReturn.invoiceRef}</strong>
+            <span class="text-slate-500">No. Faktur PBF:</span>
+            <strong class="font-mono text-slate-900">{selectedSupplierReturn.invoiceRef}</strong>
           </div>
           <div class="flex justify-between">
-            <span class="text-slate-500">Cabang:</span>
+            <span class="text-slate-500">Cabang Pengirim Retur:</span>
             <strong>{selectedSupplierReturn.branchName}</strong>
           </div>
           <div class="flex justify-between">
-            <span class="text-slate-500">Distributor:</span>
-            <strong>{selectedSupplierReturn.supplierName}</strong>
+            <span class="text-slate-500">Distributor Farmasi (PBF):</span>
+            <strong class="text-slate-900">{selectedSupplierReturn.supplierName}</strong>
           </div>
           <div class="flex justify-between">
             <span class="text-slate-500">Produk & Batch:</span>
-            <strong>{selectedSupplierReturn.productName} ({selectedSupplierReturn.batchNo})</strong>
+            <strong class="text-slate-900">{selectedSupplierReturn.productName} ({selectedSupplierReturn.batchNo})</strong>
           </div>
           <div class="flex justify-between">
-            <span class="text-slate-500">Kuantitas:</span>
+            <span class="text-slate-500">Kuantitas Dikembalikan:</span>
             <strong>{selectedSupplierReturn.qty} {selectedSupplierReturn.unit}</strong>
           </div>
           <div class="flex justify-between">
+            <span class="text-slate-500">Alasan Retur PBF:</span>
+            <span class="text-rose-700 font-medium">{selectedSupplierReturn.reason}</span>
+          </div>
+          <div class="flex justify-between">
             <span class="text-slate-500">Mekanisme Klaim:</span>
-            <strong>{selectedSupplierReturn.settlementType === "NOTA_KREDIT" ? "Potong Hutang (Nota Kredit)" : "Tukar Batch Baru"}</strong>
+            <strong>{selectedSupplierReturn.settlementType === "NOTA_KREDIT" ? "Potong Tagihan Hutang (Nota Kredit)" : "Tukar Barang / Batch Baru"}</strong>
           </div>
           {#if selectedSupplierReturn.creditNoteNo}
             <div class="flex justify-between text-emerald-700">
-              <span>No. Nota Kredit:</span>
+              <span>No. Dokumen Nota Kredit:</span>
               <strong class="font-mono">{selectedSupplierReturn.creditNoteNo}</strong>
             </div>
           {/if}
           <div class="pt-2 border-t border-slate-200 flex justify-between font-bold text-sm">
-            <span>Nilai Klaim PBF:</span>
+            <span>Nilai Klaim ke PBF:</span>
             <span class="font-mono text-brand-blue">{formatRupiah(selectedSupplierReturn.totalValue)}</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 pt-4 text-center text-[11px] text-slate-600 print-avoid-break">
+          <div class="border-t border-slate-200 pt-2">
+            <div class="font-bold text-slate-800">Apoteker / Logistik Apotek</div>
+            <div class="mt-8 text-slate-500">({selectedSupplierReturn.pic})</div>
+          </div>
+          <div class="border-t border-slate-200 pt-2">
+            <div class="font-bold text-slate-800">Petugas / Ekspedisi PBF</div>
+            <div class="mt-8 text-slate-500">({selectedSupplierReturn.supplierName})</div>
           </div>
         </div>
       {/if}
 
-      <div class="border-t border-slate-100 pt-3 flex justify-end gap-2">
+      <div class="border-t border-slate-100 pt-3 flex justify-end gap-2 no-print">
         <button
           type="button"
           onclick={() => (isDetailModalOpen = false)}
-          class="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-bold"
+          class="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 text-xs transition-colors"
         >
           Tutup
         </button>
@@ -1752,12 +1812,11 @@
           type="button"
           onclick={() => {
             window.print();
-            isDetailModalOpen = false;
           }}
-          class="px-4 py-1.5 rounded-xl bg-brand-blue-700 text-white font-bold inline-flex items-center gap-1.5"
+          class="px-4 py-1.5 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold inline-flex items-center gap-1.5 text-xs shadow-sm transition-colors"
         >
           <Printer class="w-3.5 h-3.5" />
-          <span>Cetak Nota Retur</span>
+          <span>Cetak Nota Retur (A5)</span>
         </button>
       </div>
     </div>

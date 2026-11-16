@@ -19,13 +19,13 @@
   }
 
   let {
-    salesToday = "Rp 4.850.000",
-    salesTrend = "12% dari kemarin",
-    totalTransactions = "28",
-    transactionTrend = "8% dari kemarin",
-    lowStockCount = "5 item",
-    newCustomers = "3",
-    customerTrend = "50% dari kemarin"
+    salesToday = "Rp 0",
+    salesTrend = "0% dari kemarin",
+    totalTransactions = "0",
+    transactionTrend = "Transaksi tercatat",
+    lowStockCount = "0 item",
+    newCustomers = "0",
+    customerTrend = "Pelanggan terdaftar"
   }: Props = $props();
 </script>
 
@@ -74,7 +74,7 @@
       <div class="text-lg sm:text-xl font-black text-slate-900 mt-0.5 tracking-tight">
         {lowStockCount}
       </div>
-      <a href="#stok-menipis" class="text-[11px] font-bold text-[#df1c2d] flex items-center gap-1 mt-1 hover:underline">
+      <a href="/stok" class="text-[11px] font-bold text-[#df1c2d] flex items-center gap-1 mt-1 hover:underline">
         <AlertTriangle class="w-3.5 h-3.5" />
         <span>Lihat Detail</span>
       </a>
@@ -87,7 +87,7 @@
       <Users class="w-6 h-6" />
     </div>
     <div class="flex-1 min-w-0">
-      <div class="text-xs font-semibold text-slate-500 truncate">Pelanggan Baru</div>
+      <div class="text-xs font-semibold text-slate-500 truncate">Pelanggan Terdaftar</div>
       <div class="text-lg sm:text-xl font-black text-slate-900 mt-0.5 tracking-tight">
         {newCustomers}
       </div>

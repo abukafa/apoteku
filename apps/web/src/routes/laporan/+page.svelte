@@ -19,7 +19,6 @@
   import Select from "$lib/components/ui/Select.svelte";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
-  import { mockApi } from "$lib/services/mock-api";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { formatRupiah } from "@apoteku/core";
 
@@ -72,10 +71,26 @@
     currentStock: number;
   }
 
+  // Pilihan Periode Otomatis (6 Bulan Berjalan)
+  const now = new Date();
+  const periodOptions = Array.from({ length: 6 }).map((_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const monthNames = [
+      "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+      "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+    ];
+    return {
+      value: `${y}-${m}`,
+      label: `${monthNames[d.getMonth()]} ${y}`
+    };
+  });
+
   // Master Data & Filters
   let branches = $state<any[]>([]);
-  let selectedBranchId = $state(authStore.user?.branchId || "1");
-  let selectedPeriod = $state("2025-10");
+  let selectedBranchId = $state(authStore.user?.branchId || "ALL");
+  let selectedPeriod = $state(periodOptions[0].value);
   let activeTab = $state<"penjualan" | "sipnap" | "pareto">("penjualan");
 
   // Table Filters (placed in top-right corner of DataTable)
@@ -92,253 +107,56 @@
   let isSipnapDetailModalOpen = $state(false);
   let selectedSipnapRow = $state<SipnapReportRow | null>(null);
 
-  // 1. Mock Sales & Shift Margin Records
-  let salesShiftRecords = $state<SalesShiftReportRow[]>([
-    {
-      id: "rep-sls-01",
-      date: "2025-10-28",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      shiftName: "Shift Pagi (07:00 - 15:00)",
-      cashierName: "Darajat Rahmatulloh",
-      trxCount: 42,
-      paymentChannel: "CASH",
-      grossSales: 3120000,
-      cogsHpp: 2340000,
-      grossProfit: 780000,
-      cashVariance: 0
-    },
-    {
-      id: "rep-sls-02",
-      date: "2025-10-28",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      shiftName: "Shift Pagi (07:00 - 15:00)",
-      cashierName: "Darajat Rahmatulloh",
-      trxCount: 19,
-      paymentChannel: "NON_CASH",
-      grossSales: 1480000,
-      cogsHpp: 1120000,
-      grossProfit: 360000,
-      cashVariance: 0
-    },
-    {
-      id: "rep-sls-03",
-      date: "2025-10-28",
-      branchId: "1",
-      branchName: "Apotek Hafidz Farma Pusat",
-      shiftName: "Shift Siang (15:00 - 22:00)",
-      cashierName: "Nida Farida",
-      trxCount: 14,
-      paymentChannel: "RESEP",
-      grossSales: 1850000,
-      cogsHpp: 1295000,
-      grossProfit: 555000,
-      cashVariance: 0
-    },
-    {
-      id: "rep-sls-04",
-      date: "2025-10-27",
-      branchId: "2",
-      branchName: "Apotek Hafidz Farma 2",
-      shiftName: "Shift Pagi (07:00 - 15:00)",
-      cashierName: "Cantika Nur Gustiani",
-      trxCount: 31,
-      paymentChannel: "CASH",
-      grossSales: 2450000,
-      cogsHpp: 1860000,
-      grossProfit: 590000,
-      cashVariance: -2000
-    }
-  ]);
+  // Live Records
+  let salesShiftRecords = $state<SalesShiftReportRow[]>([]);
+  let sipnapRecords = $state<SipnapReportRow[]>([]);
+  let paretoRecords = $state<ParetoReportRow[]>([]);
+  let isLoading = $state(false);
 
-  // 2. SIPNAP Mock Records (Format resmi Kemenkes & BPOM)
-  let sipnapRecords = $state<SipnapReportRow[]>([
-    {
-      id: "sip-01",
-      branchId: "1",
-      period: "2025-10",
-      drugName: "Codeine 10mg Tablet",
-      group: "NARKOTIKA",
-      initialStock: 200,
-      receivedQty: 500,
-      supplier: "PT. Kimia Farma (T&D)",
-      spRef: "SP-NRK-HF-2025-0002",
-      dispensedQty: 80,
-      recipeCount: 8,
-      expiredOrDestroyedQty: 0,
-      finalStock: 620,
-      physicalStock: 620,
-      unit: "TABLET",
-      verifiedBy: "apt. Hafidz Nurul, S.Farm."
-    },
-    {
-      id: "sip-02",
-      branchId: "1",
-      period: "2025-10",
-      drugName: "Diazepam 2mg Tablet",
-      group: "PSIKOTROPIKA",
-      initialStock: 150,
-      receivedQty: 300,
-      supplier: "PT. Kimia Farma (T&D)",
-      spRef: "SP-PSI-HF-2025-0004",
-      dispensedQty: 60,
-      recipeCount: 6,
-      expiredOrDestroyedQty: 0,
-      finalStock: 390,
-      physicalStock: 390,
-      unit: "TABLET",
-      verifiedBy: "apt. Hafidz Nurul, S.Farm."
-    },
-    {
-      id: "sip-03",
-      branchId: "1",
-      period: "2025-10",
-      drugName: "Alprazolam 0.5mg Tablet",
-      group: "PSIKOTROPIKA",
-      initialStock: 80,
-      receivedQty: 200,
-      supplier: "PT. Mensa Binasukses",
-      spRef: "SP-PSI-HF-2025-0005",
-      dispensedQty: 45,
-      recipeCount: 5,
-      expiredOrDestroyedQty: 0,
-      finalStock: 235,
-      physicalStock: 235,
-      unit: "TABLET",
-      verifiedBy: "apt. Hafidz Nurul, S.Farm."
-    },
-    {
-      id: "sip-04",
-      branchId: "2",
-      period: "2025-10",
-      drugName: "Pseudoephedrine HCl 60mg (Tremenza)",
-      group: "PREKURSOR",
-      initialStock: 120,
-      receivedQty: 200,
-      supplier: "PT. Anugrah Argon Medica",
-      spRef: "SP-PRE-HF-2025-0012",
-      dispensedQty: 95,
-      recipeCount: 19,
-      expiredOrDestroyedQty: 0,
-      finalStock: 225,
-      physicalStock: 225,
-      unit: "TABLET",
-      verifiedBy: "apt. Hafidz Nurul, S.Farm."
-    }
-  ]);
+  async function loadReports() {
+    isLoading = true;
+    try {
+      const [salesRes, sipRes, parRes] = await Promise.all([
+        api.reports.getSalesShifts({ branchId: selectedBranchId, period: selectedPeriod }),
+        api.reports.getSipnap({ branchId: selectedBranchId, period: selectedPeriod }),
+        api.reports.getPareto({ branchId: selectedBranchId, period: selectedPeriod })
+      ]);
 
-  // 3. Pareto ABC Mock Analysis
-  let paretoRecords = $state<ParetoReportRow[]>([
-    {
-      id: "par-01",
-      branchId: "1",
-      name: "Amoxicillin 500mg (Errata)",
-      sku: "900000092",
-      category: "A",
-      unitsSold: 280,
-      unit: "STRIP",
-      totalRevenue: 2380000,
-      grossMarginPercent: 26.4,
-      revenueShare: 34.5,
-      cumulativeShare: 34.5,
-      currentStock: 150
-    },
-    {
-      id: "par-02",
-      branchId: "1",
-      name: "Paracetamol 500mg (Kimia Farma)",
-      sku: "900000104",
-      category: "A",
-      unitsSold: 420,
-      unit: "STRIP",
-      totalRevenue: 1950000,
-      grossMarginPercent: 28.0,
-      revenueShare: 28.2,
-      cumulativeShare: 62.7,
-      currentStock: 320
-    },
-    {
-      id: "par-03",
-      branchId: "1",
-      name: "Cefixime 100mg Kapsul",
-      sku: "900000215",
-      category: "B",
-      unitsSold: 65,
-      unit: "STRIP",
-      totalRevenue: 1020000,
-      grossMarginPercent: 24.5,
-      revenueShare: 14.8,
-      cumulativeShare: 77.5,
-      currentStock: 45
-    },
-    {
-      id: "par-04",
-      branchId: "1",
-      name: "Salbutamol Inhaler 100mcg",
-      sku: "900000318",
-      category: "B",
-      unitsSold: 12,
-      unit: "BOX",
-      totalRevenue: 840000,
-      grossMarginPercent: 21.0,
-      revenueShare: 12.1,
-      cumulativeShare: 89.6,
-      currentStock: 8
-    },
-    {
-      id: "par-05",
-      branchId: "2",
-      name: "Minyak Telon Plus Lavender 100ml",
-      sku: "900000409",
-      category: "C",
-      unitsSold: 22,
-      unit: "BOTOL",
-      totalRevenue: 715000,
-      grossMarginPercent: 18.5,
-      revenueShare: 10.4,
-      cumulativeShare: 100.0,
-      currentStock: 15
+      if (salesRes?.success && Array.isArray(salesRes.data)) {
+        salesShiftRecords = salesRes.data;
+      }
+      if (sipRes?.success && Array.isArray(sipRes.data)) {
+        sipnapRecords = sipRes.data;
+      }
+      if (parRes?.success && Array.isArray(parRes.data)) {
+        paretoRecords = parRes.data;
+      }
+    } catch (err) {
+      console.error("Load reports error:", err);
+    } finally {
+      isLoading = false;
     }
-  ]);
+  }
 
   onMount(async () => {
     if (authStore.user?.branchId) {
       selectedBranchId = authStore.user.branchId;
     }
     try {
-      await mockApi.ensureDataLoaded();
-      const [bList, sipRes] = await Promise.all([
-        mockApi.getBranches(),
-        api.reports.getSipnap()
-      ]);
-      if (bList.length > 0) {
-        branches = bList;
-        if (!authStore.user?.branchId && bList[0]?.id) {
-          selectedBranchId = bList[0].id;
-        }
-      }
-      if (sipRes?.success && Array.isArray(sipRes.data) && sipRes.data.length > 0) {
-        sipnapRecords = sipRes.data.map((s: any) => ({
-          id: s.id,
-          branchId: "1",
-          period: "2026-11",
-          drugName: s.name,
-          group: s.category as any,
-          initialStock: s.initialStock,
-          receivedQty: s.stockIn,
-          supplier: s.pbfSupplier,
-          spRef: `SP-${s.code}`,
-          dispensedQty: s.stockOut,
-          recipeCount: Math.ceil(s.stockOut / 2),
-          expiredOrDestroyedQty: 0,
-          finalStock: s.finalStock,
-          physicalStock: s.finalStock,
-          unit: s.unit,
-          verifiedBy: "apt. Ghina Nadhifah, S.Farm."
-        }));
+      const bRes = await api.erp.getBranches();
+      if (bRes?.success && Array.isArray(bRes.data) && bRes.data.length > 0) {
+        branches = bRes.data;
       }
     } catch (_) {}
+
+    await loadReports();
+  });
+
+  // Re-fetch saat cabang atau periode berubah
+  $effect(() => {
+    const _b = selectedBranchId;
+    const _p = selectedPeriod;
+    loadReports();
   });
 
   // Branch-filtered arrays
@@ -434,6 +252,10 @@
     classAItems.reduce((a, b) => a + b.revenueShare, 0).toFixed(1)
   );
 
+  let selectedPeriodLabel = $derived(
+    periodOptions.find((p) => p.value === selectedPeriod)?.label || selectedPeriod
+  );
+
   function exportActiveReportCsv() {
     let csvContent = "";
     let filename = `laporan-${activeTab}-${selectedPeriod}.csv`;
@@ -481,13 +303,23 @@
 
 <svelte:head>
   <title>Laporan &bull; Hafidz Farma</title>
+  {#if isPrintModalOpen}
+    <style>
+      @media print {
+        @page {
+          size: A4 landscape;
+          margin: 10mm;
+        }
+      }
+    </style>
+  {/if}
 </svelte:head>
 
 <div class="space-y-6">
   <!-- PAGE HEADER -->
   <PageHeader
-    title="Laporan & Kepatuhan Farmasi"
-    subtitle="Penjualan, audit SIPNAP Kemenkes, dan analitik pareto"
+    title="Laporan Farmasi"
+    subtitle="Penjualan, analitik, audit SIPNAP Kemenkes"
     icon={BarChart3}
     breadcrumbs={[{ label: "Laporan" }]}
   >
@@ -495,15 +327,11 @@
       <div class="grid grid-rows-2 justify-items-end gap-2">
         <div class="flex justify-end gap-2">
           <!-- Period Selector -->
-          <div class="w-40">
+          <div class="w-44">
             <Select
               value={selectedPeriod}
               onchange={(val) => (selectedPeriod = val)}
-              options={[
-                { value: "2025-10", label: "Oktober 2025" },
-                { value: "2025-09", label: "September 2025" },
-                { value: "2025-08", label: "Agustus 2025" }
-              ]}
+              options={periodOptions}
             />
           </div>
 
@@ -513,7 +341,7 @@
             class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs"
           >
             <FileSpreadsheet class="w-4 h-4 text-emerald-600" />
-            <span>Export Excel/CSV</span>
+            <span class="hidden sm:inline">Export </span>CSV
           </button>
 
           <button
@@ -522,7 +350,7 @@
             class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
           >
             <Printer class="w-4 h-4" />
-            <span>Cetak Laporan PDF</span>
+            <span class="hidden sm:inline">Cetak Laporan </span>PDF
           </button>
         </div>
         
@@ -552,7 +380,7 @@
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
     <MetricCard
       title="Omzet Terpilih"
-      value={formatRupiah(totalGrossSales)}
+      value={formatRupiah(totalGrossSales, false)}
       subtext="Laba Kotor: {formatRupiah(totalGrossProfit)}"
       icon={BarChart3}
       variant="brand"
@@ -560,14 +388,14 @@
     <MetricCard
       title="Kepatuhan SIPNAP"
       value="{branchSipnapRecords.length} Obat Klop"
-      subtext="Saldo buku = fisik lemari narkotika"
+      subtext="Saldo buku = fisik narkotika"
       icon={ShieldAlert}
       variant="success"
     />
     <MetricCard
       title="Produk Kategori A"
       value="{classAItems.length} Item ({classAShareSum}%)"
-      subtext="Penyumbang utama omzet apotek"
+      subtext="Penyumbang utama omzet"
       icon={PieChart}
       variant="default"
     />
@@ -631,9 +459,9 @@
         <div class="text-[11px] text-slate-400 mt-1">Setoran laci kasir fisik</div>
       </div>
       <div class="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs">
-        <div class="text-xs font-bold text-slate-500">Non-Tunai (QRIS & EDC)</div>
+        <div class="text-xs font-bold text-slate-500">Non-Tunai (QRIS & Tempo)</div>
         <div class="text-xl font-black text-emerald-600 mt-1 font-mono">{formatRupiah(totalNonCashSales)}</div>
-        <div class="text-[11px] text-slate-400 mt-1">Settlement otomatis rekening bank</div>
+        <div class="text-[11px] text-slate-400 mt-1">Settlement bank / piutang pelanggan</div>
       </div>
       <div class="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs">
         <div class="text-xs font-bold text-slate-500">Pelayanan Resep Dokter</div>
@@ -643,7 +471,7 @@
     </div>
 
     <DataTable
-      title="Rekapitulasi Omzet, HPP, & Laba Kotor per Shift Kasir"
+      title="Omzet, HPP, & Laba Kotor per Shift Kasir"
       searchPlaceholder="Cari nama kasir, shift, atau cabang..."
       bind:searchValue={salesSearchQuery}
       totalCount={filteredSalesRecords.length}
@@ -656,7 +484,7 @@
             options={[
               { value: "ALL", label: "Semua Kanal" },
               { value: "CASH", label: "Tunai (Cash)" },
-              { value: "NON_CASH", label: "QRIS & EDC" },
+              { value: "NON_CASH", label: "QRIS & Tempo" },
               { value: "RESEP", label: "Resep Dokter" }
             ]}
           />
@@ -675,49 +503,61 @@
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredSalesRecords as r}
-          {@const marginPct = ((r.grossProfit / r.grossSales) * 100).toFixed(1)}
-          <tr class="hover:bg-blue-50/40 transition-colors">
-            <td class="py-3.5 px-4">
-              <div class="font-mono font-bold text-slate-900">{r.date}</div>
-              <div class="text-[11px] text-slate-500">{r.shiftName}</div>
-            </td>
-            <td class="py-3.5 px-4">
-              <div class="font-bold text-slate-800">{r.cashierName}</div>
-              <div class="text-[11px] text-slate-400">{r.branchName}</div>
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              <span class="px-2 py-0.5 rounded text-[10px] font-bold {r.paymentChannel === 'RESEP' ? 'bg-purple-100 text-purple-700' : r.paymentChannel === 'NON_CASH' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}">
-                {r.paymentChannel}
-              </span>
-            </td>
-            <td class="py-3.5 px-4 text-center font-mono font-bold text-slate-700">{r.trxCount}</td>
-            <td class="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
-              {formatRupiah(r.grossSales)}
-            </td>
-            <td class="py-3.5 px-4 text-right font-mono text-slate-600">
-              {formatRupiah(r.cogsHpp)}
-            </td>
-            <td class="py-3.5 px-4 text-right font-mono font-black text-emerald-600">
-              {formatRupiah(r.grossProfit)}
-              <div class="text-[10px] font-normal text-slate-400">Margin {marginPct}%</div>
-            </td>
-            <td class="py-3.5 px-4 text-center font-mono">
-              {#if r.cashVariance === 0}
-                <Badge type="SUCCESS" label="KLOP" />
+        {#if filteredSalesRecords.length === 0}
+          <tr>
+            <td colspan="8" class="text-center py-10 text-slate-400 text-xs">
+              {#if isLoading}
+                Sedang memuat data penjualan...
               {:else}
-                <span class="text-brand-red-600 font-bold text-xs">{formatRupiah(r.cashVariance)}</span>
+                Belum ada data transaksi shift kasir pada periode ini.
               {/if}
             </td>
           </tr>
-        {/each}
+        {:else}
+          {#each filteredSalesRecords as r}
+            {@const marginPct = r.grossSales > 0 ? ((r.grossProfit / r.grossSales) * 100).toFixed(1) : "0.0"}
+            <tr class="hover:bg-blue-50/40 transition-colors">
+              <td class="py-3.5 px-4">
+                <div class="font-mono font-bold text-slate-900">{r.date}</div>
+                <div class="text-[11px] text-slate-500">{r.shiftName}</div>
+              </td>
+              <td class="py-3.5 px-4">
+                <div class="font-bold text-slate-800">{r.cashierName}</div>
+                <div class="text-[11px] text-slate-400">{r.branchName}</div>
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                <span class="px-2 py-0.5 rounded text-[10px] font-bold {r.paymentChannel === 'RESEP' ? 'bg-purple-100 text-purple-700' : r.paymentChannel === 'NON_CASH' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}">
+                  {r.paymentChannel}
+                </span>
+              </td>
+              <td class="py-3.5 px-4 text-center font-mono font-bold text-slate-700">{r.trxCount}</td>
+              <td class="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
+                {formatRupiah(r.grossSales)}
+              </td>
+              <td class="py-3.5 px-4 text-right font-mono text-slate-600">
+                {formatRupiah(r.cogsHpp)}
+              </td>
+              <td class="py-3.5 px-4 text-right font-mono font-black text-emerald-600">
+                {formatRupiah(r.grossProfit)}
+                <div class="text-[10px] font-normal text-slate-400">Margin {marginPct}%</div>
+              </td>
+              <td class="py-3.5 px-4 text-center font-mono">
+                {#if r.cashVariance === 0}
+                  <Badge type="SUCCESS" label="KLOP" />
+                {:else}
+                  <span class="text-brand-red-600 font-bold text-xs">{formatRupiah(r.cashVariance)}</span>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        {/if}
       {/snippet}
     </DataTable>
 
   <!-- TAB 2: SIPNAP KEMENKES -->
   {:else if activeTab === "sipnap"}
     <DataTable
-      title="Laporan Mutasi Narkotika, Psikotropika, & Prekursor (SIPNAP Kemenkes)"
+      title="Mutasi Narkotika, Psikotropika, & Prekursor"
       searchPlaceholder="Cari nama obat, distributor PBF, atau nomor SP..."
       bind:searchValue={sipnapSearchQuery}
       totalCount={filteredSipnapRecords.length}
@@ -740,78 +580,90 @@
       {#snippet header()}
         <th class="py-3 px-4">Nama Obat</th>
         <th class="py-3 px-4">Golongan</th>
-        <th class="py-3 px-4 text-right">Saldo Awal</th>
-        <th class="py-3 px-4 text-right">Masuk PBF</th>
-        <th class="py-3 px-4">Distributor & No. SP</th>
-        <th class="py-3 px-4 text-right">Keluar Resep</th>
-        <th class="py-3 px-4 text-right">Saldo Akhir</th>
-        <th class="py-3 px-4 text-center">Audit Fisik</th>
+        <th class="py-3 px-4 text-right">Awal</th>
+        <th class="py-3 px-4 text-right">Masuk</th>
+        <th class="py-3 px-4">Distributor</th>
+        <th class="py-3 px-4 text-right">Keluar</th>
+        <th class="py-3 px-4 text-right">Saldo</th>
+        <th class="py-3 px-4 text-center">Fisik</th>
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredSipnapRecords as rec}
-          {@const isBalanced =
-            rec.initialStock + rec.receivedQty - rec.dispensedQty - rec.expiredOrDestroyedQty ===
-              rec.finalStock && rec.finalStock === rec.physicalStock}
-          <tr class="hover:bg-blue-50/40 transition-colors">
-            <td class="py-3.5 px-4 font-bold text-slate-900">{rec.drugName}</td>
-            <td class="py-3.5 px-4">
-              <Badge
-                type={rec.group === "NARKOTIKA"
-                  ? "NARKOTIKA"
-                  : rec.group === "PSIKOTROPIKA"
-                    ? "PSIKOTROPIKA"
-                    : "WARNING"}
-                label={rec.group}
-              />
-            </td>
-            <td class="py-3.5 px-4 text-right font-mono font-semibold">{rec.initialStock}</td>
-            <td class="py-3.5 px-4 text-right font-mono font-bold text-emerald-600">
-              +{rec.receivedQty}
-            </td>
-            <td class="py-3.5 px-4">
-              <div class="font-bold text-slate-700 text-xs">{rec.supplier}</div>
-              <div class="font-mono text-[10px] text-brand-blue">{rec.spRef}</div>
-            </td>
-            <td class="py-3.5 px-4 text-right font-mono font-bold text-brand-red-600">
-              -{rec.dispensedQty}
-              <div class="text-[10px] font-sans font-normal text-slate-400">
-                {rec.recipeCount} Lembar Resep
-              </div>
-            </td>
-            <td class="py-3.5 px-4 text-right font-mono font-black text-brand-blue">
-              {rec.finalStock} {rec.unit}
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              {#if isBalanced}
-                <Badge type="SUCCESS" label="KLOP" />
+        {#if filteredSipnapRecords.length === 0}
+          <tr>
+            <td colspan="9" class="text-center py-10 text-slate-400 text-xs">
+              {#if isLoading}
+                Sedang memuat data SIPNAP...
               {:else}
-                <Badge type="DANGER" label="SELISIH" />
+                Tidak ada data obat terkontrol (Narkotika/Psikotropika/Prekursor) pada periode ini.
               {/if}
             </td>
-            <td class="py-3.5 px-4 text-center">
-              <button
-                type="button"
-                onclick={() => {
-                  selectedSipnapRow = rec;
-                  isSipnapDetailModalOpen = true;
-                }}
-                class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-brand-blue"
-                title="Detail Audit Kartu Stok SIPNAP"
-              >
-                <Eye class="w-3.5 h-3.5" />
-              </button>
-            </td>
           </tr>
-        {/each}
+        {:else}
+          {#each filteredSipnapRecords as rec}
+            {@const isBalanced =
+              rec.initialStock + rec.receivedQty - rec.dispensedQty - rec.expiredOrDestroyedQty ===
+                rec.finalStock && rec.finalStock === rec.physicalStock}
+            <tr class="hover:bg-blue-50/40 transition-colors">
+              <td class="py-3.5 px-4 font-bold text-slate-900">{rec.drugName}</td>
+              <td class="py-3.5 px-4">
+                <Badge
+                  type={rec.group === "NARKOTIKA"
+                    ? "NARKOTIKA"
+                    : rec.group === "PSIKOTROPIKA"
+                      ? "PSIKOTROPIKA"
+                      : "WARNING"}
+                  label={rec.group}
+                />
+              </td>
+              <td class="py-3.5 px-4 text-right font-mono font-semibold">{rec.initialStock}</td>
+              <td class="py-3.5 px-4 text-right font-mono font-bold text-emerald-600">
+                +{rec.receivedQty}
+              </td>
+              <td class="py-3.5 px-4">
+                <div class="font-bold text-slate-700 text-xs">{rec.supplier}</div>
+                <div class="font-mono text-[10px] text-brand-blue">{rec.spRef}</div>
+              </td>
+              <td class="py-3.5 px-4 text-right font-mono font-bold text-brand-red-600">
+                -{rec.dispensedQty}
+                <div class="text-[10px] font-sans font-normal text-slate-400">
+                  {rec.recipeCount} Lembar Resep
+                </div>
+              </td>
+              <td class="py-3.5 px-4 text-right font-mono font-black text-brand-blue">
+                {rec.finalStock} {rec.unit}
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                {#if isBalanced}
+                  <Badge type="SUCCESS" label="KLOP" />
+                {:else}
+                  <Badge type="DANGER" label="SELISIH" />
+                {/if}
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                <button
+                  type="button"
+                  onclick={() => {
+                    selectedSipnapRow = rec;
+                    isSipnapDetailModalOpen = true;
+                  }}
+                  class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-brand-blue"
+                  title="Detail Audit Kartu Stok SIPNAP"
+                >
+                  <Eye class="w-3.5 h-3.5" />
+                </button>
+              </td>
+            </tr>
+          {/each}
+        {/if}
       {/snippet}
     </DataTable>
 
   <!-- TAB 3: PARETO ABC -->
   {:else if activeTab === "pareto"}
     <DataTable
-      title="Analisis Pareto ABC (Pengendalian Investasi & Kecepatan Perputaran Stok)"
+      title="Analisis Pareto ABC (Investasi & Perputaran Stok)"
       searchPlaceholder="Cari nama produk atau SKU..."
       bind:searchValue={paretoSearchQuery}
       totalCount={filteredParetoRecords.length}
@@ -832,51 +684,63 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Nama Produk</th>
-        <th class="py-3 px-4 text-center">Kelas ABC</th>
-        <th class="py-3 px-4 text-center">Qty Terjual</th>
-        <th class="py-3 px-4 text-right">Kontribusi Omzet</th>
-        <th class="py-3 px-4 text-right">Porsi / Kumulatif</th>
+        <th class="py-3 px-4">Produk</th>
+        <th class="py-3 px-4 text-center">Kelas</th>
+        <th class="py-3 px-4 text-center">Terjual</th>
+        <th class="py-3 px-4 text-right">Omzet</th>
+        <th class="py-3 px-4 text-right">Kumulatif</th>
         <th class="py-3 px-4 text-center">Margin</th>
-        <th class="py-3 px-4">Rekomendasi Pengadaan</th>
+        <th class="py-3 px-4">Rekomendasi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#each filteredParetoRecords as p}
-          <tr class="hover:bg-blue-50/40 transition-colors">
-            <td class="py-3.5 px-4">
-              <div class="font-bold text-slate-900">{p.name}</div>
-              <div class="font-mono text-[10px] text-slate-400">SKU: {p.sku} • Sisa Stok: {p.currentStock}</div>
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              <span class="px-3 py-1 rounded-full text-xs font-black {p.category === 'A' ? 'bg-red-100 text-brand-red-700' : p.category === 'B' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}">
-                Kelas {p.category}
-              </span>
-            </td>
-            <td class="py-3.5 px-4 text-center font-bold font-mono">
-              {p.unitsSold} {p.unit}
-            </td>
-            <td class="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
-              {formatRupiah(p.totalRevenue)}
-            </td>
-            <td class="py-3.5 px-4 text-right font-mono">
-              <div class="font-bold text-brand-blue">{p.revenueShare}%</div>
-              <div class="text-[10px] text-slate-400">Kumulatif: {p.cumulativeShare}%</div>
-            </td>
-            <td class="py-3.5 px-4 text-center font-mono font-bold text-emerald-600">
-              {p.grossMarginPercent}%
-            </td>
-            <td class="py-3.5 px-4 text-xs">
-              {#if p.category === "A"}
-                <span class="text-brand-red-600 font-semibold">Wajib Buffer Stock Tinggi (Zero Stock-Out)</span>
-              {:else if p.category === "B"}
-                <span class="text-amber-700 font-semibold">Order Berkala sesuai Reorder Point (ROP)</span>
+        {#if filteredParetoRecords.length === 0}
+          <tr>
+            <td colspan="7" class="text-center py-10 text-slate-400 text-xs">
+              {#if isLoading}
+                Sedang memuat data analisis Pareto...
               {:else}
-                <span class="text-slate-500">Order Just-In-Time (Cegah Dead Stock)</span>
+                Belum ada data perputaran produk untuk analisis Pareto pada periode ini.
               {/if}
             </td>
           </tr>
-        {/each}
+        {:else}
+          {#each filteredParetoRecords as p}
+            <tr class="hover:bg-blue-50/40 transition-colors">
+              <td class="py-3.5 px-4">
+                <div class="font-bold text-slate-900">{p.name}</div>
+                <div class="font-mono text-[10px] text-slate-400">SKU: {p.sku} • Sisa Stok: {p.currentStock}</div>
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                <span class="px-3 py-1 rounded-full text-xs font-black {p.category === 'A' ? 'bg-red-100 text-brand-red-700' : p.category === 'B' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}">
+                  Kelas {p.category}
+                </span>
+              </td>
+              <td class="py-3.5 px-4 text-center font-bold font-mono">
+                {p.unitsSold} {p.unit}
+              </td>
+              <td class="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
+                {formatRupiah(p.totalRevenue)}
+              </td>
+              <td class="py-3.5 px-4 text-right font-mono">
+                <div class="font-bold text-brand-blue">{p.revenueShare}%</div>
+                <div class="text-[10px] text-slate-400">Kumulatif: {p.cumulativeShare}%</div>
+              </td>
+              <td class="py-3.5 px-4 text-center font-mono font-bold text-emerald-600">
+                {p.grossMarginPercent}%
+              </td>
+              <td class="py-3.5 px-4 text-xs">
+                {#if p.category === "A"}
+                  <span class="text-brand-red-600 font-semibold">Wajib Buffer Stock Tinggi (Zero Stock-Out)</span>
+                {:else if p.category === "B"}
+                  <span class="text-amber-700 font-semibold">Order Berkala sesuai Reorder Point (ROP)</span>
+                {:else}
+                  <span class="text-slate-500">Order Just-In-Time (Cegah Dead Stock)</span>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        {/if}
       {/snippet}
     </DataTable>
   {/if}
@@ -948,72 +812,286 @@
   </div>
 {/if}
 
-<!-- MODAL PRATINJAU CETAK LAPORAN RESMI -->
+<!-- MODAL PRATINJAU CETAK LAPORAN RESMI (FULL A4 LANDSCAPE) -->
 {#if isPrintModalOpen}
   <div
     use:portal
     data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    class="modal-overlay print-active-sheet fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 sm:!p-6 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
       if (e.target === e.currentTarget) isPrintModalOpen = false;
     }}
     role="presentation"
   >
-    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs">
-      <div class="text-center border-b-2 border-slate-900 pb-3">
-        <div class="font-black text-sm text-slate-900">APOTEK HAFIDZ FARMA</div>
-        <div class="text-[11px] text-slate-600">
-          Laporan Resmi: {activeTab === "sipnap"
-            ? "Pelaporan Narkotika & Psikotropika (SIPNAP)"
-            : activeTab === "pareto"
-              ? "Analisis Pareto ABC Inventori"
-              : "Rekapitulasi Omzet & Laba Kotor"}
-        </div>
-        <div class="font-mono text-[11px] text-brand-blue font-bold">Periode: {selectedPeriod}</div>
+    <div class="bg-white rounded-2xl max-w-5xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs max-h-[92vh] overflow-y-auto scrollbar-minimalist print-sheet-card">
+      <!-- KOP APOTEK RESMI -->
+      <div class="border-b-2 border-slate-900 pb-3 text-center space-y-0.5">
+        <div class="font-black text-base uppercase tracking-wider text-slate-900">APOTEK HAFIDZ FARMA</div>
+        <div class="text-[11px] text-slate-600">SIA: 503/0014/SIA/DPMPTSP/2024 • Jl. Letjen Mashudi No. 45, Tasikmalaya • Telp: (0265) 345678</div>
+        <div class="text-[10px] text-slate-500 font-mono">Email: apotek.hafidzfarma@gmail.com • Sistem Informasi Manajemen Farmasi Terpadu</div>
       </div>
 
-      <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-1.5">
-        <div class="flex justify-between">
-          <span class="text-slate-500">Total Omzet Bruto:</span>
-          <strong class="font-mono">{formatRupiah(totalGrossSales)}</strong>
+      <!-- JUDUL LAPORAN & METADATA -->
+      <div class="flex flex-col sm:flex-row sm:items-end justify-between border-b border-slate-200 pb-2 gap-2">
+        <div>
+          <div class="text-[10px] font-bold tracking-widest uppercase text-brand-blue">DOKUMEN LAPORAN RESMI</div>
+          <h2 class="text-sm sm:text-base font-black text-slate-900 uppercase">
+            {#if activeTab === "sipnap"}
+              Laporan Mutasi Narkotika, Psikotropika, & Prekursor (SIPNAP Kemenkes)
+            {:else if activeTab === "pareto"}
+              Laporan Analisis Pareto Inventori ABC (Evaluasi Nilai Omzet & Stok)
+            {:else}
+              Laporan Rekapitulasi Penjualan, HPP, & Laba Kotor Shift Kasir
+            {/if}
+          </h2>
         </div>
-        <div class="flex justify-between">
-          <span class="text-slate-500">Total Laba Kotor:</span>
-          <strong class="font-mono text-emerald-700">{formatRupiah(totalGrossProfit)} ({averageMarginPercent}%)</strong>
-        </div>
-        <div class="flex justify-between">
-          <span class="text-slate-500">Item SIPNAP Teraudit:</span>
-          <strong>{branchSipnapRecords.length} Jenis Obat (100% Klop)</strong>
-        </div>
-      </div>
-
-      <div class="flex justify-between items-end pt-4 text-[11px] text-slate-600">
-        <div>Dokumen Audit Internal & Pelaporan Dinkes/BPOM</div>
-        <div class="text-right">
-          <div>Tasikmalaya, Oktober 2025</div>
-          <div class="font-bold text-slate-900 pt-8 underline">apt. Hafidz Nurul, S.Farm.</div>
-          <div class="text-[10px]">SIPA: 503/044/Dinkes/2024</div>
+        <div class="text-left sm:text-right text-[11px] text-slate-600 shrink-0 font-medium">
+          <div><span class="text-slate-400">Periode:</span> <strong class="text-slate-900">{selectedPeriodLabel}</strong></div>
+          <div><span class="text-slate-400">Cabang:</span> <strong class="text-slate-900">{selectedBranchId === "ALL" ? "Semua Cabang (Konsolidasi)" : (branches.find((b) => b.id === selectedBranchId)?.name || "Cabang Terpilih")}</strong></div>
+          <div class="text-[10px] text-slate-400">Dicetak: {new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
         </div>
       </div>
 
-      <div class="border-t border-slate-100 pt-3 flex justify-end gap-2">
+      <!-- RINGKASAN EKSEKUTIF -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200 text-[11px]">
+        <div>
+          <span class="text-slate-500 block text-[10px]">Total Omzet Bruto</span>
+          <strong class="font-mono text-slate-900 text-xs">{formatRupiah(totalGrossSales)}</strong>
+        </div>
+        <div>
+          <span class="text-slate-500 block text-[10px]">Total HPP / Modal</span>
+          <strong class="font-mono text-slate-700 text-xs">{formatRupiah(totalGrossSales - totalGrossProfit)}</strong>
+        </div>
+        <div>
+          <span class="text-slate-500 block text-[10px]">Laba Kotor (Margin)</span>
+          <strong class="font-mono text-emerald-700 text-xs">{formatRupiah(totalGrossProfit)} ({averageMarginPercent}%)</strong>
+        </div>
+        <div>
+          <span class="text-slate-500 block text-[10px]">Total Data Terfilter</span>
+          <strong class="font-mono text-slate-900 text-xs">
+            {#if activeTab === "sipnap"}
+              {filteredSipnapRecords.length} Item SIPNAP
+            {:else if activeTab === "pareto"}
+              {filteredParetoRecords.length} SKU Analisis
+            {:else}
+              {filteredSalesRecords.length} Record Shift ({filteredSalesRecords.reduce((a, b) => a + b.trxCount, 0)} Trx)
+            {/if}
+          </strong>
+        </div>
+      </div>
+
+      <!-- TABEL DATA LENGKAP LAPORAN (PRINTABLE FULL TABLE) -->
+      <div class="border border-slate-200 rounded-xl overflow-hidden">
+        <table class="w-full text-left border-collapse text-[11px]">
+          {#if activeTab === "penjualan"}
+            <thead class="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold">
+              <tr>
+                <th class="py-2 px-2.5 text-center w-8">No</th>
+                <th class="py-2 px-2.5">Tanggal & Shift</th>
+                <th class="py-2 px-2.5">Kasir & Cabang</th>
+                <th class="py-2 px-2.5 text-center">Metode</th>
+                <th class="py-2 px-2.5 text-center">Trx</th>
+                <th class="py-2 px-2.5 text-right">Omzet Bruto</th>
+                <th class="py-2 px-2.5 text-right">HPP (Modal)</th>
+                <th class="py-2 px-2.5 text-right">Laba Kotor</th>
+                <th class="py-2 px-2.5 text-center">Selisih Kas</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              {#if filteredSalesRecords.length === 0}
+                <tr>
+                  <td colspan="9" class="text-center py-6 text-slate-400">Tidak ada data shift kasir untuk filter ini.</td>
+                </tr>
+              {:else}
+                {#each filteredSalesRecords as r, idx}
+                  {@const marginPct = r.grossSales > 0 ? ((r.grossProfit / r.grossSales) * 100).toFixed(1) : "0.0"}
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="py-1.5 px-2.5 text-center text-slate-400 font-mono">{idx + 1}</td>
+                    <td class="py-1.5 px-2.5">
+                      <div class="font-mono font-bold text-slate-900">{r.date}</div>
+                      <div class="text-[10px] text-slate-500">{r.shiftName}</div>
+                    </td>
+                    <td class="py-1.5 px-2.5">
+                      <div class="font-bold text-slate-800">{r.cashierName}</div>
+                      <div class="text-[10px] text-slate-400">{r.branchName}</div>
+                    </td>
+                    <td class="py-1.5 px-2.5 text-center font-bold text-[10px]">
+                      <span class="px-1.5 py-0.5 rounded {r.paymentChannel === 'RESEP' ? 'bg-purple-100 text-purple-800' : r.paymentChannel === 'NON_CASH' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}">
+                        {r.paymentChannel}
+                      </span>
+                    </td>
+                    <td class="py-1.5 px-2.5 text-center font-mono font-bold">{r.trxCount}</td>
+                    <td class="py-1.5 px-2.5 text-right font-mono font-bold text-slate-900">{formatRupiah(r.grossSales)}</td>
+                    <td class="py-1.5 px-2.5 text-right font-mono text-slate-600">{formatRupiah(r.cogsHpp)}</td>
+                    <td class="py-1.5 px-2.5 text-right font-mono font-bold text-emerald-700">
+                      {formatRupiah(r.grossProfit)}
+                      <span class="text-[9px] font-normal text-slate-400 block">({marginPct}%)</span>
+                    </td>
+                    <td class="py-1.5 px-2.5 text-center font-mono">
+                      {#if r.cashVariance === 0}
+                        <span class="text-emerald-600 font-bold text-[10px]">KLOP</span>
+                      {:else}
+                        <span class="text-rose-600 font-bold text-[10px]">{formatRupiah(r.cashVariance)}</span>
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              {/if}
+            </tbody>
+            <tfoot class="bg-slate-100 font-bold border-t-2 border-slate-300 text-slate-900">
+              <tr>
+                <td colspan="4" class="py-2 px-2.5 text-right">TOTAL KESELURUHAN:</td>
+                <td class="py-2 px-2.5 text-center font-mono">{filteredSalesRecords.reduce((a, b) => a + b.trxCount, 0)}</td>
+                <td class="py-2 px-2.5 text-right font-mono">{formatRupiah(totalGrossSales)}</td>
+                <td class="py-2 px-2.5 text-right font-mono text-slate-700">{formatRupiah(totalGrossSales - totalGrossProfit)}</td>
+                <td class="py-2 px-2.5 text-right font-mono text-emerald-700">{formatRupiah(totalGrossProfit)}</td>
+                <td class="py-2 px-2.5 text-center font-mono text-[10px] text-slate-600">Audit Klop</td>
+              </tr>
+            </tfoot>
+          {:else if activeTab === "sipnap"}
+            <thead class="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold">
+              <tr>
+                <th class="py-2 px-2.5 text-center w-8">No</th>
+                <th class="py-2 px-2.5">Nama Obat & Sediaan</th>
+                <th class="py-2 px-2.5 text-center">Golongan</th>
+                <th class="py-2 px-2.5 text-right">Saldo Awal</th>
+                <th class="py-2 px-2.5 text-right">Pemasukan PBF</th>
+                <th class="py-2 px-2.5">Distributor & No. SP</th>
+                <th class="py-2 px-2.5 text-right">Pengeluaran Resep</th>
+                <th class="py-2 px-2.5 text-right">Saldo Akhir</th>
+                <th class="py-2 px-2.5 text-center">Audit Fisik</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              {#if filteredSipnapRecords.length === 0}
+                <tr>
+                  <td colspan="9" class="text-center py-6 text-slate-400">Tidak ada data SIPNAP untuk filter ini.</td>
+                </tr>
+              {:else}
+                {#each filteredSipnapRecords as r, idx}
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="py-1.5 px-2.5 text-center text-slate-400 font-mono">{idx + 1}</td>
+                    <td class="py-1.5 px-2.5 font-bold text-slate-900">{r.drugName}</td>
+                    <td class="py-1.5 px-2.5 text-center">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-bold {r.group === 'NARKOTIKA' ? 'bg-red-100 text-red-700' : r.group === 'PSIKOTROPIKA' ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'}">
+                        {r.group}
+                      </span>
+                    </td>
+                    <td class="py-1.5 px-2.5 text-right font-mono">{r.initialStock} {r.unit}</td>
+                    <td class="py-1.5 px-2.5 text-right font-mono font-bold text-blue-700">+{r.receivedQty} {r.unit}</td>
+                    <td class="py-1.5 px-2.5 text-[10px]">
+                      <div class="font-bold text-slate-800">{r.supplier}</div>
+                      <div class="text-slate-500 font-mono">{r.spRef}</div>
+                    </td>
+                    <td class="py-1.5 px-2.5 text-right font-mono font-bold text-rose-700">-{r.dispensedQty} {r.unit}</td>
+                    <td class="py-1.5 px-2.5 text-right font-mono font-bold text-slate-900">{r.finalStock} {r.unit}</td>
+                    <td class="py-1.5 px-2.5 text-center font-bold text-[10px]">
+                      {#if r.physicalStock === r.finalStock}
+                        <span class="text-emerald-700">SESUAI ({r.physicalStock})</span>
+                      {:else}
+                        <span class="text-rose-700">SELISIH ({r.physicalStock - r.finalStock})</span>
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              {/if}
+            </tbody>
+            <tfoot class="bg-slate-100 font-bold border-t-2 border-slate-300 text-slate-900">
+              <tr>
+                <td colspan="7" class="py-2 px-2.5 text-right">TOTAL REGISTER SIPNAP TERAUDIT:</td>
+                <td colspan="2" class="py-2 px-2.5 font-mono text-brand-blue">{filteredSipnapRecords.length} Item Obat Terverifikasi</td>
+              </tr>
+            </tfoot>
+          {:else if activeTab === "pareto"}
+            <thead class="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold">
+              <tr>
+                <th class="py-2 px-2.5 text-center w-12">Rank</th>
+                <th class="py-2 px-2.5">Nama Produk & SKU</th>
+                <th class="py-2 px-2.5 text-center">Kelas ABC</th>
+                <th class="py-2 px-2.5 text-right">Qty Terjual</th>
+                <th class="py-2 px-2.5 text-right">Nilai Omzet (Revenue)</th>
+                <th class="py-2 px-2.5 text-right">Kontribusi</th>
+                <th class="py-2 px-2.5 text-right">Kumulatif %</th>
+                <th class="py-2 px-2.5 text-right">Stok Saat Ini</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              {#if filteredParetoRecords.length === 0}
+                <tr>
+                  <td colspan="8" class="text-center py-6 text-slate-400">Tidak ada data analisis Pareto untuk filter ini.</td>
+                </tr>
+              {:else}
+                {#each filteredParetoRecords as r, idx}
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="py-1.5 px-2.5 text-center font-mono font-bold text-slate-600">#{idx + 1}</td>
+                    <td class="py-1.5 px-2.5">
+                      <div class="font-bold text-slate-900">{r.name}</div>
+                      <div class="text-[10px] text-slate-400 font-mono">SKU: {r.sku}</div>
+                    </td>
+                    <td class="py-1.5 px-2.5 text-center">
+                      <span class="px-2 py-0.5 rounded text-[10px] font-black {r.category === 'A' ? 'bg-red-100 text-red-700 border border-red-200' : r.category === 'B' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-slate-100 text-slate-700 border border-slate-200'}">
+                        KELAS {r.category}
+                      </span>
+                    </td>
+                    <td class="py-1.5 px-2.5 text-right font-mono">{r.unitsSold} {r.unit}</td>
+                    <td class="py-1.5 px-2.5 text-right font-mono font-bold text-slate-900">{formatRupiah(r.totalRevenue)}</td>
+                    <td class="py-1.5 px-2.5 text-right font-mono">{r.revenueShare.toFixed(1)}%</td>
+                    <td class="py-1.5 px-2.5 text-right font-mono font-bold text-blue-700">{r.cumulativeShare.toFixed(1)}%</td>
+                    <td class="py-1.5 px-2.5 text-right font-mono font-bold">{r.currentStock} {r.unit}</td>
+                  </tr>
+                {/each}
+              {/if}
+            </tbody>
+            <tfoot class="bg-slate-100 font-bold border-t-2 border-slate-300 text-slate-900">
+              <tr>
+                <td colspan="4" class="py-2 px-2.5 text-right">TOTAL NILAI OMZET ANALISIS:</td>
+                <td class="py-2 px-2.5 text-right font-mono text-brand-blue">{formatRupiah(filteredParetoRecords.reduce((a, b) => a + b.totalRevenue, 0))}</td>
+                <td colspan="3" class="py-2 px-2.5 text-right text-[10px] text-slate-500 font-normal">Kaidah 80/20: Kelas A penyumbang omzet vital</td>
+              </tr>
+            </tfoot>
+          {/if}
+        </table>
+      </div>
+
+      <!-- KETERANGAN KEPATUHAN & TANDA TANGAN APOTEKER -->
+      <div class="grid grid-cols-2 gap-4 items-end pt-3 text-[11px] text-slate-600 print-avoid-break">
+        <div class="space-y-1 border-l-2 border-slate-300 pl-3">
+          <div class="font-bold text-slate-800">Catatan Pelaporan & Kepatuhan Farmasi:</div>
+          <div class="text-[10px] text-slate-500 leading-relaxed">
+            1. Dokumen ini sah dan diterbitkan secara digital oleh Sistem ERP & POS Apotek Hafidz Farma.<br />
+            2. Pelaporan Narkotika/Psikotropika mengacu pada Permenkes No. 3/2015 dan terintegrasi SIPNAP Kemenkes.<br />
+            3. Berita acara fisik dan kartu stok manual tersimpan di lemari khusus berpintu ganda.
+          </div>
+        </div>
+        <div class="text-right space-y-1">
+          <div>Tasikmalaya, {new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</div>
+          <div class="text-slate-500 text-[10px]">Apoteker Pengelola Apotek (APA),</div>
+          <div class="h-12 flex items-end justify-end">
+            <span class="text-[9px] text-slate-400 italic">(Tanda Tangan & Cap Apotek)</span>
+          </div>
+          <div class="font-bold text-slate-900 underline">apt. Hafidz Nurul, S.Farm.</div>
+          <div class="text-[10px] text-slate-500 font-mono">SIPA: 503/044/Dinkes/2024 • STRA: 19930812/STRA-ITB/2017/23412</div>
+        </div>
+      </div>
+
+      <!-- TOMBOL AKSI MODAL (DISEMBUNYIKAN SAAT CETAK) -->
+      <div class="border-t border-slate-100 pt-3 flex justify-end gap-2 no-print">
         <button
           type="button"
           onclick={() => (isPrintModalOpen = false)}
-          class="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-bold"
+          class="px-3.5 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 text-xs transition-colors"
         >
-          Batal
+          Tutup
         </button>
         <button
           type="button"
           onclick={() => {
             window.print();
-            isPrintModalOpen = false;
           }}
-          class="px-4 py-1.5 rounded-xl bg-brand-blue-700 text-white font-bold inline-flex items-center gap-1.5"
+          class="px-4 py-1.5 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold inline-flex items-center gap-1.5 text-xs shadow-sm transition-colors"
         >
           <Printer class="w-3.5 h-3.5" />
-          <span>Cetak Sekarang</span>
+          <span>Cetak Dokumen Resmi (A4 Landscape)</span>
         </button>
       </div>
     </div>

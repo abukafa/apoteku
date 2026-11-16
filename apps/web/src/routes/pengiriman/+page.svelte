@@ -938,6 +938,16 @@
 
 <svelte:head>
   <title>Pengiriman &bull; Hafidz Farma</title>
+  {#if isDetailModalOpen}
+    <style>
+      @media print {
+        @page {
+          size: A4 portrait;
+          margin: 12mm 15mm;
+        }
+      }
+    </style>
+  {/if}
 </svelte:head>
 
 <div class="space-y-6">
@@ -1721,23 +1731,30 @@
 {/if}
 
 <!-- ======================================================================= -->
-<!-- MODAL 3: DETAIL & CETAK SURAT JALAN                                     -->
+<!-- MODAL 3: DETAIL & CETAK SURAT JALAN (A4 PORTRAIT)                       -->
 <!-- ======================================================================= -->
 {#if isDetailModalOpen && selectedTransferForDetail}
   <div
     use:portal
     data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    class="modal-overlay print-active-sheet fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
       if (e.target === e.currentTarget) isDetailModalOpen = false;
     }}
     role="presentation"
   >
-    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs max-h-[92vh] overflow-y-auto scrollbar-minimalist">
-      <div class="flex items-start justify-between border-b border-slate-200 pb-3">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs max-h-[92vh] overflow-y-auto scrollbar-minimalist print-sheet-card">
+      <!-- KOP APOTEK RESMI -->
+      <div class="border-b-2 border-slate-900 pb-3 text-center space-y-0.5">
+        <div class="font-black text-sm uppercase tracking-wide text-slate-900">APOTEK HAFIDZ FARMA</div>
+        <div class="text-[11px] text-slate-600">SIA: 503/0014/SIA/DPMPTSP/2024 • Jl. Letjen Mashudi No. 45, Tasikmalaya</div>
+        <div class="text-[10px] text-slate-500 font-mono">Telp: (0265) 345678 • Logistik Farmasi & Distribusi Antar Cabang</div>
+      </div>
+
+      <div class="flex items-start justify-between border-b border-slate-200 pb-2">
         <div>
           <div class="text-[10px] font-bold uppercase tracking-widest text-brand-blue">
-            DOKUMEN SURAT JALAN MUTASI APOTEK HAFIDZ FARMA
+            SURAT JALAN MUTASI STOK OBAT & BMHP
           </div>
           <div class="flex items-center gap-2 mt-0.5">
             <h3 class="text-base font-black text-slate-900 font-mono">
@@ -1758,7 +1775,7 @@
         </div>
         <button
           onclick={() => (isDetailModalOpen = false)}
-          class="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+          class="p-1 text-slate-400 hover:text-slate-600 rounded-lg no-print"
           aria-label="Tutup"
         >
           <X class="w-5 h-5" />
@@ -1838,36 +1855,36 @@
         </div>
       {/if}
 
-      <div class="grid grid-cols-3 gap-3 pt-4 text-center text-[11px] text-slate-600">
+      <div class="grid grid-cols-3 gap-3 pt-4 text-center text-[11px] text-slate-600 print-avoid-break">
         <div class="border-t border-slate-200 pt-2">
           <div class="font-bold text-slate-800">Pengirim</div>
-          <div class="mt-6 text-slate-500">({selectedTransferForDetail.operator})</div>
+          <div class="mt-8 text-slate-500">({selectedTransferForDetail.operator})</div>
         </div>
         <div class="border-t border-slate-200 pt-2">
           <div class="font-bold text-slate-800">Kurir Logistik</div>
-          <div class="mt-6 text-slate-500">({selectedTransferForDetail.courierName || "Kurir"})</div>
+          <div class="mt-8 text-slate-500">({selectedTransferForDetail.courierName || "Kurir"})</div>
         </div>
         <div class="border-t border-slate-200 pt-2">
-          <div class="font-bold text-slate-800">Penerima</div>
-          <div class="mt-6 text-slate-500">({selectedTransferForDetail.receivedBy || "................"})</div>
+          <div class="font-bold text-slate-800">Penerima Cabang</div>
+          <div class="mt-8 text-slate-500">({selectedTransferForDetail.receivedBy || "................"})</div>
         </div>
       </div>
 
-      <div class="border-t border-slate-100 pt-4 flex items-center justify-end gap-2">
+      <div class="border-t border-slate-100 pt-4 flex items-center justify-end gap-2 no-print">
         <button
           type="button"
           onclick={() => (isDetailModalOpen = false)}
-          class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
+          class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50 transition-colors"
         >
           Tutup
         </button>
         <button
           type="button"
           onclick={() => window.print()}
-          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs inline-flex items-center gap-1.5"
+          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs inline-flex items-center gap-1.5 transition-colors shadow-sm"
         >
           <Printer class="w-4 h-4" />
-          <span>Cetak Surat Jalan</span>
+          <span>Cetak Surat Jalan (A4)</span>
         </button>
       </div>
     </div>

@@ -150,6 +150,226 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
     }
   })
 
+  // 1A. DATA LENGKAP DASHBOARD (KPI, GRAFIK 7 HARI, STOK MENIPIS, NOTIFIKASI REAL-TIME)
+  .get("/dashboard", async () => {
+    try {
+      const nowWib = new Date(Date.now() + 7 * 3600 * 1000);
+      const todayStr = nowWib.toISOString().slice(0, 10);
+      const yesterdayWib = new Date(Date.now() + 7 * 3600 * 1000 - 24 * 3600 * 1000);
+      const yesterdayStr = yesterdayWib.toISOString().slice(0, 10);
+
+      const [prodCount] = await db.select({ val: count() }).from(schema.products);
+      const [custCount] = await db.select({ val: count() }).from(schema.customers);
+      const [totalSalesTrx] = await db.select({ val: count() }).from(schema.salesTransactions);
+
+      const [todaySales] = await db
+        .select({
+          totalAmount: sql<string>`COALESCE(SUM(CAST(${schema.salesTransactions.grandTotal} AS numeric)), 0)`,
+          trxCount: count()
+        })
+        .from(schema.salesTransactions)
+        .where(sql`TO_CHAR(${schema.salesTransactions.createdAt} AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') = ${todayStr}`);
+
+      const [yesterdaySales] = await db
+        .select({
+          totalAmount: sql<string>`COALESCE(SUM(CAST(${schema.salesTransactions.grandTotal} AS numeric)), 0)`,
+          trxCount: count()
+        })
+        .from(schema.salesTransactions)
+        .where(sql`TO_CHAR(${schema.salesTransactions.createdAt} AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') = ${yesterdayStr}`);
+
+      // 7 Hari Terakhir untuk grafik
+      const sevenDays: Array<{ dateStr: string; label: string }> = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(Date.now() + 7 * 3600 * 1000 - i * 24 * 3600 * 1000);
+        const ds = d.toISOString().slice(0, 10);
+        const dayNum = d.getUTCDate();
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"];
+        const label = `${dayNum} ${monthNames[d.getUTCMonth()]}`;
+        sevenDays.push({ dateStr: ds, label });
+      }
+
+      const sevenDaysStats = await db
+        .select({
+          dateStr: sql<string>`TO_CHAR(${schema.salesTransactions.createdAt} AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD')`,
+          totalSales: sql<string>`COALESCE(SUM(CAST(${schema.salesTransactions.grandTotal} AS numeric)), 0)`,
+          trxCount: count()
+        })
+        .from(schema.salesTransactions)
+        .where(sql`TO_CHAR(${schema.salesTransactions.createdAt} AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') >= ${sevenDays[0].dateStr}`)
+        .groupBy(sql`TO_CHAR(${schema.salesTransactions.createdAt} AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD')`);
+
+      const sevenDaysMap = new Map<string, { totalSales: number; trxCount: number }>();
+      for (const s of sevenDaysStats) {
+        if (s.dateStr) {
+          sevenDaysMap.set(s.dateStr, {
+            totalSales: Number(s.totalSales || 0),
+            trxCount: Number(s.trxCount || 0)
+          });
+        }
+      }
+
+      const chartData = sevenDays.map((d) => {
+        const val = sevenDaysMap.get(d.dateStr) || { totalSales: 0, trxCount: 0 };
+        return {
+          date: d.dateStr,
+          label: d.label,
+          sales: val.totalSales,
+          salesStr: Math.round(val.totalSales).toLocaleString("id-ID"),
+          trxs: val.trxCount
+        };
+      });
+
+      // Daftar stok menipis
+      const lowStockItems = await db
+        .select({
+          id: schema.products.id,
+          name: schema.products.name,
+          baseUnit: schema.products.baseUnit,
+          minStock: schema.products.minStock,
+          currentStock: schema.branchStocks.totalQtyBase
+        })
+        .from(schema.branchStocks)
+        .innerJoin(schema.products, eq(schema.branchStocks.productId, schema.products.id))
+        .where(sql`CAST(${schema.branchStocks.totalQtyBase} AS numeric) <= GREATEST(CAST(${schema.products.minStock} AS numeric), 15)`)
+        .orderBy(sql`CAST(${schema.branchStocks.totalQtyBase} AS numeric) ASC`)
+        .limit(10);
+
+      const formattedLowStock = lowStockItems.map((item) => ({
+        id: item.id,
+        name: item.name,
+        stock: Math.round(Number(item.currentStock || 0)),
+        minStock: Math.max(Math.round(Number(item.minStock || 0)), 10),
+        unit: item.baseUnit
+      }));
+
+      const [lowStockCountRes] = await db
+        .select({ val: count() })
+        .from(schema.branchStocks)
+        .innerJoin(schema.products, eq(schema.branchStocks.productId, schema.products.id))
+        .where(sql`CAST(${schema.branchStocks.totalQtyBase} AS numeric) <= GREATEST(CAST(${schema.products.minStock} AS numeric), 15)`);
+
+      // Notifikasi & Pengingat real
+      const notifications: Array<{
+        id: string;
+        title: string;
+        desc: string;
+        time: string;
+        type: "ALERT" | "PURCHASE" | "EXPIRY" | "RECEIVABLE";
+      }> = [];
+
+      // A. Batch Mendekati ED (< 90 hari)
+      const expiringBatches = await db
+        .select({
+          productName: schema.products.name,
+          batchNo: schema.productBatches.batchNo,
+          expiredDate: schema.productBatches.expiredDate,
+          qty: schema.branchBatchStocks.qtyBase
+        })
+        .from(schema.branchBatchStocks)
+        .innerJoin(schema.products, eq(schema.branchBatchStocks.productId, schema.products.id))
+        .innerJoin(schema.productBatches, eq(schema.branchBatchStocks.batchId, schema.productBatches.id))
+        .where(sql`${schema.productBatches.expiredDate} IS NOT NULL AND CAST(${schema.branchBatchStocks.qtyBase} AS numeric) > 0 AND ${schema.productBatches.expiredDate} <= (CURRENT_DATE + INTERVAL '90 days')`)
+        .orderBy(schema.productBatches.expiredDate)
+        .limit(2);
+
+      for (const b of expiringBatches) {
+        const expDate = b.expiredDate ? new Date(b.expiredDate).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "-";
+        notifications.push({
+          id: `exp-${b.batchNo || crypto.randomUUID()}`,
+          title: `Mendekati ED: ${b.productName}`,
+          desc: `Batch ${b.batchNo || "-"} &bull; ED: ${expDate} (Sisa ${Math.round(Number(b.qty || 0))})`,
+          time: "ED Alert",
+          type: "EXPIRY"
+        });
+      }
+
+      // B. Stok Menipis
+      for (const ls of formattedLowStock.slice(0, 2)) {
+        notifications.push({
+          id: `stock-${ls.id}`,
+          title: `Stok ${ls.name} menipis`,
+          desc: `Sisa ${ls.stock} ${ls.unit} (min. ${ls.minStock} ${ls.unit})`,
+          time: "Stok Menipis",
+          type: "ALERT"
+        });
+      }
+
+      // C. Tagihan Hutang Pembelian PBF Belum Lunas
+      const duePurchases = await db
+        .select({
+          invoiceNumber: schema.purchaseInvoices.invoiceNumber,
+          supplierName: schema.suppliers.name,
+          dueDate: schema.purchaseInvoices.dueDate,
+          grandTotal: schema.purchaseInvoices.grandTotal,
+          paidAmount: schema.purchaseInvoices.paidAmount
+        })
+        .from(schema.purchaseInvoices)
+        .leftJoin(schema.suppliers, eq(schema.purchaseInvoices.supplierId, schema.suppliers.id))
+        .where(eq(schema.purchaseInvoices.isPaidOff, false))
+        .orderBy(schema.purchaseInvoices.dueDate)
+        .limit(2);
+
+      for (const dp of duePurchases) {
+        const sisa = Number(dp.grandTotal || 0) - Number(dp.paidAmount || 0);
+        const dueStr = dp.dueDate ? new Date(dp.dueDate).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "-";
+        notifications.push({
+          id: `due-${dp.invoiceNumber}`,
+          title: `Jatuh tempo faktur ${dp.supplierName || "PBF"}`,
+          desc: `No. ${dp.invoiceNumber} &bull; Sisa Rp ${Math.round(sisa).toLocaleString("id-ID")} (Jatuh tempo: ${dueStr})`,
+          time: "Hutang PBF",
+          type: "PURCHASE"
+        });
+      }
+
+      // D. Piutang Penjualan Pelanggan (Bon / Tempo)
+      const unpaidReceivables = await db
+        .select({
+          invoiceNo: schema.salesTransactions.invoiceNo,
+          patientName: schema.salesTransactions.patientName,
+          grandTotal: schema.salesTransactions.grandTotal,
+          paidAmount: schema.salesTransactions.paidAmount
+        })
+        .from(schema.salesTransactions)
+        .where(sql`CAST(${schema.salesTransactions.grandTotal} AS numeric) > CAST(${schema.salesTransactions.paidAmount} AS numeric)`)
+        .orderBy(desc(schema.salesTransactions.createdAt))
+        .limit(1);
+
+      for (const ur of unpaidReceivables) {
+        const sisa = Number(ur.grandTotal || 0) - Number(ur.paidAmount || 0);
+        notifications.push({
+          id: `rec-${ur.invoiceNo}`,
+          title: `Piutang Pelanggan: ${ur.patientName || "Pelanggan"}`,
+          desc: `No. ${ur.invoiceNo} &bull; Sisa Rp ${Math.round(sisa).toLocaleString("id-ID")}`,
+          time: "Piutang",
+          type: "RECEIVABLE"
+        });
+      }
+
+      return {
+        success: true,
+        data: {
+          kpi: {
+            todaySales: Number(todaySales?.totalAmount || 0),
+            todayTrxCount: Number(todaySales?.trxCount || 0),
+            yesterdaySales: Number(yesterdaySales?.totalAmount || 0),
+            yesterdayTrxCount: Number(yesterdaySales?.trxCount || 0),
+            totalProducts: Number(prodCount?.val || 0),
+            totalCustomers: Number(custCount?.val || 0),
+            totalSalesTransactions: Number(totalSalesTrx?.val || 0),
+            lowStockCount: Number(lowStockCountRes?.val || 0)
+          },
+          chartData,
+          lowStockItems: formattedLowStock,
+          notifications
+        }
+      };
+    } catch (err: any) {
+      console.error("[ERP] /dashboard error:", err);
+      return { success: false, error: err.message };
+    }
+  })
+
   // 1B. LIST CABANG APOTEK
   .get("/branches", async () => {
     try {
@@ -2248,10 +2468,18 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         success: true,
         data: orders.map((o) => {
           const items = itemsMap.get(o.id) || [];
+          let inferredType = "REGULER";
+          if (o.poNumber.includes("-NAR-")) inferredType = "NARKOTIKA";
+          else if (o.poNumber.includes("-PSI-")) inferredType = "PSIKOTROPIKA";
+          else if (o.poNumber.includes("-PRE-")) inferredType = "PREKURSOR";
+          else if (o.poNumber.includes("-OOT-")) inferredType = "OOT";
+          else if (o.poNumber.includes("-KSN-")) inferredType = "KONSINYASI";
+          else if (o.notes) inferredType = o.notes;
+
           return {
             id: o.id,
             orderNumber: o.poNumber,
-            orderType: o.notes || "REGULER",
+            orderType: inferredType,
             supplierId: o.supplierId || "supp-1",
             supplierName: o.supplierName || "PT. Kimia Farma Trading & Distribution",
             branchId: o.branchId || "1",

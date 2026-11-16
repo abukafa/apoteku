@@ -1,16 +1,38 @@
 <script lang="ts">
   import { LineChart } from "lucide-svelte";
 
-  // Data matching mockup.jpeg
-  const days = [
-    { label: "21 Okt", sales: 2.6, salesStr: "3.600.000", trxs: 14 },
-    { label: "22 Okt", sales: 2.3, salesStr: "3.300.000", trxs: 15 },
-    { label: "23 Okt", sales: 2.9, salesStr: "3.900.000", trxs: 16 },
-    { label: "24 Okt", sales: 3.0, salesStr: "4.000.000", trxs: 18 },
-    { label: "25 Okt", sales: 3.3, salesStr: "5.300.000", trxs: 21 },
-    { label: "26 Okt", sales: 4.2, salesStr: "6.200.000", trxs: 25 },
-    { label: "27 Okt", sales: 4.85, salesStr: "6.850.000", trxs: 28 }
-  ];
+  interface DayItem {
+    date?: string;
+    label: string;
+    sales: number;
+    salesStr?: string;
+    trxs: number;
+  }
+
+  interface Props {
+    chartData?: DayItem[];
+  }
+
+  let { chartData = [] }: Props = $props();
+
+  // If chartData is empty, generate 7 days default
+  let days = $derived.by(() => {
+    if (chartData && chartData.length > 0) {
+      return chartData;
+    }
+    const arr: DayItem[] = [];
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 3600 * 1000);
+      arr.push({
+        label: `${d.getDate()} ${monthNames[d.getMonth()]}`,
+        sales: 0,
+        salesStr: "0",
+        trxs: 0
+      });
+    }
+    return arr;
+  });
 
   let hoveredIndex = $state<number | null>(null);
 
@@ -21,34 +43,64 @@
   const plotTop = 18;
   const plotBottom = 158;
   const xAxisLabelY = 187;
-  const maxSales = 6; // Up to 6 jt
-  const maxTrx = 35; // Up to 35 trx
+
+  let maxSalesCeil = $derived.by(() => {
+    const rawMax = Math.max(...days.map((d) => d.sales), 0);
+    if (rawMax > 5000000) return Math.ceil(rawMax / 1000000) * 1000000;
+    if (rawMax > 1000000) return Math.ceil(rawMax / 500000) * 500000;
+    if (rawMax > 200000) return 1000000;
+    return 500000;
+  });
+
+  let maxTrx = $derived.by(() => {
+    const rawMax = Math.max(...days.map((d) => d.trxs), 0);
+    return Math.max(10, Math.ceil(rawMax * 1.25));
+  });
 
   function getSalesY(val: number) {
-    const ratio = val / maxSales;
+    const ratio = Math.min(1, Math.max(0, val / maxSalesCeil));
     return plotBottom - ratio * (plotBottom - plotTop);
   }
 
   function getTrxY(val: number) {
-    const ratio = val / maxTrx;
+    const ratio = Math.min(1, Math.max(0, val / maxTrx));
     return plotBottom - ratio * (plotBottom - plotTop);
   }
 
   function getX(idx: number) {
-    return paddingX + (idx / (days.length - 1)) * (width - 2 * paddingX);
+    const total = Math.max(1, days.length - 1);
+    return paddingX + (idx / total) * (width - 2 * paddingX);
   }
 
   // Construct SVG paths
-  const salesPath = days
-    .map((d, i) => `${i === 0 ? "M" : "L"} ${getX(i)} ${getSalesY(d.sales)}`)
-    .join(" ");
+  let salesPath = $derived(
+    days.map((d, i) => `${i === 0 ? "M" : "L"} ${getX(i)} ${getSalesY(d.sales)}`).join(" ")
+  );
 
-  const trxPath = days
-    .map((d, i) => `${i === 0 ? "M" : "L"} ${getX(i)} ${getTrxY(d.trxs)}`)
-    .join(" ");
+  let trxPath = $derived(
+    days.map((d, i) => `${i === 0 ? "M" : "L"} ${getX(i)} ${getTrxY(d.trxs)}`).join(" ")
+  );
 
   // Gradient area path for sales
-  const salesAreaPath = `${salesPath} L ${getX(days.length - 1)} ${plotBottom} L ${getX(0)} ${plotBottom} Z`;
+  let salesAreaPath = $derived(
+    `${salesPath} L ${getX(days.length - 1)} ${plotBottom} L ${getX(0)} ${plotBottom} Z`
+  );
+
+  let gridValues = $derived([
+    0,
+    Math.round(maxSalesCeil * 0.33),
+    Math.round(maxSalesCeil * 0.66),
+    maxSalesCeil
+  ]);
+
+  function formatGridLabel(val: number) {
+    if (val === 0) return "0";
+    if (val >= 1000000) {
+      const jt = val / 1000000;
+      return `${jt % 1 === 0 ? jt : jt.toFixed(1)} jt`;
+    }
+    return `${Math.round(val / 1000)} rb`;
+  }
 </script>
 
 <div class="h-full min-h-0 bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -82,7 +134,7 @@
       </defs>
 
       <!-- Y Axis Grid Lines -->
-      {#each [0, 2, 4, 6] as gridVal}
+      {#each gridValues as gridVal}
         {@const y = getSalesY(gridVal)}
         <line
           x1={paddingX}
@@ -101,7 +153,7 @@
           font-weight="600"
           text-anchor="end"
         >
-          {gridVal} jt
+          {formatGridLabel(gridVal)}
         </text>
       {/each}
 
@@ -196,12 +248,12 @@
     </svg>
 
     <!-- Tooltip on hover -->
-    {#if hoveredIndex !== null}
+    {#if hoveredIndex !== null && days[hoveredIndex]}
       {@const d = days[hoveredIndex]}
       <div
         class="absolute -top-1 left-1/2 -translate-x-1/2 bg-slate-900/90 text-white text-[11px] font-semibold py-1 px-2.5 rounded-lg shadow-lg pointer-events-none flex items-center gap-3 backdrop-blur-sm"
       >
-        <span class="text-blue-300">Penjualan: {d.salesStr}</span>
+        <span class="text-blue-300">Penjualan: Rp {d.sales.toLocaleString("id-ID")}</span>
         <span class="text-rose-300">Transaksi: {d.trxs} trx</span>
       </div>
     {/if}

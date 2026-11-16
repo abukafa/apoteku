@@ -1354,6 +1354,16 @@
 
 <svelte:head>
   <title>Pembelian &bull; Hafidz Farma</title>
+  {#if isPrintSpModalOpen}
+    <style>
+      @media print {
+        @page {
+          size: A4 portrait;
+          margin: 12mm 15mm;
+        }
+      }
+    </style>
+  {/if}
 </svelte:head>
 
 <div class="space-y-6">
@@ -2932,18 +2942,18 @@
   </div>
 {/if}
 
-<!-- MODAL CETAK SP RESMI STANDAR BPOM (PRINT-READY) -->
+<!-- MODAL CETAK SP RESMI STANDAR BPOM (A4 PORTRAIT) -->
 {#if isPrintSpModalOpen && selectedSpForPrint}
   <div
     use:portal
     data-modal-overlay
-    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    class="modal-overlay print-active-sheet fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
       if (e.target === e.currentTarget) isPrintSpModalOpen = false;
     }}
     role="presentation"
   >
-    <div class="bg-white rounded-2xl max-w-xl w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-4 my-auto text-xs print-sheet-card">
       <!-- KOP APOTEK RESMI -->
       <div class="border-b-2 border-slate-900 pb-3 text-center space-y-0.5">
         <div class="font-black text-sm uppercase tracking-wide text-slate-900">APOTEK HAFIDZ FARMA</div>
@@ -3021,7 +3031,7 @@
       </div>
 
       <!-- KETERANGAN RANGKAP & TANDA TANGAN -->
-      <div class="grid grid-cols-2 gap-4 items-end pt-2 text-[11px] text-slate-600">
+      <div class="grid grid-cols-2 gap-4 items-end pt-2 text-[11px] text-slate-600 print-avoid-break">
         <div class="text-[10px] space-y-0.5 border-l-2 border-slate-300 pl-2">
           <div class="font-bold text-slate-700">Ketentuan Rangkap (BPOM):</div>
           <div>• Lembar 1: PBF Asli (Distributor)</div>
@@ -3031,7 +3041,7 @@
         <div class="text-right space-y-1">
           <div>Tasikmalaya, {selectedSpForPrint.orderDate}</div>
           <div class="text-slate-500 text-[10px]">Apoteker Pengelola Apotek (APA),</div>
-          <div class="h-10 flex items-end justify-end">
+          <div class="h-12 flex items-end justify-end">
             <span class="text-[9px] text-slate-400 italic">(Tanda Tangan & Stempel)</span>
           </div>
           <div class="font-bold text-slate-900 underline">{selectedSpForPrint.pharmacistName}</div>
@@ -3039,11 +3049,11 @@
         </div>
       </div>
 
-      <div class="border-t border-slate-100 pt-3 flex justify-end gap-2">
+      <div class="border-t border-slate-100 pt-3 flex justify-end gap-2 no-print">
         <button
           type="button"
           onclick={() => (isPrintSpModalOpen = false)}
-          class="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50"
+          class="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 text-xs transition-colors"
         >
           Tutup
         </button>
@@ -3051,12 +3061,11 @@
           type="button"
           onclick={() => {
             window.print();
-            isPrintSpModalOpen = false;
           }}
-          class="px-4 py-1.5 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold inline-flex items-center gap-1.5 shadow-sm"
+          class="px-4 py-1.5 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold inline-flex items-center gap-1.5 shadow-sm text-xs transition-colors"
         >
           <Printer class="w-3.5 h-3.5" />
-          <span>Cetak Dokumen Resmi</span>
+          <span>Cetak Dokumen Resmi (A4)</span>
         </button>
       </div>
     </div>

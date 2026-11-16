@@ -7,7 +7,10 @@ import {
   convertBaseToPackage,
   calculateSellingPrice,
   calculateMarginPercent,
-  calculateInvoiceLineNet
+  calculateInvoiceLineNet,
+  calculateGrossProfit,
+  calculateGrossMarginPercent,
+  calculateGrowthPercentage
 } from "../calculations/pricing.js";
 import {
   calculateStockDifference,
@@ -30,6 +33,24 @@ import {
   generateTransferNumber
 } from "../generators/doc-numbers.js";
 import { calculateCashierShiftReconciliation } from "../calculations/shift.js";
+import {
+  classifySipnapCategory,
+  isControlledSubstance,
+  calculateSipnapInitialStock
+} from "../compliance/sipnap.js";
+import {
+  calculateParetoCategory,
+  calculateParetoDistribution
+} from "../calculations/pareto.js";
+import {
+  inferPurchaseOrderType,
+  getPurchaseOrderPrefix,
+  formatPurchaseOrderNumber
+} from "../procurement/order-type.js";
+import {
+  formatPackHint,
+  breakDownToPacks
+} from "../formatters/packs.js";
 
 describe("calculateCartTotals", () => {
   it("calculates subtotal, discount, tax, and change accurately", () => {
@@ -310,4 +331,160 @@ describe("cashier shift reconciliation calculations", () => {
     expect(res.status).toBe("DEFICIT");
     expect(res.isDiscrepancy).toBe(true);
   });
+
+  it("handles petty cash in/out and refunds accurately", () => {
+    const res = calculateCashierShiftReconciliation({
+      initialCash: 200000,
+      cashSales: 1000000,
+      cashRefunds: 50000,
+      pettyCashIn: 100000,
+      pettyCashOut: 150000,
+      actualCash: 1100000
+    });
+    // Expected: 200.000 + 1.000.000 - 50.000 + 100.000 - 150.000 = 1.100.000
+    expect(res.expectedCash).toBe(1100000);
+    expect(res.cashDifference).toBe(0);
+    expect(res.status).toBe("BALANCED");
+    expect(res.isDiscrepancy).toBe(false);
+  });
 });
+
+describe("SIPNAP compliance & controlled substance classification", () => {
+  it("classifies narcotics based on class, substance or name", () => {
+    expect(classifySipnapCategory({ drugClass: "NARKOTIKA", name: "Obat X" })).toBe("NARKOTIKA");
+    expect(classifySipnapCategory({ activeSubstance: "Codeine HCl 10mg", name: "Codikaf" })).toBe("NARKOTIKA");
+    expect(classifySipnapCategory({ name: "Fentanyl Injeksi" })).toBe("NARKOTIKA");
+  });
+
+  it("classifies psychotropics based on class, substance or name", () => {
+    expect(classifySipnapCategory({ drugClass: "PSIKOTROPIKA", name: "Obat Y" })).toBe("PSIKOTROPIKA");
+    expect(classifySipnapCategory({ activeSubstance: "Diazepam 2mg", name: "Valisanbe" })).toBe("PSIKOTROPIKA");
+    expect(classifySipnapCategory({ name: "Alprazolam 0.5mg" })).toBe("PSIKOTROPIKA");
+  });
+
+  it("classifies precursors accurately", () => {
+    expect(classifySipnapCategory({ drugClass: "PREKURSOR", name: "Obat Z" })).toBe("PREKURSOR");
+    expect(classifySipnapCategory({ activeSubstance: "Pseudoephedrine HCl", name: "Rhinos SR" })).toBe("PREKURSOR");
+    expect(classifySipnapCategory({ name: "Tremenza Sirup" })).toBe("PREKURSOR");
+  });
+
+  it("returns null and false for regular OTC drugs", () => {
+    expect(classifySipnapCategory({ drugClass: "OBAT_BEBAS", name: "Paracetamol 500mg" })).toBeNull();
+    expect(isControlledSubstance({ drugClass: "OBAT_BEBAS", name: "Paracetamol 500mg" })).toBe(false);
+  });
+
+  it("calculates SIPNAP initial stock backwards from real transaction flows", () => {
+    // Saldo Akhir: 60, Masuk: 50, Keluar: 15 -> Saldo Awal = 60 - 50 + 15 = 25
+    const initStock = calculateSipnapInitialStock({
+      finalStock: 60,
+      receivedQty: 50,
+      dispensedQty: 15
+    });
+    expect(initStock).toBe(25);
+  });
+});
+
+describe("Pareto ABC 80/20 inventory analysis", () => {
+  it("classifies items into A, B, and C categories based on revenue contribution", () => {
+    const rawItems = [
+      { id: "1", name: "Product A1", revenue: 5000000, cost: 4000000 },
+      { id: "2", name: "Product A2", revenue: 3000000, cost: 2400000 },
+      { id: "3", name: "Product B1", revenue: 1500000, cost: 1200000 },
+      { id: "4", name: "Product C1", revenue: 500000, cost: 400000 }
+    ];
+    // Total: 10.000.000
+    // A1: 50% (cum 50%) -> A
+    // A2: 30% (cum 80%) -> A
+    // B1: 15% (cum 95%) -> B
+    // C1: 5% (cum 100%) -> C
+
+    const result = calculateParetoDistribution(rawItems);
+    expect(result.totalRevenue).toBe(10000000);
+    expect(result.classACount).toBe(2);
+    expect(result.classBCount).toBe(1);
+    expect(result.classCCount).toBe(1);
+
+    expect(result.items[0].item.id).toBe("1");
+    expect(result.items[0].category).toBe("A");
+    expect(result.items[0].revenueShare).toBe(50);
+    expect(result.items[0].cumulativeShare).toBe(50);
+
+    expect(result.items[1].item.id).toBe("2");
+    expect(result.items[1].category).toBe("A");
+    expect(result.items[1].cumulativeShare).toBe(80);
+
+    expect(result.items[2].item.id).toBe("3");
+    expect(result.items[2].category).toBe("B");
+    expect(result.items[2].cumulativeShare).toBe(95);
+
+    expect(result.items[3].item.id).toBe("4");
+    expect(result.items[3].category).toBe("C");
+    expect(result.items[3].cumulativeShare).toBe(100);
+  });
+});
+
+describe("procurement order type & number formatting", () => {
+  it("infers purchase order type from PO number and notes", () => {
+    expect(inferPurchaseOrderType("SP-NAR-HF-2026-0001")).toBe("NARKOTIKA");
+    expect(inferPurchaseOrderType("SP-PSI-HF-2026-0001")).toBe("PSIKOTROPIKA");
+    expect(inferPurchaseOrderType("SP-PRE-HF-2026-0001")).toBe("PREKURSOR");
+    expect(inferPurchaseOrderType("SP-OOT-HF-2026-0001")).toBe("OOT");
+    expect(inferPurchaseOrderType("SP-KSN-HF-2026-0001")).toBe("KONSINYASI");
+    expect(inferPurchaseOrderType("SP-REG-HF-2026-0001")).toBe("REGULER");
+  });
+
+  it("formats standardized purchase order numbers", () => {
+    const formatted = formatPurchaseOrderNumber({
+      type: "PSIKOTROPIKA",
+      branchCode: "HF",
+      year: 2026,
+      sequence: 1
+    });
+    expect(formatted).toBe("SP-PSI-HF-2026-0001");
+  });
+});
+
+describe("multi-unit packaging formatters", () => {
+  it("formats pack hints for multi-unit items", () => {
+    const units = [
+      { unitName: "Tablet", conversionFactor: 1 },
+      { unitName: "Strip", conversionFactor: 10 },
+      { unitName: "Box", conversionFactor: 100 }
+    ];
+
+    expect(formatPackHint(25, "Tablet", units)).toBe("2 Strip + 5 Tablet");
+    expect(formatPackHint(100, "Tablet", units)).toBe("1 Box");
+    expect(formatPackHint(120, "Tablet", units)).toBe("1 Box + 20 Tablet");
+    expect(formatPackHint(5, "Tablet", units)).toBe("");
+  });
+
+  it("breaks down quantities into packaging hierarchy", () => {
+    const units = [
+      { unitName: "Tablet", conversionFactor: 1 },
+      { unitName: "Strip", conversionFactor: 10 },
+      { unitName: "Box", conversionFactor: 100 }
+    ];
+
+    const breakdown = breakDownToPacks(125, "Tablet", units);
+    expect(breakdown).toEqual([
+      { unitName: "Box", count: 1, conversionFactor: 100 },
+      { unitName: "Strip", count: 2, conversionFactor: 10 },
+      { unitName: "Tablet", count: 5, conversionFactor: 1 }
+    ]);
+  });
+});
+
+describe("financial metrics & margin calculations", () => {
+  it("calculates gross profit and margin percentages accurately", () => {
+    expect(calculateGrossProfit(1000000, 750000)).toBe(250000);
+    expect(calculateGrossMarginPercent(1000000, 250000)).toBe(25.0);
+    expect(calculateGrossMarginPercent(0, 0)).toBe(0);
+  });
+
+  it("calculates growth percentage comparison", () => {
+    expect(calculateGrowthPercentage(120, 100)).toBe(20);
+    expect(calculateGrowthPercentage(80, 100)).toBe(-20);
+    expect(calculateGrowthPercentage(100, 0)).toBeNull();
+  });
+});
+

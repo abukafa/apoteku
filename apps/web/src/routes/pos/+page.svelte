@@ -11,7 +11,7 @@
     type PriceTier,
     type CheckoutResult
   } from "$lib/services/mock-api";
-  import { calculateCartTotals, selectFefoBatches, EscPosBuilder } from "@apoteku/core";
+  import { calculateCartTotals, selectFefoBatches, EscPosBuilder, calculateCashierShiftReconciliation } from "@apoteku/core";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { alertStore } from "$lib/stores/alertStore.svelte";
   import { localDb } from "@apoteku/db/client-indexeddb";
@@ -162,10 +162,18 @@
   let shiftPettyCashOut = $state(0);
   let shiftPettyCashIn = $state(0);
   let shiftActualCash = $state(0);
-  let shiftExpectedCash = $derived(
-    shiftInitialCash + shiftCashSales - shiftCashRefunds + shiftPettyCashIn - shiftPettyCashOut
+  let shiftReconciliation = $derived(
+    calculateCashierShiftReconciliation({
+      initialCash: shiftInitialCash,
+      cashSales: shiftCashSales,
+      actualCash: shiftActualCash,
+      cashRefunds: shiftCashRefunds,
+      pettyCashIn: shiftPettyCashIn,
+      pettyCashOut: shiftPettyCashOut
+    })
   );
-  let shiftDiscrepancy = $derived(shiftActualCash - shiftExpectedCash);
+  let shiftExpectedCash = $derived(shiftReconciliation.expectedCash);
+  let shiftDiscrepancy = $derived(shiftReconciliation.cashDifference);
   let shiftNotes = $state("");
   let shiftClosureSuccess = $state("");
 

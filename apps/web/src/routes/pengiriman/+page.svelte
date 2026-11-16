@@ -25,7 +25,7 @@
   import { alertStore } from "$lib/stores/alertStore.svelte";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
-  import { selectFefoBatches } from "@apoteku/core";
+  import { selectFefoBatches, formatPackHint } from "@apoteku/core";
 
   interface ProductUnitMeta {
     id?: string;
@@ -199,26 +199,6 @@
         minute: "2-digit"
       })
       .replace(/\./g, ":");
-  }
-
-  function formatPackHint(
-    qtyBase: number,
-    baseUnit: string,
-    units?: Array<{ unitName: string; conversionFactor: number }>
-  ): string {
-    if (!units || units.length <= 1 || qtyBase <= 0) return "";
-    const packUnits = [...units]
-      .filter((u) => Number(u.conversionFactor) > 1 && u.unitName !== baseUnit)
-      .sort((a, b) => Number(b.conversionFactor) - Number(a.conversionFactor));
-    const largest = packUnits.find((u) => qtyBase >= Number(u.conversionFactor));
-    if (!largest) return "";
-    const factor = Number(largest.conversionFactor);
-    const whole = Math.floor(qtyBase / factor);
-    const rem = roundQty(qtyBase - whole * factor);
-    if (whole <= 0) return "";
-    return rem > 0
-      ? `${whole} ${largest.unitName} + ${formatQty(rem)} ${baseUnit}`
-      : `${whole} ${largest.unitName}`;
   }
 
   async function loadTransfers() {

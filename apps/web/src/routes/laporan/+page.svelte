@@ -20,7 +20,7 @@
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
   import { authStore } from "$lib/stores/authStore.svelte";
-  import { formatRupiah } from "@apoteku/core";
+  import { formatRupiah, calculateGrossMarginPercent } from "@apoteku/core";
 
   interface SalesShiftReportRow {
     id: string;
@@ -224,9 +224,7 @@
     branchSalesRecords.reduce((a, b) => a + b.grossProfit, 0)
   );
   let averageMarginPercent = $derived(
-    totalGrossSales > 0
-      ? ((totalGrossProfit / totalGrossSales) * 100).toFixed(1)
-      : "0.0"
+    calculateGrossMarginPercent(totalGrossSales, totalGrossProfit).toFixed(1)
   );
 
   let totalCashSales = $derived(
@@ -515,7 +513,7 @@
           </tr>
         {:else}
           {#each filteredSalesRecords as r}
-            {@const marginPct = r.grossSales > 0 ? ((r.grossProfit / r.grossSales) * 100).toFixed(1) : "0.0"}
+            {@const marginPct = calculateGrossMarginPercent(r.grossSales, r.grossProfit).toFixed(1)}
             <tr class="hover:bg-blue-50/40 transition-colors">
               <td class="py-3.5 px-4">
                 <div class="font-mono font-bold text-slate-900">{r.date}</div>
@@ -904,7 +902,7 @@
                 </tr>
               {:else}
                 {#each filteredSalesRecords as r, idx}
-                  {@const marginPct = r.grossSales > 0 ? ((r.grossProfit / r.grossSales) * 100).toFixed(1) : "0.0"}
+                  {@const marginPct = calculateGrossMarginPercent(r.grossSales, r.grossProfit).toFixed(1)}
                   <tr class="hover:bg-slate-50/50">
                     <td class="py-1.5 px-2.5 text-center text-slate-400 font-mono">{idx + 1}</td>
                     <td class="py-1.5 px-2.5">

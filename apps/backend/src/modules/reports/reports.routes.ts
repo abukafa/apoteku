@@ -1,6 +1,13 @@
 import { Elysia } from "elysia";
 import { db, schema } from "@apoteku/db";
 import { sql, desc, eq, and, or, ilike } from "drizzle-orm";
+import {
+  classifySipnapCategory,
+  calculateSipnapInitialStock,
+  CONTROLLED_SUBSTANCE_KEYWORDS,
+  calculateParetoDistribution,
+  calculateGrossProfit
+} from "@apoteku/core";
 
 export const reportsRoutes = new Elysia({ prefix: "/api/reports" })
   // 1. FINANCIAL SUMMARY (LABA RUGI & OMZET)
@@ -32,7 +39,7 @@ export const reportsRoutes = new Elysia({ prefix: "/api/reports" })
 
       // Standar HPP Ritel Farmasi (~78%, Laba Kotor ~22%)
       const estimatedHpp = Math.round(revenue * 0.78);
-      const grossProfit = revenue - estimatedHpp;
+      const grossProfit = calculateGrossProfit(revenue, estimatedHpp);
       const operationalExpense = Math.round(revenue * 0.08);
       const netProfit = grossProfit - operationalExpense;
 
@@ -156,7 +163,13 @@ export const reportsRoutes = new Elysia({ prefix: "/api/reports" })
       const period = query.period || new Date().toISOString().slice(0, 7);
       const branchFilter = query.branchId && query.branchId !== "ALL" ? query.branchId : null;
 
-      // 1. Ambil daftar produk terkontrol dari katalog master
+      // 1. Ambil daftar produk terkontrol dari katalog master menggunakan kata kunci regulasi resmi SIPNAP
+      const controlledKeywordFilters = CONTROLLED_SUBSTANCE_KEYWORDS.flatMap((kw) => [
+        ilike(schema.products.drugClass, `%${kw}%`),
+        ilike(schema.products.activeSubstance, `%${kw}%`),
+        ilike(schema.products.name, `%${kw}%`)
+      ]);
+
       const controlledProducts = await db
         .select({
           id: schema.products.id,
@@ -167,24 +180,7 @@ export const reportsRoutes = new Elysia({ prefix: "/api/reports" })
           activeSubstance: schema.products.activeSubstance
         })
         .from(schema.products)
-        .where(
-          or(
-            ilike(schema.products.drugClass, "%narkotika%"),
-            ilike(schema.products.drugClass, "%psikotropika%"),
-            ilike(schema.products.drugClass, "%prekursor%"),
-            ilike(schema.products.drugClass, "%oot%"),
-            ilike(schema.products.name, "%codein%"),
-            ilike(schema.products.name, "%codikaf%"),
-            ilike(schema.products.name, "%diazepam%"),
-            ilike(schema.products.name, "%valisanbe%"),
-            ilike(schema.products.name, "%alprazolam%"),
-            ilike(schema.products.name, "%pseudoephedrine%"),
-            ilike(schema.products.name, "%tremenza%"),
-            ilike(schema.products.name, "%rhinos%"),
-            ilike(schema.products.name, "%actifed%"),
-            ilike(schema.products.name, "%alco%")
-          )
-        )
+        .where(or(...controlledKeywordFilters))
         .orderBy(schema.products.name);
 
       const prodIds = controlledProducts.map((p) => p.id);
@@ -296,23 +292,7 @@ export const reportsRoutes = new Elysia({ prefix: "/api/reports" })
 
       // 5. Bangun Data Laporan SIPNAP Resmi 100% Berbasis Transaksi Nyata
       const sipnapItems = controlledProducts.map((p) => {
-        let type: "NARKOTIKA" | "PSIKOTROPIKA" | "PREKURSOR" = "PREKURSOR";
-        const catUpper = (p.drugClass || "").toUpperCase();
-        const nameLower = p.name.toLowerCase();
-
-        if (catUpper.includes("NARKOTIKA") || nameLower.includes("codein") || nameLower.includes("codikaf")) {
-          type = "NARKOTIKA";
-        } else if (
-          catUpper.includes("PSIKOTROPIKA") ||
-          nameLower.includes("diazepam") ||
-          nameLower.includes("valisanbe") ||
-          nameLower.includes("alprazolam")
-        ) {
-          type = "PSIKOTROPIKA";
-        } else {
-          type = "PREKURSOR";
-        }
-
+        const type = classifySipnapCategory(p) || "PREKURSOR";
         const realStock = stockMap.get(p.id) || 0;
         const inData = inMap.get(p.id) || { receivedQty: 0, supplier: "-", spRef: "-" };
         const outData = outMap.get(p.id) || { dispensedQty: 0, recipeCount: 0 };
@@ -320,8 +300,11 @@ export const reportsRoutes = new Elysia({ prefix: "/api/reports" })
         const finalStock = Math.round(realStock);
         const receivedQty = Math.round(inData.receivedQty);
         const dispensedQty = Math.round(outData.dispensedQty);
-        // Saldo Awal = Saldo Akhir - Pemasukan + Pengeluaran
-        const initialStock = Math.max(0, finalStock - receivedQty + dispensedQty);
+        const initialStock = calculateSipnapInitialStock({
+          finalStock,
+          receivedQty,
+          dispensedQty
+        });
         const physicalStock = finalStock;
 
         return {
@@ -401,35 +384,41 @@ export const reportsRoutes = new Elysia({ prefix: "/api/reports" })
         )
         .orderBy(desc(sql`SUM(CAST(${schema.salesTransactionItems.subtotal} AS numeric))`));
 
-      const totalRev = soldAgg.reduce((sum, item) => sum + Number(item.totalRevenue || 0), 0);
-
-      let cumulative = 0;
-      const paretoRows = soldAgg.map((item) => {
+      const paretoInputs = soldAgg.map((item) => {
         const rev = Number(item.totalRevenue || 0);
-        const share = totalRev > 0 ? (rev / totalRev) * 100 : 0;
-        cumulative += share;
-        const cumRound = Math.min(100, Math.round(cumulative * 10) / 10);
-        const category: "A" | "B" | "C" = cumRound <= 80 ? "A" : cumRound <= 95 ? "B" : "C";
         const refBuy = Number(item.refBuyPrice || 0);
         const qty = Number(item.unitsSold || 0);
         const estCost = refBuy > 0 ? refBuy * qty : rev * 0.75;
-        const margin = rev > 0 ? Math.round(((rev - estCost) / rev) * 100) : 25;
-
         return {
           id: `par-${item.productId}-${item.unit}`,
+          productId: item.productId,
           branchId: branchId || "81d3bcff-9577-47b6-9a35-7d510c0d4225",
           name: item.name,
           sku: item.sku,
-          category,
-          unitsSold: Math.round(qty),
           unit: item.unit || "PCS",
-          totalRevenue: Math.round(rev),
-          grossMarginPercent: margin,
-          revenueShare: Math.round(share * 10) / 10,
-          cumulativeShare: cumRound,
-          currentStock: Math.round(Number(item.stock || 0))
+          unitsSold: Math.round(qty),
+          revenue: rev,
+          cost: estCost,
+          stock: Math.round(Number(item.stock || 0))
         };
       });
+
+      const paretoResult = calculateParetoDistribution(paretoInputs);
+
+      const paretoRows = paretoResult.items.map((pi) => ({
+        id: pi.item.id,
+        branchId: pi.item.branchId,
+        name: pi.item.name,
+        sku: pi.item.sku,
+        category: pi.category,
+        unitsSold: pi.item.unitsSold,
+        unit: pi.item.unit,
+        totalRevenue: Math.round(pi.item.revenue),
+        grossMarginPercent: Math.round(pi.grossMarginPercent),
+        revenueShare: pi.revenueShare,
+        cumulativeShare: pi.cumulativeShare,
+        currentStock: pi.item.stock
+      }));
 
       // Jika produk terjual masih sedikit, lengkapi dengan sampel katalog master sebagai Kelas C
       if (paretoRows.length < 10) {

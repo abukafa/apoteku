@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { db, schema } from "@apoteku/db";
 import { desc, count, sql, eq, and } from "drizzle-orm";
-import { generateOrderNumber } from "@apoteku/core";
+import { generateOrderNumber, inferPurchaseOrderType } from "@apoteku/core";
 import { consignmentService } from "./consignment.service.js";
 
 class ProductUnitValidationError extends Error {}
@@ -2468,13 +2468,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
         success: true,
         data: orders.map((o) => {
           const items = itemsMap.get(o.id) || [];
-          let inferredType = "REGULER";
-          if (o.poNumber.includes("-NAR-")) inferredType = "NARKOTIKA";
-          else if (o.poNumber.includes("-PSI-")) inferredType = "PSIKOTROPIKA";
-          else if (o.poNumber.includes("-PRE-")) inferredType = "PREKURSOR";
-          else if (o.poNumber.includes("-OOT-")) inferredType = "OOT";
-          else if (o.poNumber.includes("-KSN-")) inferredType = "KONSINYASI";
-          else if (o.notes) inferredType = o.notes;
+          const inferredType = inferPurchaseOrderType(o.poNumber, o.notes);
 
           return {
             id: o.id,

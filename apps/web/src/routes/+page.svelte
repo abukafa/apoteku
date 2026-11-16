@@ -9,6 +9,7 @@
   import NotificationsCard from "$lib/components/NotificationsCard.svelte";
   import Footer from "$lib/components/Footer.svelte";
   import { api } from "$lib/services/api";
+  import { formatRupiah, calculateGrowthPercentage } from "@apoteku/core";
 
   let salesToday = $state("Rp 0");
   let salesTrend = $state("0% dari kemarin");
@@ -36,15 +37,15 @@
         // KPI 1: Total Penjualan Hari Ini
         const todayVal = Number(kpi.todaySales || 0);
         const yestVal = Number(kpi.yesterdaySales || 0);
-        salesToday = `Rp ${Math.round(todayVal).toLocaleString("id-ID")}`;
+        salesToday = formatRupiah(todayVal);
 
-        if (yestVal > 0) {
-          const diffPct = Math.round(((todayVal - yestVal) / yestVal) * 100);
+        const diffPct = calculateGrowthPercentage(todayVal, yestVal);
+        if (diffPct !== null) {
           salesTrend = `${diffPct >= 0 ? "+" : ""}${diffPct}% dari kemarin`;
         } else if (todayVal > 0) {
           salesTrend = "+100% dari kemarin";
         } else {
-          salesTrend = yestVal > 0 ? `Kemarin: Rp ${Math.round(yestVal).toLocaleString("id-ID")}` : "Belum ada penjualan";
+          salesTrend = yestVal > 0 ? `Kemarin: ${formatRupiah(yestVal)}` : "Belum ada penjualan";
         }
 
         // KPI 2: Jumlah Transaksi

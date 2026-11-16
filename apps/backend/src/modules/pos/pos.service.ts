@@ -2,6 +2,7 @@ import { db, schema } from "@apoteku/db";
 import { eq, and, gt, sql, or, gte } from "drizzle-orm";
 import type { Static } from "elysia";
 import type { SyncSalesBodySchema } from "./pos.schema.js";
+import { calculateCashierShiftReconciliation } from "@apoteku/core";
 
 function resolveShiftName(shiftNumber: number, notes?: string | null): string {
   if (notes && notes.startsWith("[")) {
@@ -989,7 +990,15 @@ export class PosService {
       const drawerMutOut = Number(mutationsAgg?.cashOut || 0);
       const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
       const initialCash = Number(shift.initialCash);
-      const expectedCash = initialCash + cashSales - cashRefunds + drawerMutIn - drawerMutOut;
+      const reconciliation = calculateCashierShiftReconciliation({
+        initialCash,
+        cashSales,
+        actualCash: 0,
+        cashRefunds,
+        pettyCashIn: drawerMutIn,
+        pettyCashOut: drawerMutOut
+      });
+      const expectedCash = reconciliation.expectedCash;
       const totalSales = cashSales + nonCashSales;
 
       const shiftName = resolveShiftName(shift.shiftNumber, shift.notes);
@@ -1219,8 +1228,16 @@ export class PosService {
       const drawerMutOut = Number(mutationsAgg?.cashOut || 0);
       const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
       const initialCash = Number(shift.initialCash);
-      const expectedCash = initialCash + cashSales - cashRefunds + drawerMutIn - drawerMutOut;
-      const cashDifference = actualCash - expectedCash;
+      const reconciliation = calculateCashierShiftReconciliation({
+        initialCash,
+        cashSales,
+        actualCash,
+        cashRefunds,
+        pettyCashIn: drawerMutIn,
+        pettyCashOut: drawerMutOut
+      });
+      const expectedCash = reconciliation.expectedCash;
+      const cashDifference = reconciliation.cashDifference;
       const totalSales = cashSales + nonCashSales;
       const endTime = new Date();
 

@@ -81,3 +81,34 @@ export function calculateInvoiceLineNet(
   };
 }
 
+/**
+ * Menghitung Laba Kotor (Gross Profit)
+ * Rumus: Omzet - HPP (Cost of Goods Sold)
+ */
+export function calculateGrossProfit(revenue: number, cost: number): number {
+  return Math.round((Number(revenue) || 0) - (Number(cost) || 0));
+}
+
+/**
+ * Menghitung Persentase Margin Laba Kotor (Gross Margin %)
+ * Rumus: (Laba Kotor / Total Omzet) * 100
+ */
+export function calculateGrossMarginPercent(revenue: number, grossProfit: number): number {
+  const rev = Number(revenue) || 0;
+  const profit = Number(grossProfit) || 0;
+  if (rev <= 0) return 0;
+  return Math.round(((profit / rev) * 100) * 10) / 10;
+}
+
+/**
+ * Menghitung pertumbuhan / trend periode berjalan dibanding periode sebelumnya (%)
+ * Rumus: ((Nilai Saat Ini - Nilai Sebelumnya) / Nilai Sebelumnya) * 100
+ */
+export function calculateGrowthPercentage(current: number, previous: number): number | null {
+  const prev = Number(previous) || 0;
+  const curr = Number(current) || 0;
+  if (prev <= 0) return null;
+  return Math.round(((curr - prev) / prev) * 100);
+}
+
+

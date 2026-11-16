@@ -30,7 +30,7 @@
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
   import { authStore } from "$lib/stores/authStore.svelte";
-  import { formatRupiah } from "@apoteku/core";
+  import { formatRupiah, formatPurchaseOrderNumber } from "@apoteku/core";
 
   interface InvoiceItemRow {
     productId: string;
@@ -1065,21 +1065,15 @@
       alertStore.warning("Item SP Kosong", "Tambahkan minimal 1 item obat pada Surat Pesanan.");
       return;
     }
-    const prefix =
-      newSpForm.orderType === "PSIKOTROPIKA"
-        ? "PSI"
-        : newSpForm.orderType === "PREKURSOR"
-          ? "PRE"
-          : newSpForm.orderType === "OOT"
-            ? "OOT"
-            : newSpForm.orderType === "KONSINYASI"
-              ? "KSN"
-              : "REG";
     const currentYear = new Date().getFullYear();
     const existingYearPos = purchaseOrders.filter((p) => p.orderNumber && p.orderNumber.includes(String(currentYear)));
-    const nextNum = String(existingYearPos.length + 1).padStart(4, "0");
+    const poNumber = formatPurchaseOrderNumber({
+      type: newSpForm.orderType,
+      branchCode: "HF",
+      year: currentYear,
+      sequence: existingYearPos.length + 1
+    });
     const today = new Date().toISOString().slice(0, 10);
-    const poNumber = `SP-${prefix}-HF-${currentYear}-${nextNum}`;
     const estimatedTotal = newSpForm.items.reduce(
       (sum, it) => sum + it.qty * it.estimatedHna,
       0

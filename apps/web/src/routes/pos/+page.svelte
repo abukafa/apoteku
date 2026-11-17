@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
+  import { afterNavigate } from "$app/navigation";
   import {
     mockApi,
     type Product,
@@ -55,7 +56,9 @@
     ChevronRight,
     Monitor,
     Maximize2,
-    Home
+    Home,
+    Keyboard,
+    HelpCircle
   } from "lucide-svelte";
 
   // Reactive state using Svelte 5 Runes
@@ -333,32 +336,248 @@
       if (typeof window !== "undefined") {
         localStorage.removeItem(POS_LOCK_STORAGE_KEY);
       }
+      focusSearchInput();
     } else {
       pinError = true;
       pinInput = "";
     }
   }
 
-  function handlePosKeydown(e: KeyboardEvent) {
-    if (!isTerminalLocked) return;
+  // Ref & State Shortcut dan Fokus Otomatis
+  let searchInputEl = $state<HTMLInputElement | null>(null);
+  let showShortcutModal = $state(false);
 
-    if (e.key >= "0" && e.key <= "9") {
+  function focusSearchInput(selectAll = true) {
+    if (typeof window === "undefined") return;
+    if (isTerminalLocked || showCheckoutModal || showReceiptModal || isShiftModalOpen || showShortcutModal) {
+      return;
+    }
+    tick().then(() => {
+      if (searchInputEl) {
+        searchInputEl.focus();
+        if (selectAll && searchInputEl.value.length > 0) {
+          searchInputEl.select();
+        }
+      }
+    });
+  }
+
+  // Re-fokus saat kembali ke halaman POS via navigasi internal SvelteKit
+  afterNavigate(() => {
+    focusSearchInput();
+  });
+
+  function closeCheckoutModal() {
+    showCheckoutModal = false;
+    focusSearchInput();
+  }
+
+  function closeReceiptModal() {
+    showReceiptModal = false;
+    focusSearchInput();
+  }
+
+  function closeShiftModal() {
+    isShiftModalOpen = false;
+    focusSearchInput();
+  }
+
+  function closeShortcutModal() {
+    showShortcutModal = false;
+    focusSearchInput();
+  }
+
+  function handleCancelCart() {
+    if (cart.length === 0) return;
+    clearCart();
+    alertStore.toast("Keranjang transaksi telah dikosongkan.", "info", "Keranjang Direset");
+    focusSearchInput();
+  }
+
+  // Otomatis kembalikan kursor ke input pencarian setiap kali modal ditutup
+  let anyModalOpen = $derived(
+    Boolean(isTerminalLocked || showCheckoutModal || showReceiptModal || isShiftModalOpen || showShortcutModal)
+  );
+  let prevAnyModalOpen = false;
+
+  $effect(() => {
+    const isNowOpen = anyModalOpen;
+    if (prevAnyModalOpen && !isNowOpen) {
+      focusSearchInput();
+    }
+    prevAnyModalOpen = isNowOpen;
+  });
+
+  function handlePosKeydown(e: KeyboardEvent) {
+    // 1. PIN Lock Screen: Khusus saat terminal terkunci
+    if (isTerminalLocked) {
+      if (e.key >= "0" && e.key <= "9") {
+        e.preventDefault();
+        e.stopPropagation();
+        enterPinDigit(e.key);
+      } else if (e.key === "Backspace") {
+        e.preventDefault();
+        e.stopPropagation();
+        deletePinLast();
+      } else if (e.key === "Escape" || e.key === "Delete") {
+        e.preventDefault();
+        e.stopPropagation();
+        clearPin();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (pinInput.length > 0) {
+          verifyPin();
+        }
+      }
+      return;
+    }
+
+    // 2. F1: Tampilkan Modal Bantuan Panduan Pintasan Keyboard
+    if (e.key === "F1") {
       e.preventDefault();
       e.stopPropagation();
-      enterPinDigit(e.key);
-    } else if (e.key === "Backspace") {
+      showShortcutModal = !showShortcutModal;
+      if (!showShortcutModal) {
+        focusSearchInput();
+      }
+      return;
+    }
+
+    // 3. F2: Fokus Kolom Pencarian Obat / Barcode
+    if (e.key === "F2") {
       e.preventDefault();
       e.stopPropagation();
-      deletePinLast();
-    } else if (e.key === "Escape" || e.key === "Delete") {
+      if (showShortcutModal) showShortcutModal = false;
+      focusSearchInput();
+      return;
+    }
+
+    // 4. F4: Batal / Kosongkan Keranjang Transaksi
+    if (e.key === "F4") {
       e.preventDefault();
       e.stopPropagation();
-      clearPin();
-    } else if (e.key === "Enter") {
+      if (!showCheckoutModal && !showReceiptModal && !isShiftModalOpen && !showShortcutModal) {
+        handleCancelCart();
+      }
+      return;
+    }
+
+    // 5. F7: Pilih Pelanggan (Buka dropdown searchable select)
+    if (e.key === "F7") {
       e.preventDefault();
       e.stopPropagation();
-      if (pinInput.length > 0) {
-        verifyPin();
+      if (!showCheckoutModal && !showReceiptModal && !isShiftModalOpen && !showShortcutModal) {
+        const custBtn = document.getElementById("pos-customer-select");
+        if (custBtn) {
+          custBtn.click();
+        }
+      }
+      return;
+    }
+
+    // 6. F8: Bayar / Konfirmasi Pembayaran
+    if (e.key === "F8") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (showReceiptModal) {
+        handlePrintThermalReceipt();
+      } else if (showCheckoutModal) {
+        handleCheckoutSubmit();
+      } else if (!isShiftModalOpen && !showShortcutModal) {
+        openCheckout();
+      }
+      return;
+    }
+
+    // 7. F9: Buka / Tutup Modal Shift Kasir
+    if (e.key === "F9") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (isShiftModalOpen) {
+        closeShiftModal();
+      } else if (!showCheckoutModal && !showReceiptModal && !showShortcutModal) {
+        openShiftModal();
+      }
+      return;
+    }
+
+    // 8. F10: Kunci Layar Terminal Kasir (PIN)
+    if (e.key === "F10") {
+      e.preventDefault();
+      e.stopPropagation();
+      lockTerminal();
+      return;
+    }
+
+    // 9. Tombol Escape: Tutup modal aktif bertahap
+    if (e.key === "Escape") {
+      if (showShortcutModal) {
+        e.preventDefault();
+        closeShortcutModal();
+        return;
+      }
+      if (showReceiptModal) {
+        e.preventDefault();
+        closeReceiptModal();
+        return;
+      }
+      if (showCheckoutModal) {
+        e.preventDefault();
+        closeCheckoutModal();
+        return;
+      }
+      if (isShiftModalOpen) {
+        e.preventDefault();
+        closeShiftModal();
+        return;
+      }
+    }
+
+    // 10. Pintasan Khusus saat Modal Pembayaran Aktif
+    if (showCheckoutModal) {
+      if (e.key === "Enter") {
+        const target = e.target as HTMLElement | null;
+        if (target && target.tagName === "BUTTON") {
+          return;
+        }
+        e.preventDefault();
+        handleCheckoutSubmit();
+        return;
+      }
+
+      const activeEl = document.activeElement as HTMLElement | null;
+      const isInputFocused = activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA");
+
+      if (e.altKey || !isInputFocused) {
+        if (e.key === "1" || e.key.toLowerCase() === "c") {
+          e.preventDefault();
+          selectedPaymentMethod = "CASH";
+          if (qrisTimerInterval) clearInterval(qrisTimerInterval);
+          tick().then(() => {
+            const inp = document.getElementById("cashPaidInput") as HTMLInputElement | null;
+            inp?.focus();
+            inp?.select();
+          });
+        } else if (e.key === "2" || e.key.toLowerCase() === "q") {
+          e.preventDefault();
+          selectedPaymentMethod = "QRIS";
+          initQris();
+        } else if (e.key === "3" || e.key.toLowerCase() === "b") {
+          e.preventDefault();
+          selectedPaymentMethod = "TEMPO";
+          if (qrisTimerInterval) clearInterval(qrisTimerInterval);
+        }
+      }
+      return;
+    }
+
+    // 11. Pintasan Khusus saat Modal Struk Cetak Aktif
+    if (showReceiptModal) {
+      if (e.key === "Enter" || e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        handlePrintThermalReceipt();
+        return;
       }
     }
   }
@@ -640,8 +859,23 @@
     }
   }
 
+  const handleWindowFocus = () => {
+    focusSearchInput();
+  };
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "visible") {
+      focusSearchInput();
+    }
+  };
+
   // Load initial data (Instan dari IndexedDB Lokal hanya jika branch cocok, lalu background sync)
   onMount(async () => {
+    focusSearchInput();
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", handleWindowFocus);
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
     if (authStore.user?.branchId) {
       selectedBranchId = authStore.user.branchId;
     }
@@ -715,10 +949,19 @@
         for (const p of products) productMap.set(p.id, p);
       } finally {
         isLoading = false;
+        focusSearchInput();
       }
     } else if (networkStore.effectiveOnline) {
       // Jalankan background sync agar saldo stok lokal langsung mutakhir dengan snapshot server
       syncFullBootstrapFromServer(false, selectedBranchId);
+      focusSearchInput();
+    }
+  });
+
+  onDestroy(() => {
+    if (typeof window !== "undefined") {
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     }
   });
 
@@ -729,6 +972,50 @@
 
   function handleSearchInput() {
     applyCatalogFilter();
+  }
+
+  function handleSearchKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const q = searchQuery.trim();
+      if (!q) return;
+
+      // Cari exact match pada barcode atau SKU
+      const exactMatch =
+        products.find(
+          (p) =>
+            (p.barcode && p.barcode.toLowerCase() === q.toLowerCase()) ||
+            p.sku.toLowerCase() === q.toLowerCase()
+        ) ||
+        allCatalogProducts.find(
+          (p) =>
+            (p.barcode && p.barcode.toLowerCase() === q.toLowerCase()) ||
+            p.sku.toLowerCase() === q.toLowerCase()
+        );
+
+      if (exactMatch) {
+        addToCart(exactMatch);
+        searchQuery = "";
+        applyCatalogFilter();
+        focusSearchInput();
+        return;
+      }
+
+      // Jika ada hasil pencarian, masukkan produk pertama ke keranjang
+      if (products.length > 0) {
+        addToCart(products[0]);
+        searchQuery = "";
+        applyCatalogFilter();
+        focusSearchInput();
+      }
+    } else if (e.key === "Escape") {
+      if (searchQuery) {
+        e.preventDefault();
+        searchQuery = "";
+        applyCatalogFilter();
+        focusSearchInput();
+      }
+    }
   }
 
   function getDrugClassBadge(drugClass: string) {
@@ -852,6 +1139,7 @@
         batches: batchAllocations
       });
     }
+    focusSearchInput();
   }
 
   async function updateItemUnit(index: number, newUnitName: string) {
@@ -1038,6 +1326,11 @@
     qrisStatus = "WAITING";
     if (qrisTimerInterval) clearInterval(qrisTimerInterval);
     showCheckoutModal = true;
+    tick().then(() => {
+      const inp = document.getElementById("cashPaidInput") as HTMLInputElement | null;
+      inp?.focus();
+      inp?.select();
+    });
   }
 
   async function handleCheckoutSubmit() {
@@ -1216,6 +1509,8 @@
 
   async function handlePrintThermalReceipt() {
     await triggerThermalPrint();
+    showReceiptModal = false;
+    focusSearchInput();
   }
 </script>
 
@@ -1323,8 +1618,71 @@
           <h1 class="text-xs sm:text-sm font-bold text-slate-900 leading-tight flex items-center gap-2">
             <span>Terminal Kasir POS Farmasi</span>
           </h1>
-          <div class="text-[10px] text-slate-500 font-medium flex items-center gap-2">
-            <span>Pintasan: <kbd class="bg-slate-100 px-1 py-0.5 rounded text-[9px] font-mono font-bold">F2: Cari</kbd> <kbd class="bg-slate-100 px-1 py-0.5 rounded text-[9px] font-mono font-bold">F8: Bayar</kbd></span>
+          <div class="text-[10px] text-slate-500 font-medium flex items-center gap-1.5 flex-wrap">
+            <span class="text-slate-400">Pintasan:</span>
+            <button
+              type="button"
+              onclick={() => focusSearchInput()}
+              class="inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
+              title="Fokus kolom pencarian obat (Tekan F2)"
+            >
+              <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-slate-200">F2</kbd>
+              <span>Cari</span>
+            </button>
+            <button
+              type="button"
+              onclick={openCheckout}
+              class="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded text-[10px] font-medium border border-emerald-200 transition-colors cursor-pointer"
+              title="Buka proses pembayaran (Tekan F8)"
+            >
+              <kbd class="font-mono font-bold bg-emerald-600 text-white px-1 py-0.2 rounded">F8</kbd>
+              <span>Bayar</span>
+            </button>
+            <button
+              type="button"
+              onclick={handleCancelCart}
+              class="hidden sm:inline-flex items-center gap-1 bg-slate-100 hover:bg-red-50 text-slate-700 hover:text-red-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
+              title="Batal / kosongkan keranjang (Tekan F4)"
+            >
+              <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-slate-200">F4</kbd>
+              <span>Batal</span>
+            </button>
+            <button
+              type="button"
+              onclick={() => document.getElementById("pos-customer-select")?.click()}
+              class="hidden md:inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
+              title="Pilih pelanggan (Tekan F7)"
+            >
+              <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-slate-200">F7</kbd>
+              <span>Pelanggan</span>
+            </button>
+            <button
+              type="button"
+              onclick={openShiftModal}
+              class="hidden lg:inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
+              title="Buka/tutup shift kasir (Tekan F9)"
+            >
+              <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-slate-200">F9</kbd>
+              <span>Shift</span>
+            </button>
+            <button
+              type="button"
+              onclick={lockTerminal}
+              class="hidden xl:inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
+              title="Kunci layar terminal kasir (Tekan F10)"
+            >
+              <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-slate-200">F10</kbd>
+              <span>Kunci</span>
+            </button>
+            <button
+              type="button"
+              onclick={() => (showShortcutModal = true)}
+              class="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-[#1d63d8] px-1.5 py-0.5 rounded text-[10px] font-semibold border border-blue-200 transition-colors cursor-pointer"
+              title="Lihat semua panduan pintasan keyboard (Tekan F1)"
+            >
+              <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-blue-200">F1</kbd>
+              <span>Bantuan</span>
+            </button>
           </div>
         </div>
       </div>
@@ -1434,26 +1792,44 @@
         <div class="bg-[#f8faff] p-2.5 sm:p-3 rounded-xl border border-blue-100/70 flex flex-col sm:flex-row gap-2.5">
           <!-- Search input -->
           <div class="relative flex-1">
-            <Search class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <Search class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
+              bind:this={searchInputEl}
               type="text"
               bind:value={searchQuery}
               oninput={handleSearchInput}
+              onkeydown={handleSearchKeydown}
               placeholder="Cari obat (nama, kandungan aktif, barcode, SKU)... [Tekan F2]"
-              class="w-full pl-9 pr-4 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-[#1d63d8] bg-white"
+              class="w-full pl-9 pr-8 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-[#1d63d8] bg-white"
             />
+            {#if searchQuery}
+              <button
+                type="button"
+                onclick={() => {
+                  searchQuery = "";
+                  applyCatalogFilter();
+                  focusSearchInput();
+                }}
+                class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                title="Hapus pencarian (Esc)"
+              >
+                <X class="w-3.5 h-3.5" />
+              </button>
+            {/if}
           </div>
 
           <!-- Customer selection -->
           <SearchableSelect
+            id="pos-customer-select"
             bind:value={selectedCustomerId}
             icon={User}
             variant="white"
             align="right"
             minMenuWidth={320}
             class="w-full sm:w-64 md:w-72"
-            placeholder="Pilih Pelanggan..."
+            placeholder="Pilih Pelanggan... (F7)"
             searchPlaceholder="Cari nama, kode, no. HP, atau tier..."
+            onchange={() => focusSearchInput()}
             options={customers.map((c) => ({
               value: c.id,
               label: c.name,
@@ -1642,11 +2018,13 @@
         </div>
         {#if cart.length > 0}
           <button
-            onclick={clearCart}
-            class="text-xs text-brand-red-500 hover:text-brand-red-700 flex items-center gap-1 font-medium"
+            onclick={handleCancelCart}
+            class="text-xs text-brand-red-500 hover:text-brand-red-700 flex items-center gap-1 font-medium transition-colors cursor-pointer"
+            title="Kosongkan keranjang (Tekan F4)"
           >
             <Trash2 class="w-3.5 h-3.5" />
-            Batal
+            <span>Batal</span>
+            <kbd class="text-[9px] font-mono bg-red-50 text-red-600 px-1 rounded border border-red-200">F4</kbd>
           </button>
         {/if}
       </div>
@@ -1787,10 +2165,12 @@
         <button
           disabled={cart.length === 0}
           onclick={openCheckout}
-          class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-sm shadow-card flex items-center justify-center gap-2 transition-all mt-2"
+          class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-sm shadow-card flex items-center justify-center gap-2 transition-all mt-2 cursor-pointer"
+          title="Bayar transaksi (Tekan F8)"
         >
           <CreditCard class="w-4 h-4" />
-          Proses Pembayaran
+          <span>Proses Pembayaran</span>
+          <kbd class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-black bg-emerald-800 text-emerald-100 border border-emerald-500/40">F8</kbd>
         </button>
       </div>
     </div>
@@ -1804,7 +2184,7 @@
     data-modal-overlay
     class="modal-overlay print:!hidden fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
-      if (e.target === e.currentTarget) showCheckoutModal = false;
+      if (e.target === e.currentTarget) closeCheckoutModal();
     }}
     role="presentation"
   >
@@ -1814,7 +2194,7 @@
           <CreditCard class="w-5 h-5 text-brand-blue" />
           Pembayaran POS
         </h3>
-        <button onclick={() => (showCheckoutModal = false)} class="text-slate-400 hover:text-slate-600">
+        <button onclick={closeCheckoutModal} class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100" title="Tutup (Esc)">
           <X class="w-5 h-5" />
         </button>
       </div>
@@ -1875,6 +2255,12 @@
             id="cashPaidInput"
             type="number"
             bind:value={cashPaid}
+            onkeydown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleCheckoutSubmit();
+              }
+            }}
             min={totals.grandTotal}
             class="w-full p-2.5 text-base font-bold rounded-lg border border-surface-border focus:ring-2 focus:ring-brand-blue-500/20 focus:outline-none"
           />
@@ -2134,10 +2520,11 @@
       <!-- Submit Checkout Button -->
       <div class="flex items-center gap-2 pt-2">
         <button
-          onclick={() => (showCheckoutModal = false)}
-          class="flex-1 py-2.5 px-4 rounded-xl border border-surface-border text-slate-600 font-semibold text-xs hover:bg-slate-50 cursor-pointer"
+          onclick={closeCheckoutModal}
+          class="flex-1 py-2.5 px-4 rounded-xl border border-surface-border text-slate-600 font-semibold text-xs hover:bg-slate-50 cursor-pointer flex items-center justify-center gap-1"
         >
-          Kembali
+          <span>Kembali</span>
+          <kbd class="text-[9px] font-mono text-slate-400">Esc</kbd>
         </button>
         <button
           onclick={handleCheckoutSubmit}
@@ -2145,6 +2532,7 @@
         >
           <CheckCircle2 class="w-4 h-4" />
           <span>{selectedPaymentMethod === 'TEMPO' ? 'Simpan Transaksi Bon' : 'Cetak Nota'}</span>
+          <kbd class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-black bg-emerald-800 text-emerald-100 border border-emerald-500/40">Enter / F8</kbd>
         </button>
       </div>
     </div>
@@ -2158,7 +2546,7 @@
     data-modal-overlay
     class="modal-overlay print:!hidden fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
-      if (e.target === e.currentTarget) showReceiptModal = false;
+      if (e.target === e.currentTarget) closeReceiptModal();
     }}
     role="presentation"
   >
@@ -2168,7 +2556,7 @@
           <Printer class="w-5 h-5 text-emerald-600" />
           Nota Penjualan
         </h3>
-        <button onclick={() => (showReceiptModal = false)} class="text-slate-400 hover:text-slate-600">
+        <button onclick={closeReceiptModal} class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100" title="Tutup (Esc)">
           <X class="w-5 h-5" />
         </button>
       </div>
@@ -2181,16 +2569,18 @@
       <div class="flex items-center gap-2">
         <button
           onclick={handlePrintThermalReceipt}
-          class="flex-1 py-2 px-4 rounded-xl bg-brand-blue text-white font-bold text-xs shadow-card flex items-center justify-center gap-1.5 hover:bg-brand-blue-700"
+          class="flex-1 py-2 px-4 rounded-xl bg-brand-blue text-white font-bold text-xs shadow-card flex items-center justify-center gap-1.5 hover:bg-brand-blue-700 cursor-pointer"
         >
           <Printer class="w-4 h-4" />
-          Cetak Thermal (58mm/80mm)
+          <span>Cetak Thermal (58mm/80mm)</span>
+          <kbd class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-blue-800 text-blue-100">Enter / F8</kbd>
         </button>
         <button
-          onclick={() => (showReceiptModal = false)}
-          class="py-2 px-4 rounded-xl border border-surface-border text-slate-600 font-semibold text-xs hover:bg-slate-50"
+          onclick={closeReceiptModal}
+          class="py-2 px-4 rounded-xl border border-surface-border text-slate-600 font-semibold text-xs hover:bg-slate-50 cursor-pointer flex items-center gap-1"
         >
-          Tutup
+          <span>Tutup</span>
+          <kbd class="text-[9px] font-mono text-slate-400">Esc</kbd>
         </button>
       </div>
     </div>
@@ -2207,7 +2597,7 @@
     data-modal-overlay
     class="modal-overlay print:!hidden fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
     onclick={(e) => {
-      if (e.target === e.currentTarget) isShiftModalOpen = false;
+      if (e.target === e.currentTarget) closeShiftModal();
     }}
     role="presentation"
   >
@@ -2217,7 +2607,7 @@
           <Clock class="w-4 h-4 text-brand-blue" />
           <span>Rekonsiliasi & Tutup Shift Kasir</span>
         </h3>
-        <button onclick={() => (isShiftModalOpen = false)} class="text-slate-400 hover:text-slate-600">
+        <button onclick={closeShiftModal} class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100" title="Tutup (Esc)">
           <X class="w-5 h-5" />
         </button>
       </div>
@@ -2414,7 +2804,7 @@
           <div class="border-t border-slate-100 pt-3 flex items-center justify-end gap-2">
             <button
               type="button"
-              onclick={() => (isShiftModalOpen = false)}
+              onclick={closeShiftModal}
               class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
             >
               Batal
@@ -2429,6 +2819,118 @@
           </div>
         {/if}
       {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL: DAFTAR PINTASAN KEYBOARD (F1) -->
+{#if showShortcutModal}
+  <div
+    use:portal
+    data-modal-overlay
+    class="modal-overlay print:!hidden fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) closeShortcutModal();
+    }}
+    role="presentation"
+  >
+    <div class="bg-white/95 backdrop-blur-xl rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-white/80 space-y-4 my-auto">
+      <div class="flex items-center justify-between pb-3 border-b border-surface-border">
+        <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+          <Keyboard class="w-5 h-5 text-brand-blue" />
+          <span>Panduan Pintasan Keyboard Kasir (POS)</span>
+        </h3>
+        <button
+          onclick={closeShortcutModal}
+          class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"
+          aria-label="Tutup"
+          title="Tutup (Esc)"
+        >
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Pintasan Utama (F1 – F10)</div>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+              <span class="text-slate-700 font-medium">Cari Obat / Barcode</span>
+              <kbd class="px-2 py-1 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300 shadow-2xs">F2</kbd>
+            </div>
+            <div class="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200 flex items-center justify-between">
+              <span class="text-emerald-900 font-bold">Bayar / Proses Transaksi</span>
+              <kbd class="px-2 py-1 rounded bg-emerald-600 font-mono font-bold text-white shadow-2xs">F8</kbd>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+              <span class="text-slate-700 font-medium">Batal / Kosongkan Keranjang</span>
+              <kbd class="px-2 py-1 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300 shadow-2xs">F4</kbd>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+              <span class="text-slate-700 font-medium">Pilih Pelanggan & Tier</span>
+              <kbd class="px-2 py-1 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300 shadow-2xs">F7</kbd>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+              <span class="text-slate-700 font-medium">Shift Kasir & Rekonsiliasi</span>
+              <kbd class="px-2 py-1 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300 shadow-2xs">F9</kbd>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+              <span class="text-slate-700 font-medium">Kunci Layar Kasir</span>
+              <kbd class="px-2 py-1 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300 shadow-2xs">F10</kbd>
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-2 border-t border-slate-100 space-y-1.5">
+          <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Navigasi Input & Barcode Scanner</div>
+          <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+            <div>
+              <div class="text-slate-800 font-semibold">Enter di Kolom Pencarian</div>
+              <div class="text-[10px] text-slate-500">Otomatis memasukkan obat ke keranjang (dukungan scanner barcode otomatis)</div>
+            </div>
+            <kbd class="px-2 py-1 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300 shadow-2xs">Enter</kbd>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+            <div>
+              <div class="text-slate-800 font-semibold">Tutup Dialog / Batal Modal</div>
+              <div class="text-[10px] text-slate-500">Menutup modal bayar, struk, shift, atau membersihkan pencarian</div>
+            </div>
+            <kbd class="px-2 py-1 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300 shadow-2xs">Esc</kbd>
+          </div>
+        </div>
+
+        <div class="pt-2 border-t border-slate-100 space-y-1.5">
+          <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Di Dalam Modal Pembayaran (F8)</div>
+          <div class="grid grid-cols-3 gap-1.5 text-[11px]">
+            <div class="p-2 rounded-lg bg-slate-50 border border-slate-200 text-center">
+              <kbd class="px-1.5 py-0.5 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300">1</kbd> / <kbd class="px-1.5 py-0.5 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300">C</kbd>
+              <div class="text-slate-600 mt-1">Tunai (Cash)</div>
+            </div>
+            <div class="p-2 rounded-lg bg-slate-50 border border-slate-200 text-center">
+              <kbd class="px-1.5 py-0.5 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300">2</kbd> / <kbd class="px-1.5 py-0.5 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300">Q</kbd>
+              <div class="text-slate-600 mt-1">QRIS Dinamis</div>
+            </div>
+            <div class="p-2 rounded-lg bg-slate-50 border border-slate-200 text-center">
+              <kbd class="px-1.5 py-0.5 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300">3</kbd> / <kbd class="px-1.5 py-0.5 rounded bg-white font-mono font-bold text-slate-800 border border-slate-300">B</kbd>
+              <div class="text-slate-600 mt-1">Bon / Tempo</div>
+            </div>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between mt-1.5">
+            <span class="text-slate-700 font-medium">Konfirmasi Bayar / Cetak Nota</span>
+            <kbd class="px-2 py-1 rounded bg-emerald-600 font-mono font-bold text-white shadow-2xs">Enter / F8</kbd>
+          </div>
+        </div>
+      </div>
+
+      <div class="pt-2 border-t border-slate-100 flex justify-end">
+        <button
+          type="button"
+          onclick={closeShortcutModal}
+          class="py-2 px-4 rounded-xl bg-brand-blue text-white font-bold text-xs hover:bg-brand-blue-700 shadow-2xs cursor-pointer"
+        >
+          Mengerti (Esc)
+        </button>
+      </div>
     </div>
   </div>
 {/if}

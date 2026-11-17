@@ -501,9 +501,29 @@ class FinanceService {
     try {
       const salesAgg = await db
         .select({
-          cashSales: sql<number>`COALESCE(SUM(CASE WHEN ${schema.salesTransactions.paymentMethod} = 'CASH' THEN ${schema.salesTransactions.grandTotal} ELSE 0 END), 0)::numeric`,
-          qrisSales: sql<number>`COALESCE(SUM(CASE WHEN ${schema.salesTransactions.paymentMethod} = 'QRIS' THEN ${schema.salesTransactions.grandTotal} ELSE 0 END), 0)::numeric`,
-          otherNonCashSales: sql<number>`COALESCE(SUM(CASE WHEN ${schema.salesTransactions.paymentMethod} NOT IN ('CASH', 'QRIS') THEN ${schema.salesTransactions.grandTotal} ELSE 0 END), 0)::numeric`
+          cashSales: sql<number>`COALESCE(SUM(
+            CASE 
+              WHEN ${schema.salesTransactions.paymentMethod} IN ('CASH', 'RESEP') 
+                THEN (${schema.salesTransactions.paidAmount} - ${schema.salesTransactions.changeAmount})
+              WHEN ${schema.salesTransactions.paymentMethod} = 'TEMPO' 
+                THEN ${schema.salesTransactions.paidAmount}
+              ELSE 0 
+            END
+          ), 0)::numeric`,
+          qrisSales: sql<number>`COALESCE(SUM(
+            CASE 
+              WHEN ${schema.salesTransactions.paymentMethod} = 'QRIS' 
+                THEN ${schema.salesTransactions.grandTotal} 
+              ELSE 0 
+            END
+          ), 0)::numeric`,
+          bankTransferSales: sql<number>`COALESCE(SUM(
+            CASE 
+              WHEN ${schema.salesTransactions.paymentMethod} IN ('TRANSFER', 'DEBIT', 'CREDIT') 
+                THEN ${schema.salesTransactions.paidAmount} 
+              ELSE 0 
+            END
+          ), 0)::numeric`
         })
         .from(schema.salesTransactions)
         .where(
@@ -514,7 +534,7 @@ class FinanceService {
 
       posCashTotal = Number(salesAgg[0]?.cashSales || 0);
       posQrisTotal = Number(salesAgg[0]?.qrisSales || 0);
-      posOtherNonCash = Number(salesAgg[0]?.otherNonCashSales || 0);
+      posOtherNonCash = Number(salesAgg[0]?.bankTransferSales || 0);
     } catch (_) {}
 
     // 3. Hitung QRIS Payouts yang sudah ditarik

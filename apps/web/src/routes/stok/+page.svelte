@@ -38,6 +38,7 @@
   import { mockApi } from "$lib/services/mock-api";
   import { api } from "$lib/services/api";
   import { alertStore } from "$lib/stores/alertStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import {
     formatRupiah,
     calculateStockDifference,
@@ -1377,7 +1378,7 @@
 </script>
 
 <svelte:head>
-  <title>Stok Obat &bull; Hafidz Farma</title>
+  <title>Stok Obat &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -1432,7 +1433,7 @@
         {:else}
           <div class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
             <Store class="w-3.5 h-3.5 text-brand-blue" />
-            <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+            <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat")}</span>
           </div>
         {/if}
       </div>

@@ -28,7 +28,7 @@
   import { alertStore } from "$lib/stores/alertStore.svelte";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { tenantStore } from "$lib/stores/tenantStore.svelte";
-  import { formatRupiah } from "@apoteku/core";
+  import { formatRupiah, calculateCartTotals } from "@apoteku/core";
 
   interface DoctorRecord {
     id: string;
@@ -755,15 +755,18 @@
     sortedCounselings.slice((pioPage - 1) * PAGE_SIZE, pioPage * PAGE_SIZE)
   );
 
-  let newResepDrugSubtotal = $derived(
-    newResepForm.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0)
+  let resepTotals = $derived(
+    calculateCartTotals(
+      newResepForm.items.map((it) => ({ qty: it.qty, unitPrice: it.unitPrice })),
+      {
+        taxRatePercent: 0,
+        tuslahAmount: Number(newResepForm.tuslah) || 0,
+        embalaseAmount: Number(newResepForm.embalase) || 0
+      }
+    )
   );
-
-  let newResepGrandTotal = $derived(
-    newResepDrugSubtotal +
-      (Number(newResepForm.tuslah) || 0) +
-      (Number(newResepForm.embalase) || 0)
-  );
+  let newResepDrugSubtotal = $derived(resepTotals.subtotal);
+  let newResepGrandTotal = $derived(resepTotals.grandTotal);
 
   function addDraftItemToResep() {
     const prod = selectedDraftProduct;
@@ -1151,7 +1154,7 @@
 </script>
 
 <svelte:head>
-  <title>Pelayanan &bull; Hafidz Farma</title>
+  <title>Pelayanan &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -1199,7 +1202,7 @@
         {:else}
           <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
             <Store class="w-3.5 h-3.5 text-brand-blue" />
-            <span>{authStore.user?.branchName || activeBranchObj?.name || "Apotek Hafidz Farma"}</span>
+            <span>{authStore.user?.branchName || activeBranchObj?.name || tenantStore.current.name || "Apotek Hafidz Farma"}</span>
           </div>
         {/if}
       </div>

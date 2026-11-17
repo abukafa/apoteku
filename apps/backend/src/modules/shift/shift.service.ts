@@ -1,5 +1,6 @@
 import { db, schema } from "@apoteku/db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
+import { calculateCashierShiftReconciliation, resolveShiftName } from "@apoteku/core";
 
 export interface OpenShiftParams {
   tenantId?: string;
@@ -119,7 +120,15 @@ class ShiftService {
     const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
     const drawerMutIn = Number(mutationsAgg?.cashIn || 0);
     const drawerMutOut = Number(mutationsAgg?.cashOut || 0);
-    const expectedCash = initial + cashSales - cashRefunds + drawerMutIn - drawerMutOut;
+    const reconciliation = calculateCashierShiftReconciliation({
+      initialCash: initial,
+      cashSales,
+      actualCash: 0,
+      cashRefunds,
+      pettyCashIn: drawerMutIn,
+      pettyCashOut: drawerMutOut
+    });
+    const expectedCash = reconciliation.expectedCash;
 
     return {
       ...shift,
@@ -281,9 +290,17 @@ class ShiftService {
     const cashRefunds = Number(refundsAgg?.totalCashRefunds || 0);
     const drawerMutIn = Number(mutationsAgg?.cashIn || 0);
     const drawerMutOut = Number(mutationsAgg?.cashOut || 0);
-    const expectedCash = initial + cashSales - cashRefunds + drawerMutIn - drawerMutOut;
     const actualCash = Number(params.actualCash);
-    const cashDifference = actualCash - expectedCash;
+    const reconciliation = calculateCashierShiftReconciliation({
+      initialCash: initial,
+      cashSales,
+      actualCash,
+      cashRefunds,
+      pettyCashIn: drawerMutIn,
+      pettyCashOut: drawerMutOut
+    });
+    const expectedCash = reconciliation.expectedCash;
+    const cashDifference = reconciliation.cashDifference;
 
     const [updated] = await db
       .update(schema.cashierShifts)
@@ -356,19 +373,8 @@ class ShiftService {
 
     return await Promise.all(
       shifts.map(async (s) => {
-        let shiftLabel = `Shift ${s.shiftNumber}`;
-        if (s.notes && s.notes.startsWith("[")) {
-          const match = s.notes.match(/^\[(.*?)\]/);
-          if (match && match[1]) shiftLabel = match[1];
-        } else if (s.shiftNumber === 1) {
-          shiftLabel = "Shift 1 - Pagi";
-        } else if (s.shiftNumber === 2) {
-          shiftLabel = "Shift 2 - Siang";
-        } else if (s.shiftNumber === 3) {
-          shiftLabel = "Shift 3 - Malam";
-        } else if (s.shiftNumber === 4) {
-          shiftLabel = "Shift 4 - Lembur";
-        }
+        const baseShift = resolveShiftName(s.shiftNumber, s.notes);
+        const shiftLabel = s.notes && s.notes.startsWith("[") ? baseShift : `Shift ${s.shiftNumber} - ${baseShift}`;
 
         let expectedCash = Number(s.expectedCash);
         let totalNonCash = Number(s.totalNonCash);

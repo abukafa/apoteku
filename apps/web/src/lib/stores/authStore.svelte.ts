@@ -1,5 +1,6 @@
 import { browser } from "$app/environment";
 import { api } from "../services/api";
+import { tenantStore } from "./tenantStore.svelte";
 import {
   hasPermission,
   hasAnyPermission,
@@ -115,7 +116,7 @@ export class AuthState {
           role: u.role as UserRole,
           tenantId: u.tenantId || "tenant-hafidz-farma",
           branchId: u.branchId || branchId || "1",
-          branchName: u.branchName || "Apotek Hafidz Farma Pusat",
+          branchName: u.branchName || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat"),
           pin,
           avatarUrl: u.avatarUrl,
           isActive: true,
@@ -179,7 +180,7 @@ export class AuthState {
           role: u.role as UserRole,
           tenantId: u.tenantId || "tenant-hafidz-farma",
           branchId: u.branchId || "1",
-          branchName: u.branchName || "Apotek Hafidz Farma Pusat",
+          branchName: u.branchName || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat"),
           pin: payload.pin,
           isActive: true,
           permissions: u.permissions || (u.role === "SUPERADMIN" ? ["*"] : ["pos:read", "pos:write", "stok:read"])
@@ -224,7 +225,7 @@ export class AuthState {
           role: u.role as UserRole,
           tenantId: u.tenantId || "tenant-hafidz-farma",
           branchId: u.branchId || "1",
-          branchName: u.branchName || "Apotek Hafidz Farma Pusat",
+          branchName: u.branchName || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat"),
           pin: u.pin || "123456",
           avatarUrl: u.avatarUrl,
           isActive: true,
@@ -277,7 +278,7 @@ export class AuthState {
         role: match.role,
         tenantId: "tenant-hafidz-farma",
         branchId: branchId || "1",
-        branchName: "Apotek Hafidz Farma Pusat",
+        branchName: tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat",
         pin: p,
         isActive: true,
         permissions: ["*"]

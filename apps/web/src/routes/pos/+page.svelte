@@ -1515,7 +1515,7 @@
 </script>
 
 <svelte:head>
-  <title>Kasir POS &bull; Hafidz Farma</title>
+  <title>Kasir POS &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
 </svelte:head>
 
 <svelte:window onkeydown={handlePosKeydown} />
@@ -1706,7 +1706,7 @@
       {:else}
         <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50/80 border border-blue-200/60 text-[#0c2e7a] font-bold text-xs" title="Cabang Penugasan">
           <Store class="w-3.5 h-3.5 text-[#1d63d8]" />
-          <span>{authStore.user?.branchName || selectedBranch?.name || "Apotek Hafidz Farma Pusat"}</span>
+          <span>{authStore.user?.branchName || selectedBranch?.name || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat")}</span>
         </div>
       {/if}
 
@@ -2301,7 +2301,7 @@
           </div>
 
           <div class="text-xs font-bold text-slate-800">
-            {selectedBranch?.name || "Apotek Hafidz Farma"}
+            {selectedBranch?.name || tenantStore.current.name || "Apotek Hafidz Farma"}
           </div>
 
           <!-- Dummy QR Code SVG Graphic with Status Overlay -->
@@ -2529,7 +2529,7 @@
           class="flex-1 py-2.5 px-4 rounded-xl font-bold text-xs shadow-card flex items-center justify-center gap-1.5 transition-all cursor-pointer {selectedPaymentMethod === 'QRIS' && qrisStatus !== 'PAID' ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : selectedPaymentMethod === 'TEMPO' && (!selectedCustomer || selectedCustomer.id === 'cust-general') ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}"
         >
           <CheckCircle2 class="w-4 h-4" />
-          <span>{selectedPaymentMethod === 'TEMPO' ? 'Simpan Transaksi Bon' : 'Cetak Nota'}</span>
+          <span>{selectedPaymentMethod === 'TEMPO' ? 'Simpan' : 'Cetak'}</span>
           <kbd class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-black bg-emerald-800 text-emerald-100 border border-emerald-500/40">Enter / F8</kbd>
         </button>
       </div>

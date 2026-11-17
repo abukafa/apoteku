@@ -10,6 +10,7 @@
   import Footer from "$lib/components/Footer.svelte";
   import { api } from "$lib/services/api";
   import { formatRupiah, calculateGrowthPercentage } from "@apoteku/core";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
 
   let salesToday = $state("Rp 0");
   let salesTrend = $state("0% dari kemarin");
@@ -79,7 +80,7 @@
 </script>
 
 <svelte:head>
-  <title>Dashboard &bull; Hafidz Farma</title>
+  <title>Dashboard &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
 </svelte:head>
 
 <div class="space-y-6">

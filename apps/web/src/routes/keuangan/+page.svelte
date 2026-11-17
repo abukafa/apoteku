@@ -28,7 +28,7 @@
   import { authStore } from "$lib/stores/authStore.svelte";
   import { alertStore } from "$lib/stores/alertStore.svelte";
   import { tenantStore } from "$lib/stores/tenantStore.svelte";
-  import { formatRupiah } from "@apoteku/core";
+  import { formatRupiah, calculateCashierShiftReconciliation } from "@apoteku/core";
 
   interface CashLedgerEntry {
     id: string;
@@ -84,6 +84,17 @@
   let selectedShiftForClose = $state<CashierShiftRecord | null>(null);
   let actualCountedCashInput = $state(0);
   let closeShiftNotes = $state("");
+  let closeShiftRecon = $derived.by(() => {
+    if (!selectedShiftForClose) return null;
+    return calculateCashierShiftReconciliation({
+      initialCash: selectedShiftForClose.initialCash,
+      cashSales: selectedShiftForClose.expectedCash - selectedShiftForClose.initialCash,
+      actualCash: Number(actualCountedCashInput),
+      cashRefunds: 0,
+      pettyCashIn: 0,
+      pettyCashOut: 0
+    });
+  });
   let isSubmittingExpense = $state(false);
   let isSubmittingPayout = $state(false);
   let isClosingShift = $state(false);
@@ -226,9 +237,7 @@
       .filter((e) => e.type === "OUT")
       .reduce((a, b) => a + b.amount, 0)
   );
-  let currentBalance = $derived(
-    branchCashEntries.length > 0 ? branchCashEntries[0].balance : totalKasBank
-  );
+  let currentBalance = $derived(kasLaci + bcaBalance);
 
   // Pagination & Sorting State
   const PAGE_SIZE = 25;
@@ -518,7 +527,7 @@
 </script>
 
 <svelte:head>
-  <title>Keuangan &bull; Hafidz Farma</title>
+  <title>Keuangan &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -548,7 +557,7 @@
       {:else}
         <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
           <Store class="w-3.5 h-3.5 text-brand-blue" />
-          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat")}</span>
         </div>
       {/if}
 
@@ -568,7 +577,9 @@
     <MetricCard
       title="Saldo Kas & Bank"
       value={formatRupiah(currentBalance, false)}
-      subtext="Cash: {formatRupiah(kasLaci)}"
+      subtext={bcaBalance > 0
+        ? `Laci: ${formatRupiah(kasLaci)} • Bank: ${formatRupiah(bcaBalance)}`
+        : `Saldo Kasir: ${formatRupiah(kasLaci)}`}
       icon={Wallet}
       variant="brand"
     />
@@ -1112,8 +1123,15 @@
             bind:value={actualCountedCashInput}
             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-brand-blue text-sm"
           />
-          <div class="mt-1 font-mono text-[11px] {actualCountedCashInput - selectedShiftForClose.expectedCash === 0 ? 'text-emerald-600' : 'text-brand-red-600'} font-bold">
-            Selisih: {formatRupiah(actualCountedCashInput - selectedShiftForClose.expectedCash)}
+          <div class="mt-1 font-mono text-[11px] {closeShiftRecon?.status === 'BALANCED' ? 'text-emerald-600' : 'text-brand-red-600'} font-bold">
+            Selisih: {formatRupiah(closeShiftRecon?.cashDifference ?? 0)}
+            {#if closeShiftRecon?.status === "SURPLUS"}
+              (Surplus / Kas Lebih)
+            {:else if closeShiftRecon?.status === "DEFICIT"}
+              (Defisit / Kas Kurang)
+            {:else}
+              (Seimbang / Sesuai)
+            {/if}
           </div>
         </div>
 

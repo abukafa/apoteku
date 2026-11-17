@@ -1,6 +1,6 @@
 import { db, schema } from "@apoteku/db";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
-import { generatePrescriptionNumber } from "@apoteku/core";
+import { generatePrescriptionNumber, calculateCartTotals } from "@apoteku/core";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -263,7 +263,6 @@ class PrescriptionService {
     const now = new Date();
     const recipeNumber = generatePrescriptionNumber(undefined, now);
 
-    let drugSubtotal = 0;
     const itemsToInsert: Array<{
       id: string;
       transactionId: string;
@@ -280,6 +279,22 @@ class PrescriptionService {
       dosageRules: string;
     }> = [];
 
+    const calc = calculateCartTotals(
+      payload.items.map((it) => ({
+        qty: Number(it.qty) || 1,
+        unitPrice: Number(it.unitPrice) || 0
+      })),
+      {
+        taxRatePercent: 0,
+        tuslahAmount: Number(payload.tuslah || 0),
+        embalaseAmount: Number(payload.embalase || 0)
+      }
+    );
+    const drugSubtotal = calc.subtotal;
+    const tuslah = calc.tuslahAmount;
+    const embalase = calc.embalaseAmount;
+    const grandTotal = calc.grandTotal;
+
     for (let idx = 0; idx < payload.items.length; idx++) {
       const it = payload.items[idx];
       if (!UUID_RE.test(it.productId)) {
@@ -289,7 +304,6 @@ class PrescriptionService {
       const factor = Math.max(1, Number(it.conversionFactor || 1));
       const price = Number(it.unitPrice) || 0;
       const sub = qty * price;
-      drugSubtotal += sub;
 
       itemsToInsert.push({
         id: crypto.randomUUID(),
@@ -308,9 +322,6 @@ class PrescriptionService {
       });
     }
 
-    const tuslah = Number(payload.tuslah || 0);
-    const embalase = Number(payload.embalase || 0);
-    const grandTotal = drugSubtotal + tuslah + embalase;
     const initialStatus = payload.initialStatus === "VERIFIED" ? "VERIFIED" : "DRAFT";
     const isVerified = initialStatus === "VERIFIED";
     const itemSummary = payload.items.map((i) => `${i.productName || "Obat"} (${i.qty} ${i.unit || "TAB"})`).join(", ");

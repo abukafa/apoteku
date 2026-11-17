@@ -24,10 +24,10 @@
   import Select from "$lib/components/ui/Select.svelte";
   import { portal } from "$lib/actions/portal";
   import { onMount } from "svelte";
-  import { mockApi } from "$lib/services/mock-api";
   import { api } from "$lib/services/api";
   import { alertStore } from "$lib/stores/alertStore.svelte";
-  import { formatRupiah } from "@apoteku/core";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
+  import { formatRupiah, calculateDebtSettlement } from "@apoteku/core";
 
   let customers = $state<any[]>([]);
   let activeTab = $state<"semua" | "piutang">("semua");
@@ -396,7 +396,7 @@
 </script>
 
 <svelte:head>
-  <title>Pelanggan &bull; Hafidz Farma</title>
+  <title>Pelanggan &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -879,6 +879,19 @@
             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 text-sm"
           />
         </div>
+
+        {#if selectedDebtCustomer}
+          {@const settlement = calculateDebtSettlement(selectedDebtCustomer.totalDebt, 0, debtPaymentAmount)}
+          <div class="p-2.5 rounded-xl border text-[11px] font-mono {settlement.isPaidOff ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-blue-50 border-blue-200 text-blue-800'}">
+            <div class="flex justify-between">
+              <span>Sisa Piutang:</span>
+              <span class="font-bold">{formatRupiah(settlement.remainingDebt)}</span>
+            </div>
+            {#if settlement.isPaidOff}
+              <div class="text-[10px] font-bold text-emerald-600 mt-0.5">LUNAS SEPENUHNYA</div>
+            {/if}
+          </div>
+        {/if}
       </div>
 
       <div class="border-t border-slate-100 pt-3 flex items-center justify-end gap-2">

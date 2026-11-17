@@ -1,5 +1,6 @@
 import { db, schema } from "@apoteku/db";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
+import { generateTransferNumber } from "@apoteku/core";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -493,7 +494,7 @@ class TransferService {
         | "RECEIVED"
         | "RECEIVED_DISCREPANCY";
       const isReceived = normalizedStatus === "RECEIVED" || normalizedStatus === "RECEIVED_DISCREPANCY";
-      const rtbNo = isReceived ? `RTB-${t.transferNumber.replace(/^(RKB|SJL)-/, "")}` : undefined;
+      const rtbNo = isReceived ? `RTB-${t.transferNumber.replace(/^(RKB|SJL)[-/]/, "")}` : undefined;
 
       const dateStr = t.transferDate ? new Date(t.transferDate).toISOString() : "";
       const recDateStr = t.receivedDate ? new Date(t.receivedDate).toISOString() : undefined;
@@ -975,9 +976,8 @@ class TransferService {
       const shipper = await this.resolveUser(tx, tenantId, payload.userId, payload.operator);
 
       const now = new Date();
-      const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
       const randomSeq = Math.floor(100 + Math.random() * 900);
-      const transferNumber = payload.transferNumber || `RKB-${dateStr}-${randomSeq}`;
+      const transferNumber = payload.transferNumber || generateTransferNumber(randomSeq, now);
       const transferId = crypto.randomUUID();
       const status = payload.status || "IN_TRANSIT";
 
@@ -1326,7 +1326,7 @@ class TransferService {
       }
 
       const finalStatus = anyDiff ? "RECEIVED_DISCREPANCY" : "RECEIVED";
-      const rtbNo = `RTB-${transfer.transferNumber.replace(/^(RKB|SJL)-/, "")}`;
+      const rtbNo = `RTB-${transfer.transferNumber.replace(/^(RKB|SJL)[-/]/, "")}`;
 
       await tx
         .update(schema.stockTransfers)

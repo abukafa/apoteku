@@ -894,7 +894,7 @@
 </script>
 
 <svelte:head>
-  <title>Pengaturan &bull; Hafidz Farma</title>
+  <title>Pengaturan &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
 </svelte:head>
 
 <div class="space-y-6">

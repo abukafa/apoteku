@@ -39,6 +39,7 @@
   import { onMount, onDestroy } from "svelte";
   import { api } from "$lib/services/api";
   import { alertStore } from "$lib/stores/alertStore.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { formatRupiah } from "@apoteku/core";
 
   // Reactive state
@@ -50,7 +51,8 @@
     totalPrescriptions: 0,
     unpaidReceivables: 0,
     totalSalesMonth: 0,
-    averageBasketSize: 0
+    averageBasketSize: 0,
+    cashInDrawer: 0
   });
 
   let activeTab = $state<"SEMUA" | "UMUM" | "RESEP" | "GROSIR" | "TEMPO" | "DELIVERY">("SEMUA");
@@ -64,7 +66,10 @@
   onMount(async () => {
     isLoading = true;
     try {
-      const res = await api.erp.getSales(250);
+      const [res, cfRes] = await Promise.all([
+        api.erp.getSales(250),
+        api.finance.getCashflow().catch(() => null)
+      ]);
       if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
         sales = res.data;
 
@@ -79,12 +84,29 @@
             0
           );
 
+        // Penerimaan kas masuk tunai kasir (CASH, RESEP tunai, DP TEMPO)
+        const netCashSales = sales.reduce((acc, cur) => {
+          if (cur.paymentMethod === "QRIS" || cur.paymentMethod === "TRANSFER" || cur.paymentMethod === "DEBIT") {
+            return acc;
+          }
+          const paid = Number(cur.paidAmount) || 0;
+          const change = Number(cur.changeAmount) || 0;
+          return acc + Math.max(0, paid - change);
+        }, 0);
+
+        // Saldo riil kas laci (memperhitungkan beban operasional/refund jika ada)
+        const realKasLaci =
+          cfRes?.success && cfRes.data?.kasLaci !== undefined
+            ? Number(cfRes.data.kasLaci)
+            : netCashSales;
+
         summary.totalSalesToday = totalRev;
         summary.transactionsToday = sales.length;
         summary.totalPrescriptions = resepCount;
         summary.unpaidReceivables = unpaidTempo;
         summary.totalSalesMonth = totalRev;
         summary.averageBasketSize = sales.length > 0 ? Math.round(totalRev / sales.length) : 0;
+        summary.cashInDrawer = realKasLaci;
       }
     } catch (e) {
       console.warn("[Penjualan] Gagal memuat data penjualan dari API:", e);
@@ -213,7 +235,7 @@
 </script>
 
 <svelte:head>
-  <title>Penjualan &bull; Hafidz Farma</title>
+  <title>Penjualan &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -251,7 +273,7 @@
     <MetricCard
       title="Penjualan Hari Ini"
       value={formatRupiah(summary.totalSalesToday)}
-      subtext={`${summary.transactionsToday} Struk Transaksi Selesai`}
+      subtext={`Saldo Kasir: ${formatRupiah(summary.cashInDrawer)}`}
       icon={DollarSign}
       variant="brand"
     />

@@ -179,19 +179,12 @@ const DEFAULT_CATEGORIES: Category[] = [
   { id: "cat-5", name: "Herbal & Suplemen", code: "HERBAL", description: "Jamu, herbal terstandar & fitofarmaka" }
 ];
 
-const DEFAULT_DOCTORS: Doctor[] = [
-  { id: "doc-1", name: "dr. Hendra Setiawan, Sp.PD", sip: "SIP.503/441/Dinkes/2024", specialization: "Spesialis Penyakit Dalam", phone: "081234567891" },
-  { id: "doc-2", name: "dr. Anisa Rahmawati, Sp.A", sip: "SIP.503/442/Dinkes/2024", specialization: "Spesialis Anak", phone: "081234567892" },
-  { id: "doc-3", name: "dr. Budi Santoso, Sp.JP", sip: "SIP.503/443/Dinkes/2024", specialization: "Spesialis Jantung & Pembuluh Darah", phone: "081234567893" },
-  { id: "doc-4", name: "dr. Siti Nurhaliza", sip: "SIP.503/444/Dinkes/2024", specialization: "Dokter Umum", phone: "081234567894" }
-];
-
 class MockApiService {
   private products: Product[] = [];
   private branches: Branch[] = [];
   private categories: Category[] = DEFAULT_CATEGORIES;
   private customers: Customer[] = [];
-  private doctors: Doctor[] = DEFAULT_DOCTORS;
+  private doctors: Doctor[] = [];
   private suppliers: Supplier[] = [];
   private shifts: CashierShift[] = [];
   private users: ActiveUser[] = [];
@@ -413,7 +406,12 @@ class MockApiService {
   }
 
   async getDoctors(searchQuery?: string): Promise<Doctor[]> {
-    await delay(100);
+    try {
+      const res = await api.prescription.listDoctors();
+      if (res?.success && Array.isArray(res.data)) {
+        this.doctors = res.data;
+      }
+    } catch (_) {}
     if (!searchQuery) return [...this.doctors];
     const q = searchQuery.toLowerCase().trim();
     return this.doctors.filter(

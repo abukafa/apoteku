@@ -23,10 +23,9 @@
   import Select from "$lib/components/ui/Select.svelte";
   import { portal } from "$lib/actions/portal";
   import { onMount } from "svelte";
-  import { mockApi } from "$lib/services/mock-api";
   import { api } from "$lib/services/api";
   import { alertStore } from "$lib/stores/alertStore.svelte";
-  import { formatRupiah } from "@apoteku/core";
+  import { formatRupiah, calculateDebtSettlement } from "@apoteku/core";
 
   let suppliers = $state<any[]>([]);
   let activeTab = $state<"semua" | "hutang" | "riwayat">("semua");
@@ -222,16 +221,12 @@
 
   onMount(async () => {
     try {
-      await mockApi.ensureDataLoaded();
       const [liveSuppliersRes] = await Promise.all([
         api.suppliers.list().catch(() => null),
         loadDebts()
       ]);
-      if (liveSuppliersRes?.success && Array.isArray(liveSuppliersRes.data) && liveSuppliersRes.data.length > 0) {
+      if (liveSuppliersRes?.success && Array.isArray(liveSuppliersRes.data)) {
         suppliers = liveSuppliersRes.data;
-      } else {
-        const fallback = await mockApi.getSuppliers();
-        if (fallback && fallback.length > 0) suppliers = fallback as any;
       }
     } catch (_) {}
   });
@@ -1205,9 +1200,10 @@
             bind:value={pbfPaymentAmount}
             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 text-sm"
           />
-          {#if pbfPaymentAmount < selectedPbfDebt.totalDebt && pbfPaymentAmount > 0}
-            <div class="text-[10px] text-amber-600 mt-1 font-medium">
-              Sisa tagihan setelah pembayaran: {formatRupiah(selectedPbfDebt.totalDebt - pbfPaymentAmount)} (Status: SEBAGIAN/PARTIAL)
+          {#if selectedPbfDebt && pbfPaymentAmount > 0}
+            {@const settlement = calculateDebtSettlement(selectedPbfDebt.totalDebt, 0, pbfPaymentAmount)}
+            <div class="text-[10px] mt-1 font-medium {settlement.isPaidOff ? 'text-emerald-600' : 'text-amber-600'}">
+              Sisa tagihan setelah pembayaran: {formatRupiah(settlement.remainingDebt)} (Status: {settlement.isPaidOff ? 'LUNAS' : 'SEBAGIAN/PARTIAL'})
             </div>
           {/if}
         </div>

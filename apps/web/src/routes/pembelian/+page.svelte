@@ -33,7 +33,7 @@
   import { api } from "$lib/services/api";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { tenantStore } from "$lib/stores/tenantStore.svelte";
-  import { formatRupiah, formatPurchaseOrderNumber } from "@apoteku/core";
+  import { formatRupiah, formatPurchaseOrderNumber, calculateInvoiceLineNet } from "@apoteku/core";
 
   interface InvoiceItemRow {
     productId: string;
@@ -215,7 +215,7 @@
       supplierId: p.supplierId || "",
       supplierName: p.supplierName || "Distributor Farmasi",
       branchId: p.branchId || "1",
-      branchName: p.branchName || "Apotek Hafidz Farma",
+      branchName: p.branchName || tenantStore.current.name || "Apotek Hafidz Farma",
       invoiceDate: p.invoiceDate || p.receiveDate,
       dueDate: p.dueDate,
       totalAmount: Number(p.grandTotal ?? p.totalAmount ?? 0),
@@ -558,10 +558,7 @@
 
   function calcRowSubtotal(item: InvoiceItemRow): number {
     if (item.isRejected || (item.qty || 0) <= 0) return 0;
-    const gross = (item.qty || 0) * (item.hna || 0);
-    const afterDisc1 = gross * (1 - (item.disc1 || 0) / 100);
-    const afterDisc2 = afterDisc1 * (1 - (item.disc2 || 0) / 100);
-    return Math.round(afterDisc2);
+    return calculateInvoiceLineNet(item.qty || 0, item.hna || 0, item.disc1 || 0, item.disc2 || 0).netto;
   }
 
   // Invoice Totals Breakdown (Hanya menghitung barang yang diterima dan tidak ditolak)
@@ -1079,7 +1076,7 @@
             qtyBase: finalQty * factor,
             buyPrice: item.hna,
             discountPercent: item.disc1,
-            discountAmount: Math.round(((item.qty || 0) * (item.hna || 0) * (item.disc1 || 0)) / 100),
+            discountAmount: calculateInvoiceLineNet(item.qty || 0, item.hna || 0, item.disc1 || 0, item.disc2 || 0).discountAmount,
             subtotal: calcRowSubtotal(item),
             qtyOrdered: item.qtyOrdered,
             discrepancyReason: item.discrepancyReason,
@@ -1614,7 +1611,7 @@
 </script>
 
 <svelte:head>
-  <title>Pembelian &bull; Hafidz Farma</title>
+  <title>Pembelian &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
   {#if isPrintSpModalOpen}
     <style>
       @media print {
@@ -1651,7 +1648,7 @@
       {:else}
         <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
           <Store class="w-3.5 h-3.5 text-brand-blue" />
-          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma Pusat"}</span>
+          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat")}</span>
         </div>
       {/if}
 

@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { db, schema } from "@apoteku/db";
 import { desc, count, sql, eq, and } from "drizzle-orm";
-import { generateOrderNumber, inferPurchaseOrderType } from "@apoteku/core";
+import { generateOrderNumber, inferPurchaseOrderType, calculateDebtSettlement } from "@apoteku/core";
 import { consignmentService } from "./consignment.service.js";
 
 class ProductUnitValidationError extends Error {}
@@ -1168,13 +1168,13 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
       }
 
       const currentPaid = Number(sale.paidAmount || 0);
-      const newPaid = currentPaid + numAmount;
+      const settlement = calculateDebtSettlement(Number(sale.grandTotal), currentPaid, numAmount);
 
       await db
         .update(schema.salesTransactions)
         .set({
-          paidAmount: String(newPaid),
-          changeAmount: String(Math.max(0, newPaid - Number(sale.grandTotal)))
+          paidAmount: String(settlement.newPaidAmount),
+          changeAmount: String(Math.max(0, currentPaid + numAmount - Number(sale.grandTotal)))
         })
         .where(eq(schema.salesTransactions.id, transactionId));
 

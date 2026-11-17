@@ -151,7 +151,7 @@
         email: user.email,
         role: user.role || "GUEST",
         branchId: user.branchId || "1",
-        branchName: user.branchName || "Apotek Hafidz Farma",
+        branchName: user.branchName || tenantStore.current.name || "Apotek Hafidz Farma",
         avatarUrl: cleanAvatar,
         lastLoginAt: Date.now(),
         token: token || user.token || existing?.token,
@@ -189,7 +189,7 @@
       role: activeRole,
       tenantId: dbUser?.tenantId || acc.tenantId || "tenant-hafidz-farma",
       branchId: dbUser?.branchId || acc.branchId || "1",
-      branchName: dbUser?.branchName || acc.branchName || "Apotek Hafidz Farma Pusat",
+      branchName: dbUser?.branchName || acc.branchName || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat"),
       pin: dbUser?.pin || acc.pin || "",
       avatarUrl: dbUser?.avatarUrl || acc.avatarUrl,
       isActive: true,
@@ -418,7 +418,7 @@
         email: currentAcc.email,
         role: currentAcc.role,
         branchId: currentAcc.branchId || selectedBranchId || "1",
-        branchName: currentAcc.branchName || "Apotek Hafidz Farma",
+        branchName: currentAcc.branchName || tenantStore.current.name || "Apotek Hafidz Farma",
         avatarUrl: currentAcc.avatarUrl,
         pin: inputPin.trim(),
         lastLoginAt: Date.now()
@@ -471,7 +471,7 @@
 </script>
 
 <svelte:head>
-  <title>Login &bull; Hafidz Farma</title>
+  <title>Login &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </svelte:head>
 

@@ -935,7 +935,7 @@
 
       const docNo = receivingTransfer.transferNumber;
       const destName = receivingTransfer.toBranchName;
-      const rtbNo = res.data.receiptNumber || `RTB-${docNo.replace(/^(RKB|SJL)-/, "")}`;
+      const rtbNo = res.data.receiptNumber || `RTB-${docNo.replace(/^(RKB|SJL)[-/]/, "")}`;
 
       isReceiveModalOpen = false;
       await loadTransfers();
@@ -977,7 +977,7 @@
 </script>
 
 <svelte:head>
-  <title>Pengiriman &bull; Hafidz Farma</title>
+  <title>Pengiriman &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
   {#if isDetailModalOpen}
     <style>
       @media print {

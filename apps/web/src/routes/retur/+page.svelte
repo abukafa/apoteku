@@ -945,7 +945,7 @@
 </script>
 
 <svelte:head>
-  <title>Retur &bull; Hafidz Farma</title>
+  <title>Retur &bull; {tenantStore.current.name || "Hafidz Farma"}</title>
   {#if isDetailModalOpen}
     <style>
       @media print {
@@ -995,7 +995,7 @@
       {:else}
         <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
           <Store class="w-3.5 h-3.5 text-brand-blue" />
-          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || "Apotek Hafidz Farma"}</span>
+          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || tenantStore.current.name || "Apotek Hafidz Farma"}</span>
         </div>
       {/if}
 

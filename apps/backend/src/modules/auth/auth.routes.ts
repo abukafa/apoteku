@@ -1,6 +1,7 @@
 import { Elysia, t } from "elysia";
 import { db, schema } from "@apoteku/db";
 import { eq, or, and, sql } from "drizzle-orm";
+import { ROLE_PERMISSIONS, type UserRole } from "@apoteku/core";
 
 export const authRoutes = new Elysia({ prefix: "/api" })
   // 1. AUTH LOGIN
@@ -27,6 +28,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             email: schema.users.email,
             phone: schema.users.phone,
             role: schema.users.role,
+            customPermissions: schema.users.customPermissions,
             pin: schema.users.pin,
             avatarUrl: schema.users.avatarUrl,
             isActive: schema.users.isActive,
@@ -91,19 +93,10 @@ export const authRoutes = new Elysia({ prefix: "/api" })
           }
         }
 
-        // Determine permissions based on role
-        let permissions: string[] = ["pos:read", "pos:write", "stok:read"];
-        if (user.role === "SUPERADMIN" || user.role === "OWNER") {
-          permissions = ["*"];
-        } else if (user.role === "PHARMACIST") {
-          permissions = ["pos:read", "pos:write", "stok:read", "stok:write", "pelayanan:write", "laporan:read"];
-        } else if (user.role === "INVENTORY") {
-          permissions = ["stok:read", "stok:write", "pembelian:read", "pembelian:write", "pengiriman:write"];
-        } else if (user.role === "FINANCE") {
-          permissions = ["keuangan:read", "keuangan:write", "laporan:read", "pembelian:read"];
-        } else if (user.role === "GUEST") {
-          permissions = [];
-        }
+        // Determine permissions based on role matrix + custom user permissions
+        const roleDefaultPerms = (ROLE_PERMISSIONS[user.role as UserRole] || []) as string[];
+        const customUserPerms = ((user.customPermissions as string[]) || []);
+        const permissions = Array.from(new Set([...roleDefaultPerms, ...customUserPerms]));
 
         return {
           success: true,
@@ -121,6 +114,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
               phone: user.phone,
               role: user.role,
               avatarUrl: user.avatarUrl,
+              customPermissions: customUserPerms,
               permissions
             },
             token: `demo-token-${user.id}-${Date.now()}`
@@ -425,6 +419,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             email: schema.users.email,
             phone: schema.users.phone,
             role: schema.users.role,
+            customPermissions: schema.users.customPermissions,
             pin: schema.users.pin,
             avatarUrl: schema.users.avatarUrl,
             isActive: schema.users.isActive,
@@ -726,6 +721,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             email: schema.users.email,
             phone: schema.users.phone,
             role: schema.users.role,
+            customPermissions: schema.users.customPermissions,
             pin: schema.users.pin,
             avatarUrl: schema.users.avatarUrl,
             isActive: schema.users.isActive,
@@ -885,6 +881,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             email: schema.users.email,
             phone: schema.users.phone,
             role: schema.users.role,
+            customPermissions: schema.users.customPermissions,
             pin: schema.users.pin,
             avatarUrl: schema.users.avatarUrl,
             isActive: schema.users.isActive,
@@ -905,6 +902,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             email: u.email || `${u.username}@hafidzfarma.com`,
             phone: u.phone || "081234567890",
             role: u.role,
+            customPermissions: (u.customPermissions as string[]) || [],
             branchId: u.branchId,
             branchName: u.branchName || "Apotek Hafidz Farma Pusat",
             hasPin: Boolean(u.pin),
@@ -976,11 +974,20 @@ export const authRoutes = new Elysia({ prefix: "/api" })
     }
   )
 
-  // 3b. UPDATE USER (UBAH ROLE / CABANG / STATUS OLEH SUPERADMIN)
+  // 3b. UPDATE USER (UBAH ROLE / CABANG / STATUS OLEH SUPERADMIN / OWNER)
   .put(
     "/users/:id",
-    async ({ params, body, set }) => {
+    async ({ params, body, headers, set }) => {
       try {
+        const callerRole = (headers["x-user-role"] || "").toUpperCase();
+        if (callerRole !== "SUPERADMIN" && callerRole !== "OWNER") {
+          set.status = 403;
+          return {
+            success: false,
+            error: "Akses ditolak: Hanya Pemilik Apotek (Owner) atau Super Admin yang berhak mengubah wewenang dan akun staf."
+          };
+        }
+
         const updateData: Record<string, any> = {};
         if (body.role !== undefined) updateData.role = body.role;
         if (body.branchId !== undefined) updateData.branchId = body.branchId;
@@ -989,6 +996,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
         if (body.phone !== undefined) updateData.phone = body.phone.trim();
         if (body.pin !== undefined) updateData.pin = body.pin.trim();
         if (body.isActive !== undefined) updateData.isActive = body.isActive;
+        if (body.customPermissions !== undefined) updateData.customPermissions = body.customPermissions;
 
         const [updated] = await db
           .update(schema.users)
@@ -1020,7 +1028,8 @@ export const authRoutes = new Elysia({ prefix: "/api" })
         email: t.Optional(t.String()),
         phone: t.Optional(t.String()),
         pin: t.Optional(t.String()),
-        isActive: t.Optional(t.Boolean())
+        isActive: t.Optional(t.Boolean()),
+        customPermissions: t.Optional(t.Array(t.String()))
       }),
       detail: {
         tags: ["Auth & Users"],
@@ -1032,8 +1041,17 @@ export const authRoutes = new Elysia({ prefix: "/api" })
   // 3c. DELETE USER
   .delete(
     "/users/:id",
-    async ({ params, set }) => {
+    async ({ params, headers, set }) => {
       try {
+        const callerRole = (headers["x-user-role"] || "").toUpperCase();
+        if (callerRole !== "SUPERADMIN" && callerRole !== "OWNER") {
+          set.status = 403;
+          return {
+            success: false,
+            error: "Akses ditolak: Hanya Pemilik Apotek (Owner) atau Super Admin yang berhak menghapus akun staf."
+          };
+        }
+
         const [deleted] = await db
           .delete(schema.users)
           .where(eq(schema.users.id, params.id))

@@ -16,6 +16,7 @@ import { returnsRoutes } from "./modules/returns/returns.routes.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { reportsRoutes } from "./modules/reports/reports.routes.js";
 import { notificationRoutes } from "./modules/notifications/notification.routes.js";
+import { rbacGuard } from "./middleware/rbac.guard.js";
 
 const PORT = Number(process.env.PORT || 3001);
 
@@ -76,6 +77,7 @@ export const app = new Elysia()
       timestamp: new Date().toISOString()
     };
   })
+  .use(rbacGuard)
   .use(posRoutes)
   .use(mediaRoutes)
   .use(erpRoutes)

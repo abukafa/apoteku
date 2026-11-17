@@ -12,4 +12,5 @@ export * from "./compliance/sipnap.js";
 export * from "./calculations/pareto.js";
 export * from "./procurement/order-type.js";
 export * from "./formatters/packs.js";
+export * from "./rbac/index.js";
 

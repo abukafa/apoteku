@@ -1,15 +1,15 @@
 import { browser } from "$app/environment";
 import { api } from "../services/api";
+import {
+  hasPermission,
+  hasAnyPermission,
+  canAccessRoute,
+  ROLE_DEFAULT_ROUTES,
+  type UserRole as CoreUserRole,
+  type PermissionKey
+} from "@apoteku/core";
 
-export type UserRole =
-  | "SUPERADMIN"
-  | "OWNER"
-  | "PHARMACIST"
-  | "CASHIER"
-  | "INVENTORY"
-  | "FINANCE"
-  | "INVENTORY_STAFF"
-  | "GUEST";
+export type UserRole = CoreUserRole | "INVENTORY_STAFF";
 
 export interface ActiveUser {
   id: string;
@@ -341,6 +341,33 @@ export class AuthState {
       localStorage.removeItem(STORAGE_KEY_TOKEN);
       localStorage.removeItem(STORAGE_KEY_LOCKED);
     }
+  }
+
+  /**
+   * Cek apakah user saat ini memiliki izin (permission) tertentu
+   */
+  can(permission: PermissionKey): boolean {
+    if (!this.user) return false;
+    const role = (this.user.role === "INVENTORY_STAFF" ? "INVENTORY" : this.user.role) as CoreUserRole;
+    return hasPermission(role, permission, this.user.permissions);
+  }
+
+  /**
+   * Cek apakah user memiliki setidaknya salah satu dari daftar izin
+   */
+  canAny(permissions: PermissionKey[]): boolean {
+    if (!this.user) return false;
+    const role = (this.user.role === "INVENTORY_STAFF" ? "INVENTORY" : this.user.role) as CoreUserRole;
+    return hasAnyPermission(role, permissions, this.user.permissions);
+  }
+
+  /**
+   * Mengambil rute default berdasarkan peran pengguna
+   */
+  getDefaultRoute(): string {
+    if (!this.user) return "/login";
+    const role = (this.user.role === "INVENTORY_STAFF" ? "INVENTORY" : this.user.role) as CoreUserRole;
+    return ROLE_DEFAULT_ROUTES[role] || "/";
   }
 }
 

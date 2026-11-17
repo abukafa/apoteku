@@ -27,6 +27,11 @@
   } from "lucide-svelte";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { tenantStore } from "$lib/stores/tenantStore.svelte";
+  import {
+    filterNavigationGroups,
+    type PermissionKey,
+    type UserRole as CoreUserRole
+  } from "@apoteku/core";
 
   let { isMobileOpen = $bindable(false) } = $props();
 
@@ -34,6 +39,7 @@
     name: string;
     href: string;
     icon: any;
+    permission?: PermissionKey;
     badge?: string;
     badgeVariant?: "offline" | "cloud" | "kiosk";
   }
@@ -54,6 +60,7 @@
         {
           name: "Kasir POS (Kiosk)",
           href: "/pos",
+          permission: "pos:access",
           icon: Monitor,
           badge: "Kiosk",
           badgeVariant: "kiosk"
@@ -61,16 +68,19 @@
         {
           name: "Riwayat Penjualan",
           href: "/penjualan",
+          permission: "sales:read",
           icon: Receipt
         },
         {
           name: "Pelayanan & Resep",
           href: "/pelayanan",
+          permission: "prescription:read",
           icon: FileText
         },
         {
           name: "Stok Obat Depo",
           href: "/stok",
+          permission: "inventory:read",
           icon: Package
         }
       ]
@@ -83,21 +93,25 @@
         {
           name: "Pembelian & PBF",
           href: "/pembelian",
+          permission: "purchase:read",
           icon: ShoppingBag
         },
         {
           name: "Mutasi Antar Cabang",
           href: "/pengiriman",
+          permission: "inventory:transfer",
           icon: ArrowLeftRight
         },
         {
           name: "Retur Barang",
           href: "/retur",
+          permission: "returns:read",
           icon: RotateCcw
         },
         {
           name: "Distributor / PBF",
           href: "/supplier",
+          permission: "supplier:manage",
           icon: Building2
         }
       ]
@@ -110,31 +124,46 @@
         {
           name: "Dashboard Utama",
           href: "/",
+          permission: "dashboard:view",
           icon: LayoutDashboard
         },
         {
           name: "Pelanggan & Piutang",
           href: "/pelanggan",
+          permission: "customer:read",
           icon: Users
         },
         {
           name: "Keuangan & Kas",
           href: "/keuangan",
+          permission: "finance:read",
           icon: CircleDollarSign
         },
         {
           name: "Laporan & SIPNAP",
           href: "/laporan",
+          permission: "reports:view",
           icon: BarChart3
         },
         {
           name: "Pengaturan Sistem",
           href: "/pengaturan",
+          permission: "settings:tenant:edit",
           icon: Settings
         }
       ]
     }
   ];
+
+  let userRole = $derived(
+    (authStore.user?.role === "INVENTORY_STAFF"
+      ? "INVENTORY"
+      : authStore.user?.role || "GUEST") as CoreUserRole
+  );
+
+  let activeMenuGroups = $derived(
+    filterNavigationGroups(userRole, menuGroups, authStore.user?.permissions)
+  );
 
   function isActive(href: string) {
     if (href === "/") return $page.url.pathname === "/";
@@ -194,7 +223,7 @@
         </a>
       </div>
     {:else}
-      {#each menuGroups as group}
+      {#each activeMenuGroups as group}
         <div class="space-y-1">
           <!-- GROUP SECTION HEADER -->
           <div class="flex items-center justify-between px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-300/80">

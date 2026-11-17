@@ -33,8 +33,15 @@
     Layers,
     UploadCloud,
     ImageIcon,
-    AlertCircle
+    AlertCircle,
+    Search
   } from "lucide-svelte";
+  import {
+    PERMISSION_DEFINITIONS,
+    ROLE_PERMISSIONS,
+    type PermissionKey,
+    type UserRole as CoreUserRole
+  } from "@apoteku/core";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import Badge from "$lib/components/ui/Badge.svelte";
@@ -338,6 +345,97 @@
   let selectedUserForPin = $state<any>(null);
   let newPinValue = $state("");
   let userModalError = $state("");
+
+  // RBAC Custom Permissions Modal State
+  let isPermissionsModalOpen = $state(false);
+  let selectedUserForPermissions = $state<any>(null);
+  let selectedPermissions = $state<string[]>([]);
+  let permissionsModalFilter = $state<string>("ALL");
+  let permissionsSearch = $state<string>("");
+  let isSavingPermissions = $state(false);
+
+  function openPermissionsModal(u: any) {
+    selectedUserForPermissions = u;
+    selectedPermissions = Array.isArray(u.customPermissions) ? [...u.customPermissions] : [];
+    permissionsModalFilter = "ALL";
+    permissionsSearch = "";
+    userModalError = "";
+    isPermissionsModalOpen = true;
+  }
+
+  function togglePermission(key: string) {
+    if (selectedPermissions.includes(key)) {
+      selectedPermissions = selectedPermissions.filter((p) => p !== key);
+    } else {
+      selectedPermissions = [...selectedPermissions, key];
+    }
+  }
+
+  function resetToRoleDefault() {
+    selectedPermissions = [];
+  }
+
+  async function handleSavePermissions() {
+    if (!selectedUserForPermissions) return;
+    isSavingPermissions = true;
+    try {
+      const res = await api.users.update(selectedUserForPermissions.id, {
+        customPermissions: selectedPermissions
+      });
+      if (res.success) {
+        users = users.map((u) =>
+          u.id === selectedUserForPermissions.id
+            ? { ...u, customPermissions: selectedPermissions }
+            : u
+        );
+        // Jika user yang diedit adalah akun yang sedang login, update sesi authStore
+        if (authStore.user && authStore.user.id === selectedUserForPermissions.id) {
+          authStore.setUserSession({
+            ...authStore.user,
+            permissions: selectedPermissions
+          });
+        }
+        alertStore.toast(`Hak akses khusus untuk ${selectedUserForPermissions.fullName} berhasil disimpan!`, "success");
+        isPermissionsModalOpen = false;
+      } else {
+        alertStore.toast(res.error || "Gagal menyimpan hak akses", "danger");
+      }
+    } catch (e: any) {
+      alertStore.toast(e.message || "Terjadi kesalahan saat menyimpan", "danger");
+    } finally {
+      isSavingPermissions = false;
+    }
+  }
+
+  // Filter definisi izin untuk modal
+  let filteredPermissionDefinitions = $derived.by(() => {
+    return PERMISSION_DEFINITIONS.filter((def) => {
+      if (permissionsModalFilter !== "ALL" && def.category !== permissionsModalFilter) {
+        return false;
+      }
+      if (permissionsSearch.trim()) {
+        const q = permissionsSearch.toLowerCase().trim();
+        const matchLabel = def.label.toLowerCase().includes(q);
+        const matchKey = def.key.toLowerCase().includes(q);
+        const matchDesc = def.description.toLowerCase().includes(q);
+        const matchCategory = def.categoryLabel.toLowerCase().includes(q);
+        return matchLabel || matchKey || matchDesc || matchCategory;
+      }
+      return true;
+    });
+  });
+
+  // Kelompokkan izin per kategori untuk tampilan terstruktur
+  let groupedPermissionDefinitions = $derived.by(() => {
+    const groups: Record<string, { label: string; items: typeof PERMISSION_DEFINITIONS }> = {};
+    for (const def of filteredPermissionDefinitions) {
+      if (!groups[def.category]) {
+        groups[def.category] = { label: def.categoryLabel, items: [] };
+      }
+      groups[def.category].items.push(def);
+    }
+    return Object.values(groups);
+  });
 
   let newUserForm = $state({
     fullName: "",
@@ -2050,12 +2148,12 @@
                 <div class="font-bold text-slate-700">{u.username}</div>
                 <div class="text-[10px]">{u.email}</div>
               </td>
-              <td class="py-3.5 px-4">
+              <td class="py-3.5 px-4 max-w-[160px]">
                 {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
                   <select
                     value={u.role}
                     onchange={(e) => handleUpdateUserRole(u.id, e.currentTarget.value)}
-                    class="bg-slate-50 border border-slate-200 text-slate-800 text-[11px] font-bold rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer"
+                    class="max-w-[120px] bg-slate-50 border border-slate-200 text-slate-800 text-[11px] font-bold rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer"
                   >
                     <option value="GUEST">GUEST (Tamu - Belum Diberi Akses)</option>
                     <option value="CASHIER">CASHIER (Kasir Penjualan POS)</option>
@@ -2071,12 +2169,12 @@
                   </span>
                 {/if}
               </td>
-              <td class="py-3.5 px-4 text-slate-600 font-semibold">
+              <td class="py-3.5 px-4 text-slate-600 font-semibold max-w-[180px]">
                 {#if (authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER") && branches.length > 0}
                   <select
                     value={u.branchId || branches[0]?.id}
                     onchange={(e) => handleUpdateUserBranch(u.id, e.currentTarget.value)}
-                    class="bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-medium rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer max-w-[180px]"
+                    class="max-w-[140px] bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-medium rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer max-w-[180px]"
                   >
                     {#each branches as b}
                       <option value={b.id}>{b.name}</option>
@@ -2089,8 +2187,8 @@
               <td class="py-3.5 px-4 text-center">
                 <Badge type="SUCCESS" label="AKTIF" />
               </td>
-              <td class="py-3.5 px-4 text-center">
-                <div class="flex items-center justify-center gap-1.5">
+              <td class="py-3.5 px-4 text-left">
+                <div class="flex items-center justify-start gap-1.5">
                   <button
                     type="button"
                     onclick={() => openPinModal(u)}
@@ -2099,11 +2197,23 @@
                   >
                     Ubah PIN
                   </button>
+                  <button
+                    type="button"
+                    onclick={() => openPermissionsModal(u)}
+                    class="px-2 py-1 rounded-lg border border-purple-200 bg-purple-50/50 hover:bg-purple-100 text-purple-700 hover:text-purple-800 text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1"
+                    title="Atur Hak Akses & Izin Khusus"
+                  >
+                    <ShieldCheck class="w-3.5 h-3.5" />
+                    <span>Akses</span>
+                    {#if u.customPermissions && u.customPermissions.length > 0}
+                      <span class="w-1.5 h-1.5 rounded-full bg-purple-600" title="{u.customPermissions.length} Izin Khusus"></span>
+                    {/if}
+                  </button>
                   {#if (authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER") && u.id !== authStore.user?.id}
                     <button
                       type="button"
                       onclick={() => handleDeleteUser(u.id, u.fullName)}
-                      class="p-1 rounded-lg border border-slate-200 hover:border-red-400 hover:bg-red-50 text-slate-400 hover:text-red-600 transition-all cursor-pointer"
+                      class="readonly p-1 rounded-lg border border-slate-200 hover:border-red-400 hover:bg-red-50 text-slate-400 hover:text-red-600 transition-all cursor-pointer"
                       title="Hapus Pengguna"
                     >
                       <Trash2 class="w-3.5 h-3.5" />
@@ -2305,6 +2415,207 @@
             class="px-4 py-1.5 rounded-xl bg-brand-blue hover:bg-blue-700 text-white font-bold cursor-pointer"
           >
             Simpan PIN
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL ATUR HAK AKSES & IZIN KHUSUS (RBAC) -->
+{#if isPermissionsModalOpen && selectedUserForPermissions}
+  {@const userRoleKey = (selectedUserForPermissions.role === "INVENTORY_STAFF" ? "INVENTORY" : (selectedUserForPermissions.role || "GUEST")) as CoreUserRole}
+  {@const defaultRolePerms = ROLE_PERMISSIONS[userRoleKey] || []}
+  {@const isSuperUser = userRoleKey === "SUPERADMIN"}
+
+  <div
+    use:portal
+    data-modal-overlay
+    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/60 backdrop-blur-md z-[100] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) isPermissionsModalOpen = false;
+    }}
+    role="presentation"
+  >
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150 my-auto">
+      <!-- HEADER -->
+      <div class="flex items-start justify-between border-b border-slate-100 pb-3 shrink-0">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-700 border border-purple-100 flex items-center justify-center shrink-0">
+            <ShieldCheck class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <span>Atur Hak Akses Khusus Pengguna</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800">
+                {selectedUserForPermissions.role}
+              </span>
+            </h3>
+            <p class="text-xs text-slate-500 mt-0.5">
+              <span class="font-bold text-slate-700">{selectedUserForPermissions.fullName}</span>
+              <span class="font-mono text-slate-400">({selectedUserForPermissions.username})</span>
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onclick={() => isPermissionsModalOpen = false}
+          class="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+        >
+          <X class="w-4 h-4" />
+        </button>
+      </div>
+
+      <!-- ROLE INFO BANNER -->
+      <div class="mt-3 p-3 rounded-xl bg-blue-50/70 border border-blue-100 text-xs text-blue-900 flex items-start gap-2.5 shrink-0">
+        <AlertCircle class="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+        <div class="leading-relaxed">
+          {#if isSuperUser}
+            <span class="font-bold">Akun Super Administrator memiliki akses tak terbatas (*).</span> Seluruh izin aktif otomatis.
+          {:else}
+            Izin bertanda <span class="px-1.5 py-0.5 bg-blue-100 text-blue-800 font-bold rounded text-[10px]">Bawaan Role</span> aktif otomatis sesuai peran <strong>{selectedUserForPermissions.role}</strong>. Centang kotak di bawah untuk memberikan <strong>izin tambahan khusus</strong> (misal: kasir dipercaya melakukan <em>sales:void</em> atau <em>inventory:adjust</em>).
+          {/if}
+        </div>
+      </div>
+
+      <!-- FILTER & SEARCH BAR -->
+      <div class="mt-3 space-y-2 shrink-0">
+        <div class="relative">
+          <Search class="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            bind:value={permissionsSearch}
+            placeholder="Cari izin (contoh: void, refund, opname, hutang, sipnap)..."
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium focus:ring-2 focus:ring-purple-200 focus:border-purple-500"
+          />
+        </div>
+
+        <!-- CATEGORY PILLS -->
+        <div class="flex items-center gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden text-[11px]">
+          {#each [
+            { id: "ALL", label: "Semua Kategori" },
+            { id: "POS", label: "Kasir POS" },
+            { id: "SALES", label: "Penjualan & Resep" },
+            { id: "INVENTORY", label: "Inventori & Stok" },
+            { id: "PURCHASE", label: "Pengadaan & PBF" },
+            { id: "RETURNS", label: "Retur" },
+            { id: "FINANCE", label: "Keuangan" },
+            { id: "REPORTS", label: "Laporan" },
+            { id: "SETTINGS", label: "Pengaturan" }
+          ] as cat}
+            <button
+              type="button"
+              onclick={() => (permissionsModalFilter = cat.id)}
+              class="px-2.5 py-1 rounded-lg font-bold shrink-0 transition-all cursor-pointer {permissionsModalFilter === cat.id ? 'bg-purple-600 text-white shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}"
+            >
+              {cat.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <!-- SCROLLABLE CHECKLIST AREA -->
+      <div class="mt-3 flex-1 overflow-y-auto space-y-4 pr-1 min-h-[220px]">
+        {#if groupedPermissionDefinitions.length === 0}
+          <div class="py-12 text-center text-xs text-slate-400 font-medium">
+            Tidak ditemukan izin dengan kata kunci pencarian tersebut.
+          </div>
+        {:else}
+          {#each groupedPermissionDefinitions as group}
+            <div class="space-y-2">
+              <h4 class="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                <span>{group.label}</span>
+              </h4>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {#each group.items as perm}
+                  {@const isGrantedByRole = defaultRolePerms.includes("*") || defaultRolePerms.includes(perm.key)}
+                  {@const isCustomChecked = selectedPermissions.includes(perm.key)}
+                  {@const isEffectiveActive = isGrantedByRole || isCustomChecked}
+                  {@const isNonDelegable = Boolean(perm.nonDelegable)}
+
+                  <label
+                    class="flex items-start gap-2.5 p-2.5 rounded-xl border transition-all select-none {isNonDelegable ? 'opacity-55 cursor-not-allowed bg-slate-100/80 border-slate-200' : isEffectiveActive ? 'border-purple-200 bg-purple-50/30 cursor-pointer' : 'border-slate-100 bg-slate-50/50 hover:bg-slate-50 cursor-pointer'}"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isEffectiveActive}
+                      disabled={isGrantedByRole || isNonDelegable}
+                      onchange={() => !isNonDelegable && togglePermission(perm.key)}
+                      class="mt-0.5 rounded text-purple-600 focus:ring-purple-500 disabled:opacity-60 cursor-pointer"
+                    />
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-1.5 flex-wrap">
+                        <span class="text-xs font-bold text-slate-900">{perm.label}</span>
+                        {#if isNonDelegable}
+                          <span class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-slate-200 text-slate-700">
+                            Prerogatif Owner
+                          </span>
+                        {:else if isGrantedByRole}
+                          <span class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-100 text-blue-700">
+                            Bawaan Role
+                          </span>
+                        {:else if isCustomChecked}
+                          <span class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-purple-100 text-purple-700">
+                            Khusus
+                          </span>
+                        {/if}
+                        {#if perm.isHighRisk}
+                          <span class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800">
+                            Sensitif
+                          </span>
+                        {/if}
+                      </div>
+                      <code class="text-[10px] text-purple-700/80 font-mono block mt-0.5">{perm.key}</code>
+                      <p class="text-[11px] text-slate-500 mt-0.5 leading-snug">{perm.description}</p>
+                    </div>
+                  </label>
+                {/each}
+              </div>
+            </div>
+          {/each}
+        {/if}
+      </div>
+
+      <!-- FOOTER -->
+      <div class="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-bold text-slate-600">
+            {selectedPermissions.length} Izin Khusus Dipilih
+          </span>
+          {#if selectedPermissions.length > 0}
+            <button
+              type="button"
+              onclick={resetToRoleDefault}
+              class="text-[11px] font-bold text-red-600 hover:underline cursor-pointer"
+            >
+              Reset ke Bawaan
+            </button>
+          {/if}
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            onclick={() => isPermissionsModalOpen = false}
+            class="px-3.5 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 cursor-pointer"
+          >
+            Batal
+          </button>
+          <button
+            type="button"
+            onclick={handleSavePermissions}
+            disabled={isSavingPermissions}
+            class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {#if isSavingPermissions}
+              <div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              <span>Menyimpan...</span>
+            {:else}
+              <CheckCircle2 class="w-3.5 h-3.5" />
+              <span>Simpan Hak Akses</span>
+            {/if}
           </button>
         </div>
       </div>

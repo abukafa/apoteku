@@ -9,6 +9,7 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
   import Navbar from "$lib/components/Navbar.svelte";
   import AlertHost from "$lib/components/ui/AlertHost.svelte";
+  import { canAccessRoute, type UserRole as CoreUserRole } from "@apoteku/core";
 
   let { children } = $props();
   let isMobileOpen = $state(false);
@@ -32,10 +33,10 @@
     ($page.url.pathname.startsWith("/pos") && authStore.user?.role !== "GUEST")
   );
 
-  // ACCESS CONTROL GUARD:
-  // - Authenticated users cannot access /login -> redirect to /
+  // ACCESS CONTROL GUARD (Sentralisasi @apoteku/core):
+  // - Authenticated users cannot access /login -> redirect to role default route
   // - Unauthenticated users on protected routes -> redirect to /login
-  // - GUEST user can only access /pengaturan?tab=profil
+  // - Evaluasi rute berdasarkan wewenang peran (canAccessRoute)
   $effect(() => {
     if (typeof window !== "undefined") {
       const pathname = $page.url.pathname;
@@ -43,7 +44,7 @@
 
       if (pathname.startsWith("/login") || pathname.startsWith("/register")) {
         if (authStore.user && !isGoogleCallback) {
-          goto(authStore.user.role === "GUEST" ? "/pengaturan?tab=profil" : "/", { replaceState: true });
+          goto(authStore.getDefaultRoute(), { replaceState: true });
         }
         return;
       }
@@ -53,10 +54,13 @@
         return;
       }
 
-      if (authStore.user.role === "GUEST") {
-        if (!pathname.startsWith("/pengaturan")) {
-          goto("/pengaturan?tab=profil", { replaceState: true });
-        }
+      const role = (authStore.user.role === "INVENTORY_STAFF"
+        ? "INVENTORY"
+        : authStore.user.role || "GUEST") as CoreUserRole;
+
+      const access = canAccessRoute(role, pathname, authStore.user.permissions);
+      if (!access.allowed) {
+        goto(access.redirectTo || authStore.getDefaultRoute(), { replaceState: true });
       }
     }
   });

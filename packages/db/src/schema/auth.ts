@@ -8,7 +8,8 @@ import {
   integer,
   numeric,
   uniqueIndex,
-  index
+  index,
+  jsonb
 } from "drizzle-orm/pg-core";
 
 // 1. TENANTS & CABANG
@@ -90,6 +91,7 @@ export const users = pgTable(
     email: varchar("email", { length: 255 }),
     phone: varchar("phone", { length: 50 }),
     role: varchar("role", { length: 50 }).notNull(), // 'SUPERADMIN' | 'OWNER' | 'PHARMACIST' | 'CASHIER' | 'INVENTORY' | 'FINANCE'
+    customPermissions: jsonb("custom_permissions").$type<string[]>(),
     pin: varchar("pin", { length: 20 }),
     passwordHash: text("password_hash"),
     avatarUrl: text("avatar_url"),

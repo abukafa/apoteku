@@ -343,7 +343,7 @@
             <User class="w-4 h-4 text-slate-400" />
             <span>Profil & PIN Saya</span>
           </a>
-          {#if authStore.user?.role !== "GUEST"}
+          {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
             <a
               href="/pengaturan"
               onclick={() => (showProfileMenu = false)}

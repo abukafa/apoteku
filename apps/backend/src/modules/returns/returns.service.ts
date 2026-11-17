@@ -1,5 +1,6 @@
 import { db, schema } from "@apoteku/db";
 import { eq, and, desc, sql } from "drizzle-orm";
+import { generateSalesReturnNumber, generatePurchaseReturnNumber } from "@apoteku/core";
 
 export interface CustomerReturnPayload {
   tenantId?: string;
@@ -67,9 +68,7 @@ class ReturnsService {
   async recordCustomerReturn(payload: CustomerReturnPayload) {
     const tenantId = await this.getTenantId(payload.tenantId);
     const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
-    const randomSeq = Math.floor(100 + Math.random() * 900);
-    const returnNumber = `RET-JL-${dateStr}-${randomSeq}`;
+    const returnNumber = generateSalesReturnNumber(undefined, now);
     const returnId = crypto.randomUUID();
 
     // 1. Fetch branch info
@@ -304,9 +303,7 @@ class ReturnsService {
   async recordSupplierReturn(payload: SupplierReturnPayload) {
     const tenantId = await this.getTenantId(payload.tenantId);
     const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
-    const randomSeq = Math.floor(100 + Math.random() * 900);
-    const returnNumber = `RET-BL-${dateStr}-${randomSeq}`;
+    const returnNumber = generatePurchaseReturnNumber(undefined, now);
     const returnId = crypto.randomUUID();
 
     const [branch] = await db

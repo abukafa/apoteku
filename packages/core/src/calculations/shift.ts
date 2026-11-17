@@ -43,3 +43,18 @@ export function calculateCashierShiftReconciliation(
   };
 }
 
+/**
+ * Menentukan nama label shift kerja (Pagi, Siang, Malam, Lembur, atau kustom)
+ */
+export function resolveShiftName(shiftNumber: number, notes?: string | null): string {
+  if (notes && notes.startsWith("[")) {
+    const match = notes.match(/^\[(.*?)\]/);
+    if (match && match[1]) return match[1];
+  }
+  if (shiftNumber === 1) return "Pagi";
+  if (shiftNumber === 2) return "Siang";
+  if (shiftNumber === 3) return "Malam";
+  if (shiftNumber === 4) return "Lembur";
+  return `Shift ${shiftNumber}`;
+}
+

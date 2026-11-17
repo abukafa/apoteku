@@ -64,3 +64,42 @@ export function generateTransferNumber(
   return `SJL-${yyyymm}-${seq}`;
 }
 
+/**
+ * Menerbitkan nomor Resep Dokter
+ * Format: RSP-YYYYMMDD-XXXX
+ */
+export function generatePrescriptionNumber(
+  sequence?: number,
+  date: Date = new Date()
+): string {
+  const yyyymmdd = date.toISOString().slice(0, 10).replace(/-/g, "");
+  const seq = sequence ?? Math.floor(1000 + Math.random() * 9000);
+  return `RSP-${yyyymmdd}-${seq}`;
+}
+
+/**
+ * Menerbitkan nomor Retur Penjualan (Customer)
+ * Format: RET-JL-YYYYMMDD-XXXX
+ */
+export function generateSalesReturnNumber(
+  sequence?: number,
+  date: Date = new Date()
+): string {
+  const yyyymmdd = date.toISOString().slice(0, 10).replace(/-/g, "");
+  const seq = sequence ?? Math.floor(1000 + Math.random() * 9000);
+  return `RET-JL-${yyyymmdd}-${seq}`;
+}
+
+/**
+ * Menerbitkan nomor Retur Pembelian (Supplier)
+ * Format: RET-BL-YYYYMMDD-XXXX
+ */
+export function generatePurchaseReturnNumber(
+  sequence?: number,
+  date: Date = new Date()
+): string {
+  const yyyymmdd = date.toISOString().slice(0, 10).replace(/-/g, "");
+  const seq = sequence ?? Math.floor(1000 + Math.random() * 9000);
+  return `RET-BL-${yyyymmdd}-${seq}`;
+}
+

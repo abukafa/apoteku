@@ -30,9 +30,12 @@ import {
   generateOrderNumber,
   generateAdjustmentNumber,
   generateDebtPaymentNumber,
-  generateTransferNumber
+  generateTransferNumber,
+  generatePrescriptionNumber,
+  generateSalesReturnNumber,
+  generatePurchaseReturnNumber
 } from "../generators/doc-numbers.js";
-import { calculateCashierShiftReconciliation } from "../calculations/shift.js";
+import { calculateCashierShiftReconciliation, resolveShiftName } from "../calculations/shift.js";
 import {
   classifySipnapCategory,
   isControlledSubstance,
@@ -292,6 +295,9 @@ describe("document number generators", () => {
     expect(generateAdjustmentNumber(1234, fixedDate)).toBe("RJK-202611-1234");
     expect(generateDebtPaymentNumber(567, fixedDate)).toBe("RLH-20261105-567");
     expect(generateTransferNumber(7890, fixedDate)).toBe("SJL-202611-7890");
+    expect(generatePrescriptionNumber(4321, fixedDate)).toBe("RSP-20261105-4321");
+    expect(generateSalesReturnNumber(888, fixedDate)).toBe("RET-JL-20261105-888");
+    expect(generatePurchaseReturnNumber(999, fixedDate)).toBe("RET-BL-20261105-999");
   });
 });
 
@@ -306,6 +312,15 @@ describe("cashier shift reconciliation calculations", () => {
     expect(res.cashDifference).toBe(0);
     expect(res.status).toBe("BALANCED");
     expect(res.isDiscrepancy).toBe(false);
+  });
+
+  it("resolves shift display name by shift number and bracket notes", () => {
+    expect(resolveShiftName(1)).toBe("Pagi");
+    expect(resolveShiftName(2)).toBe("Siang");
+    expect(resolveShiftName(3)).toBe("Malam");
+    expect(resolveShiftName(4)).toBe("Lembur");
+    expect(resolveShiftName(5)).toBe("Shift 5");
+    expect(resolveShiftName(1, "[Shift Khusus Ramadhan]")).toBe("Shift Khusus Ramadhan");
   });
 
   it("identifies cash surplus in drawer", () => {
@@ -346,6 +361,15 @@ describe("cashier shift reconciliation calculations", () => {
     expect(res.cashDifference).toBe(0);
     expect(res.status).toBe("BALANCED");
     expect(res.isDiscrepancy).toBe(false);
+  });
+
+  it("resolves shift display name by shift number and bracket notes", () => {
+    expect(resolveShiftName(1)).toBe("Pagi");
+    expect(resolveShiftName(2)).toBe("Siang");
+    expect(resolveShiftName(3)).toBe("Malam");
+    expect(resolveShiftName(4)).toBe("Lembur");
+    expect(resolveShiftName(5)).toBe("Shift 5");
+    expect(resolveShiftName(1, "[Shift Khusus Ramadhan]")).toBe("Shift Khusus Ramadhan");
   });
 });
 

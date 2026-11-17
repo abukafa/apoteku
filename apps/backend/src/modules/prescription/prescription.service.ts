@@ -1,5 +1,6 @@
 import { db, schema } from "@apoteku/db";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
+import { generatePrescriptionNumber } from "@apoteku/core";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -260,9 +261,7 @@ class PrescriptionService {
 
     const transactionId = crypto.randomUUID();
     const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
-    const randomHex = Math.floor(1000 + Math.random() * 9000);
-    const recipeNumber = `RSP-${dateStr}-${randomHex}`;
+    const recipeNumber = generatePrescriptionNumber(undefined, now);
 
     let drugSubtotal = 0;
     const itemsToInsert: Array<{

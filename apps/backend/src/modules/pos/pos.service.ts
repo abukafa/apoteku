@@ -2,19 +2,7 @@ import { db, schema } from "@apoteku/db";
 import { eq, and, gt, sql, or, gte } from "drizzle-orm";
 import type { Static } from "elysia";
 import type { SyncSalesBodySchema } from "./pos.schema.js";
-import { calculateCashierShiftReconciliation } from "@apoteku/core";
-
-function resolveShiftName(shiftNumber: number, notes?: string | null): string {
-  if (notes && notes.startsWith("[")) {
-    const match = notes.match(/^\[(.*?)\]/);
-    if (match && match[1]) return match[1];
-  }
-  if (shiftNumber === 1) return "Pagi";
-  if (shiftNumber === 2) return "Siang";
-  if (shiftNumber === 3) return "Malam";
-  if (shiftNumber === 4) return "Lembur";
-  return `Shift ${shiftNumber}`;
-}
+import { calculateCashierShiftReconciliation, resolveShiftName } from "@apoteku/core";
 
 export class PosService {
   private formatProductUnits(

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Bell, ArrowRight, AlertTriangle, FileText, CalendarClock, Store } from "lucide-svelte";
+  import { Bell, ArrowRight, AlertTriangle, FileText, CalendarClock, Store, X } from "lucide-svelte";
   import { notificationStore } from "$lib/stores/notificationStore.svelte";
 
   interface NotificationItem {
@@ -91,7 +91,7 @@
   }
 </script>
 
-<div class="min-h-0 bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex flex-col lg:absolute lg:inset-0">
+<div class="min-h-0 bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex flex-col lg:absolute lg:inset-0" id="notifikasi">
   <!-- HEADER -->
   <div class="flex shrink-0 items-center justify-between mb-3">
     <div class="flex items-center gap-2">
@@ -103,9 +103,6 @@
       </div>
       <h3 class="text-sm font-bold text-slate-800">Notifikasi & Pengingat</h3>
     </div>
-    <a href="/laporan" class="text-[11px] font-semibold text-[#1d63d8] hover:underline flex items-center gap-1">
-      Lihat <ArrowRight class="w-3 h-3" />
-    </a>
   </div>
 
   <!-- NOTIFICATIONS LIST -->
@@ -117,22 +114,37 @@
     {:else}
       {#each displayItems as item (item.id)}
         {@const IconComp = getIcon(item.type)}
-        <a
-          href={item.actionUrl || "/"}
-          onclick={() => notificationStore.markAsRead(item.id)}
-          class="flex items-start gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors block"
-        >
-          <div class="w-8 h-8 rounded-lg {getIconBg(item.type)} flex items-center justify-center flex-shrink-0">
-            <IconComp class="w-4 h-4" />
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center justify-between gap-2">
-              <h4 class="text-xs font-bold text-slate-800 truncate">{item.title}</h4>
-              <span class="text-[10px] font-semibold text-slate-400 flex-shrink-0">{item.time}</span>
+        <div class="relative group">
+          <a
+            href={item.actionUrl || "/"}
+            onclick={() => notificationStore.markAsRead(item.id)}
+            class="flex items-start gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors block pr-8"
+          >
+            <div class="w-8 h-8 rounded-lg {getIconBg(item.type)} flex items-center justify-center flex-shrink-0">
+              <IconComp class="w-4 h-4" />
             </div>
-            <p class="text-[11px] text-slate-500 mt-0.5 truncate leading-relaxed">{@html item.desc}</p>
-          </div>
-        </a>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-2">
+                <h4 class="text-xs font-bold text-slate-800 truncate">{item.title}</h4>
+                <span class="text-[10px] font-semibold text-slate-400 flex-shrink-0">{item.time}</span>
+              </div>
+              <p class="text-[11px] text-slate-500 mt-0.5 truncate leading-relaxed">{@html item.desc}</p>
+            </div>
+          </a>
+
+          <button
+            type="button"
+            onclick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              notificationStore.deleteNotification(item.id);
+            }}
+            class="absolute right-2 top-2.5 opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
+            title="Hapus notifikasi ini"
+          >
+            <X class="w-3.5 h-3.5" />
+          </button>
+        </div>
       {/each}
     {/if}
   </div>

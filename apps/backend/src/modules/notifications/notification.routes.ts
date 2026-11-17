@@ -128,7 +128,7 @@ export const notificationRoutes = new Elysia({ prefix: "/api/notifications" })
     }
   )
 
-  // 5. HAPUS NOTIFIKASI
+  // 5. HAPUS SATU NOTIFIKASI
   .delete(
     "/:id",
     async ({ params }) => {
@@ -147,6 +147,56 @@ export const notificationRoutes = new Elysia({ prefix: "/api/notifications" })
       detail: {
         tags: ["Notifications"],
         summary: "Hapus Notifikasi"
+      }
+    }
+  )
+
+  // 6. BERSIHKAN NOTIFIKASI YANG SUDAH DIBACA
+  .post(
+    "/clear-read",
+    async ({ tenantId, branchId, userId, role }) => {
+      try {
+        const res = await notificationService.clearReadNotifications({
+          tenantId,
+          branchId,
+          userId,
+          role
+        });
+        return res;
+      } catch (err: any) {
+        console.error("[Notifications] POST /clear-read error:", err);
+        return { success: false, error: err?.message || "Gagal membersihkan notifikasi terbaca" };
+      }
+    },
+    {
+      detail: {
+        tags: ["Notifications"],
+        summary: "Bersihkan Notifikasi Terbaca"
+      }
+    }
+  )
+
+  // 7. BERSIHKAN SEMUA NOTIFIKASI (CLEAR ALL)
+  .post(
+    "/clear-all",
+    async ({ tenantId, branchId, userId, role }) => {
+      try {
+        const res = await notificationService.clearAllNotifications({
+          tenantId,
+          branchId,
+          userId,
+          role
+        });
+        return res;
+      } catch (err: any) {
+        console.error("[Notifications] POST /clear-all error:", err);
+        return { success: false, error: err?.message || "Gagal membersihkan semua notifikasi" };
+      }
+    },
+    {
+      detail: {
+        tags: ["Notifications"],
+        summary: "Bersihkan Semua Notifikasi"
       }
     }
   );

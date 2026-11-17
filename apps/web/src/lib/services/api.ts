@@ -820,6 +820,18 @@ export const api = {
         `/api/notifications/${id}`,
         { method: "DELETE" }
       );
+    },
+    async clearRead() {
+      return await apiFetch<{ success: boolean; error?: string }>(
+        "/api/notifications/clear-read",
+        { method: "POST" }
+      );
+    },
+    async clearAll() {
+      return await apiFetch<{ success: boolean; error?: string }>(
+        "/api/notifications/clear-all",
+        { method: "POST" }
+      );
     }
   }
 };

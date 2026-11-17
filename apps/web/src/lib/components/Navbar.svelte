@@ -215,6 +215,7 @@
                 </span>
               {/if}
             </div>
+
             {#if unreadCount > 0}
               <button
                 type="button"
@@ -274,7 +275,7 @@
           <!-- Dropdown Footer -->
           <div class="px-4 pt-2 pb-1 border-t border-slate-100 text-center">
             <a
-              href="/"
+              href="/#notifikasi"
               onclick={() => (showNotificationMenu = false)}
               class="block py-1 text-xs font-semibold text-[#1d63d8] hover:underline"
             >

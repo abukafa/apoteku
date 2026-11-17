@@ -254,10 +254,77 @@ export const notificationService = {
   },
 
   /**
-   * Menghapus notifikasi
+   * Menghapus satu notifikasi berdasarkan ID
    */
   async deleteNotification(notificationId: string) {
     await db.delete(schema.notifications).where(eq(schema.notifications.id, notificationId));
+    return { success: true };
+  },
+
+  /**
+   * Menghapus notifikasi yang sudah dibaca (agar tidak menumpuk)
+   */
+  async clearReadNotifications(params: {
+    tenantId?: string;
+    branchId?: string;
+    userId?: string;
+    role?: string;
+  }) {
+    const { tenantId, userId, role = "ALL" } = params;
+    const isSuperOrOwner = role === "SUPERADMIN" || role === "OWNER";
+
+    // 1. Hapus notifikasi personal yang sudah dibaca
+    if (userId) {
+      await db
+        .delete(schema.notifications)
+        .where(
+          and(
+            eq(schema.notifications.userId, userId),
+            eq(schema.notifications.isRead, true)
+          )
+        );
+    }
+
+    // 2. Jika Superadmin atau Owner, bersihkan juga notifikasi broadcast yang sudah dibaca oleh user ini
+    if (isSuperOrOwner && userId) {
+      await db
+        .delete(schema.notifications)
+        .where(
+          and(
+            tenantId ? eq(schema.notifications.tenantId, tenantId) : sql`TRUE`,
+            isNull(schema.notifications.userId),
+            sql`EXISTS (SELECT 1 FROM notification_reads nr WHERE nr.notification_id = notifications.id AND nr.user_id = ${userId})`
+          )
+        );
+    }
+
+    return { success: true };
+  },
+
+  /**
+   * Menghapus semua notifikasi (membersihkan seluruh inbox)
+   */
+  async clearAllNotifications(params: {
+    tenantId?: string;
+    branchId?: string;
+    userId?: string;
+    role?: string;
+  }) {
+    const { tenantId, userId, role = "ALL" } = params;
+    const isSuperOrOwner = role === "SUPERADMIN" || role === "OWNER";
+
+    if (isSuperOrOwner) {
+      // Superadmin / Owner dapat membersihkan semua notifikasi tenant
+      await db
+        .delete(schema.notifications)
+        .where(tenantId ? eq(schema.notifications.tenantId, tenantId) : sql`TRUE`);
+    } else if (userId) {
+      // User non-admin membersihkan notifikasi personal miliknya
+      await db
+        .delete(schema.notifications)
+        .where(eq(schema.notifications.userId, userId));
+    }
+
     return { success: true };
   },
 
@@ -316,6 +383,65 @@ export const notificationService = {
     }
 
     let createdCount = 0;
+
+    // ----------------------------------------------------
+    // 0. AUTO-PURGE & AUTO-HEAL (Mencegah Penumpukan Data)
+    // ----------------------------------------------------
+    try {
+      // A. Hapus otomatis notifikasi yang sudah dibaca > 7 hari, atau notifikasi lama > 30 hari
+      await db.delete(schema.notifications).where(
+        and(
+          eq(schema.notifications.tenantId, tenantId),
+          or(
+            and(eq(schema.notifications.isRead, true), sql`${schema.notifications.readAt} < (NOW() - INTERVAL '7 days')`),
+            sql`${schema.notifications.createdAt} < (NOW() - INTERVAL '30 days')`
+          )
+        )
+      );
+
+      // B. Auto-Heal: Hapus notifikasi LOW_STOCK jika produk sudah di-restock (stok saat ini sudah aman)
+      await db.delete(schema.notifications).where(
+        and(
+          eq(schema.notifications.tenantId, tenantId),
+          eq(schema.notifications.type, "LOW_STOCK"),
+          sql`EXISTS (
+            SELECT 1 FROM branch_stocks bs
+            JOIN products p ON bs.product_id = p.id
+            WHERE bs.branch_id = notifications.branch_id
+              AND (notifications.metadata->>'productId')::uuid = p.id
+              AND CAST(bs.total_qty_base AS numeric) > GREATEST(CAST(p.min_stock AS numeric), 15)
+          )`
+        )
+      );
+
+      // C. Auto-Heal: Hapus notifikasi PURCHASE_DUE jika faktur sudah lunas (isPaidOff = true)
+      await db.delete(schema.notifications).where(
+        and(
+          eq(schema.notifications.tenantId, tenantId),
+          eq(schema.notifications.type, "PURCHASE_DUE"),
+          sql`EXISTS (
+            SELECT 1 FROM purchase_invoices pi
+            WHERE (notifications.metadata->>'invoiceId')::uuid = pi.id
+              AND pi.is_paid_off = TRUE
+          )`
+        )
+      );
+
+      // D. Auto-Heal: Hapus notifikasi TRANSFER_IN jika surat jalan mutasi sudah selesai diterima
+      await db.delete(schema.notifications).where(
+        and(
+          eq(schema.notifications.tenantId, tenantId),
+          eq(schema.notifications.type, "TRANSFER_IN"),
+          sql`EXISTS (
+            SELECT 1 FROM stock_transfers st
+            WHERE (notifications.metadata->>'transferId')::uuid = st.id
+              AND st.status = 'COMPLETED'
+          )`
+        )
+      );
+    } catch (e) {
+      console.warn("[Notifications] Error in auto-purge/heal:", e);
+    }
 
     // ----------------------------------------------------
     // 1. SCAN: STOK KRITIS / MENIPIS

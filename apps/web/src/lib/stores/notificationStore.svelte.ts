@@ -133,6 +133,34 @@ class NotificationStore {
   }
 
   /**
+   * Menghapus seluruh notifikasi yang sudah dibaca (Optimistic UI)
+   */
+  async clearReadNotifications() {
+    this.items = this.items.filter((n) => n.unread);
+    this.saveToCache();
+
+    try {
+      await api.notifications.clearRead();
+    } catch (err) {
+      console.warn("[NotificationStore] Failed to clear read notifications:", err);
+    }
+  }
+
+  /**
+   * Menghapus semua notifikasi dari inbox (Optimistic UI)
+   */
+  async clearAllNotifications() {
+    this.items = [];
+    this.saveToCache();
+
+    try {
+      await api.notifications.clearAll();
+    } catch (err) {
+      console.warn("[NotificationStore] Failed to clear all notifications:", err);
+    }
+  }
+
+  /**
    * Memulai background polling interval cerdas (hanya saat window visible)
    */
   startPolling(intervalMs = 60000) {

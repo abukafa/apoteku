@@ -353,15 +353,15 @@
       return;
     }
 
-    const redirectUri =
-      googleConfig.redirectUri ||
-      `${window.location.origin}/api/auth/google/callback`;
+    // Tentukan origin dan redirect URI secara dinamis berdasarkan URL browser saat ini (mendukung localhost dan Wi-Fi/LAN nip.io sekaligus)
+    const currentOrigin = typeof window !== "undefined" ? window.location.origin : "http://localhost:5173";
+    const redirectUri = `${currentOrigin}/api/auth/google/callback`;
 
     let loginUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(
       clientId
     )}&redirect_uri=${encodeURIComponent(
       redirectUri
-    )}&response_type=code&scope=openid%20profile%20email&prompt=select_account`;
+    )}&response_type=code&scope=openid%20profile%20email&prompt=select_account&state=${encodeURIComponent(currentOrigin)}`;
 
     if (emailHint) {
       loginUrl += `&login_hint=${encodeURIComponent(emailHint)}`;

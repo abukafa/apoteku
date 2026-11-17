@@ -317,15 +317,21 @@ export const authRoutes = new Elysia({ prefix: "/api" })
   // 1d. GOOGLE AUTH CONFIG (Get client ID for frontend Google Identity Services)
   .get(
     "/auth/google/config",
-    () => {
+    ({ headers }) => {
       const clientId = (
         process.env.GOOGLE_CLIENT_ID ||
         process.env.PUBLIC_GOOGLE_CLIENT_ID ||
         ""
       ).trim();
+
+      const host = (headers["x-forwarded-host"] as string) || (headers["host"] as string);
+      const proto = (headers["x-forwarded-proto"] as string) || "http";
+      const dynamicOrigin = host && !host.includes("3001") ? `${proto}://${host}` : undefined;
+
       const redirectUri =
         process.env.GOOGLE_REDIRECT_URI ||
-        "http://localhost:5173/api/auth/google/callback";
+        (dynamicOrigin ? `${dynamicOrigin}/api/auth/google/callback` : "http://localhost:5173/api/auth/google/callback");
+
       return {
         success: true,
         data: {
@@ -601,8 +607,41 @@ export const authRoutes = new Elysia({ prefix: "/api" })
   // 1f. GOOGLE OAUTH 2.0 CALLBACK (Redirect Flow)
   .get(
     "/auth/google/callback",
-    async ({ query, redirect }) => {
-      const frontendUrl = process.env.PUBLIC_FRONTEND_URL || "http://localhost:5173";
+    async ({ query, redirect, headers }) => {
+      // 1. Resolve frontend origin dynamically (supports localhost & LAN / nip.io simultaneously)
+      let frontendUrl = process.env.PUBLIC_FRONTEND_URL;
+
+      if (query.state) {
+        try {
+          const parsedState = new URL(query.state);
+          if (
+            parsedState.hostname === "localhost" ||
+            parsedState.hostname === "127.0.0.1" ||
+            parsedState.hostname.endsWith(".nip.io") ||
+            /^192\.168\.\d+\.\d+$/.test(parsedState.hostname) ||
+            /^10\.\d+\.\d+\.\d+$/.test(parsedState.hostname) ||
+            /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(parsedState.hostname)
+          ) {
+            frontendUrl = parsedState.origin;
+          }
+        } catch {
+          // Ignore invalid state URL
+        }
+      }
+
+      if (!frontendUrl) {
+        const proto = (headers["x-forwarded-proto"] as string) || "http";
+        const host = (headers["x-forwarded-host"] as string) || (headers["host"] as string);
+        if (host && !host.includes("3001")) {
+          frontendUrl = `${proto}://${host}`;
+        } else {
+          frontendUrl = "http://localhost:5173";
+        }
+      }
+
+      // 2. Resolve matching redirectUri for Google Token Exchange
+      const redirectUri = `${frontendUrl}/api/auth/google/callback`;
+
       try {
         const code = query.code;
         const error = query.error;
@@ -629,10 +668,6 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             302
           );
         }
-
-        const redirectUri =
-          process.env.GOOGLE_REDIRECT_URI ||
-          "http://localhost:5173/api/auth/google/callback";
 
         // Exchange code for tokens with Google
         const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -823,6 +858,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
       query: t.Object({
         code: t.Optional(t.String()),
         error: t.Optional(t.String()),
+        state: t.Optional(t.String()),
         scope: t.Optional(t.String()),
         authuser: t.Optional(t.String()),
         prompt: t.Optional(t.String()),

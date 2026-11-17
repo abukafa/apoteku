@@ -17,6 +17,7 @@
     CheckCheck
   } from "lucide-svelte";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { notificationStore } from "$lib/stores/notificationStore.svelte";
 
   interface Props {
     onToggleMobileMenu?: () => void;
@@ -29,50 +30,76 @@
   let formattedDate = $state("27 Okt 2025");
   let formattedTime = $state("10:24");
 
-  let notifications = $state([
-    {
-      id: "notif-1",
-      title: "Stok Amoxicillin 500 mg menipis",
-      desc: "Sisa 5 item (min. 10)",
-      time: "10:12",
-      href: "/stok",
-      unread: true,
-      icon: AlertTriangle,
-      iconBg: "bg-red-50 text-[#df1c2d]"
-    },
-    {
-      id: "notif-2",
-      title: "Faktur Pembelian dari PBF Kimia Farma",
-      desc: "No. FPB-2025-0478 sudah diterima",
-      time: "09:45",
-      href: "/pembelian",
-      unread: true,
-      icon: FileText,
-      iconBg: "bg-blue-50 text-[#1d63d8]"
-    },
-    {
-      id: "notif-3",
-      title: "Jatuh tempo penagihan",
-      desc: "PT. Mitra Sehat (2 hari lagi)",
-      time: "08:30",
-      href: "/keuangan",
-      unread: true,
-      icon: CalendarClock,
-      iconBg: "bg-amber-50 text-amber-600"
-    }
-  ]);
-
-  let unreadCount = $derived(notifications.filter((n) => n.unread).length);
+  let unreadCount = $derived(notificationStore.unreadCount);
 
   function markAllAsRead() {
-    notifications = notifications.map((n) => ({ ...n, unread: false }));
+    notificationStore.markAllAsRead();
   }
 
   function handleNotificationClick(id: string) {
-    notifications = notifications.map((n) =>
-      n.id === id ? { ...n, unread: false } : n
-    );
+    notificationStore.markAsRead(id);
     showNotificationMenu = false;
+  }
+
+  function getNotificationIcon(type: string) {
+    switch (type) {
+      case "LOW_STOCK":
+        return AlertTriangle;
+      case "EXPIRY_ALERT":
+        return CalendarClock;
+      case "PURCHASE_DUE":
+      case "RECEIVABLE_DUE":
+        return FileText;
+      case "TRANSFER_IN":
+        return Store;
+      default:
+        return Bell;
+    }
+  }
+
+  function getNotificationColors(severity: string) {
+    switch (severity) {
+      case "DANGER":
+        return {
+          bg: "bg-red-50 text-[#df1c2d]",
+          badge: "bg-red-100 text-red-700"
+        };
+      case "WARNING":
+        return {
+          bg: "bg-amber-50 text-amber-600",
+          badge: "bg-amber-100 text-amber-700"
+        };
+      case "SUCCESS":
+        return {
+          bg: "bg-emerald-50 text-emerald-600",
+          badge: "bg-emerald-100 text-emerald-700"
+        };
+      case "INFO":
+      default:
+        return {
+          bg: "bg-blue-50 text-[#1d63d8]",
+          badge: "bg-blue-100 text-blue-700"
+        };
+    }
+  }
+
+  function formatRelativeTime(dateStr?: string) {
+    if (!dateStr) return "";
+    try {
+      const d = new Date(dateStr);
+      const now = new Date();
+      const diffMs = now.getTime() - d.getTime();
+      const diffMins = Math.floor(diffMs / (60 * 1000));
+      if (diffMins < 1) return "Baru saja";
+      if (diffMins < 60) return `${diffMins}m lalu`;
+      const diffHours = Math.floor(diffMins / 60);
+      if (diffHours < 24) return `${diffHours}j lalu`;
+      const diffDays = Math.floor(diffHours / 24);
+      if (diffDays < 7) return `${diffDays}h lalu`;
+      return d.toLocaleDateString("id-ID", { day: "numeric", month: "short" });
+    } catch {
+      return "";
+    }
   }
 
   let initials = $derived(
@@ -202,28 +229,39 @@
 
           <!-- Notification Items -->
           <div class="max-h-80 overflow-y-auto divide-y divide-slate-50">
-            {#if notifications.length === 0}
+            {#if notificationStore.items.length === 0}
               <div class="px-4 py-6 text-center text-xs text-slate-400">
-                Belum ada notifikasi terbaru
+                {#if notificationStore.isLoading}
+                  <div class="flex items-center justify-center gap-2">
+                    <div class="w-3.5 h-3.5 border-2 border-brand-blue border-t-transparent rounded-full animate-spin"></div>
+                    <span>Memuat notifikasi...</span>
+                  </div>
+                {:else}
+                  Belum ada notifikasi atau pengingat operasional
+                {/if}
               </div>
             {:else}
-              {#each notifications as item (item.id)}
+              {#each notificationStore.items as item (item.id)}
+                {@const IconComp = getNotificationIcon(item.type)}
+                {@const colors = getNotificationColors(item.severity)}
                 <a
-                  href={item.href}
+                  href={item.actionUrl || "/"}
                   onclick={() => handleNotificationClick(item.id)}
                   class="flex items-start gap-3 px-4 py-3 hover:bg-slate-50 transition-colors {item.unread ? 'bg-blue-50/30' : ''}"
                 >
-                  <div class="w-8 h-8 rounded-lg {item.iconBg} flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <item.icon class="w-4 h-4" />
+                  <div class="w-8 h-8 rounded-lg {colors.bg} flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <IconComp class="w-4 h-4" />
                   </div>
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center justify-between gap-2">
                       <h4 class="text-xs {item.unread ? 'font-bold text-slate-900' : 'font-semibold text-slate-700'} truncate">
                         {item.title}
                       </h4>
-                      <span class="text-[10px] font-mono text-slate-400 flex-shrink-0">{item.time}</span>
+                      <span class="text-[10px] font-mono text-slate-400 flex-shrink-0">
+                        {formatRelativeTime(item.createdAt)}
+                      </span>
                     </div>
-                    <p class="text-[11px] text-slate-500 mt-0.5 truncate">{item.desc}</p>
+                    <p class="text-[11px] text-slate-500 mt-0.5 line-clamp-2 leading-relaxed">{item.message}</p>
                   </div>
                   {#if item.unread}
                     <span class="w-2 h-2 rounded-full bg-[#1d63d8] flex-shrink-0 mt-2"></span>

@@ -26,6 +26,7 @@ function getStoredAuthHeaders(): Record<string, string> {
       if (parsed?.tenantId) authHeaders["x-tenant-id"] = String(parsed.tenantId);
       if (parsed?.branchId) authHeaders["x-branch-id"] = String(parsed.branchId);
       if (parsed?.id) authHeaders["x-user-id"] = String(parsed.id);
+      if (parsed?.role) authHeaders["x-user-role"] = String(parsed.role);
     }
   } catch {
     // Ignore storage read errors
@@ -780,6 +781,45 @@ export const api = {
         method: "POST",
         body: JSON.stringify(payload)
       });
+    }
+  },
+  notifications: {
+    async list(params?: { limit?: number; unread?: boolean; category?: string }) {
+      const q = new URLSearchParams();
+      if (params?.limit) q.set("limit", String(params.limit));
+      if (params?.unread) q.set("unread", "true");
+      if (params?.category) q.set("category", params.category);
+      const qs = q.toString() ? `?${q.toString()}` : "";
+      return await apiFetch<{
+        success: boolean;
+        data: any[];
+        unreadCount: number;
+        error?: string;
+      }>(`/api/notifications${qs}`);
+    },
+    async syncAlerts() {
+      return await apiFetch<{ success: boolean; synced: number; error?: string }>(
+        "/api/notifications/sync-alerts",
+        { method: "POST" }
+      );
+    },
+    async markAsRead(id: string) {
+      return await apiFetch<{ success: boolean; error?: string }>(
+        `/api/notifications/${id}/read`,
+        { method: "PATCH" }
+      );
+    },
+    async markAllRead() {
+      return await apiFetch<{ success: boolean; error?: string }>(
+        "/api/notifications/mark-all-read",
+        { method: "POST" }
+      );
+    },
+    async delete(id: string) {
+      return await apiFetch<{ success: boolean; error?: string }>(
+        `/api/notifications/${id}`,
+        { method: "DELETE" }
+      );
     }
   }
 };

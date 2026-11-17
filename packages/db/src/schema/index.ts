@@ -5,3 +5,4 @@ export * from "./sales.js";
 export * from "./procurement.js";
 export * from "./clinical.js";
 export * from "./returns.js";
+export * from "./notifications.js";

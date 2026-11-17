@@ -5,6 +5,7 @@
   import { goto } from "$app/navigation";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { tenantStore } from "$lib/stores/tenantStore.svelte";
+  import { notificationStore } from "$lib/stores/notificationStore.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import Navbar from "$lib/components/Navbar.svelte";
   import AlertHost from "$lib/components/ui/AlertHost.svelte";
@@ -14,6 +15,13 @@
 
   onMount(() => {
     tenantStore.fetchTenant();
+    if (authStore.user) {
+      notificationStore.fetchNotifications();
+      notificationStore.startPolling(60000);
+    }
+    return () => {
+      notificationStore.stopPolling();
+    };
   });
 
   // Standalone routes without sidebar and top navbar: /login, /register, unauthenticated state, and /pos (if not GUEST)

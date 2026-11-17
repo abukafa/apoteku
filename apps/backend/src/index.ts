@@ -15,6 +15,7 @@ import { financeRoutes } from "./modules/finance/finance.routes.js";
 import { returnsRoutes } from "./modules/returns/returns.routes.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { reportsRoutes } from "./modules/reports/reports.routes.js";
+import { notificationRoutes } from "./modules/notifications/notification.routes.js";
 
 const PORT = Number(process.env.PORT || 3001);
 
@@ -34,7 +35,8 @@ export const app = new Elysia()
         "Authorization",
         "x-tenant-id",
         "x-branch-id",
-        "x-user-id"
+        "x-user-id",
+        "x-user-role"
       ]
     })
   )
@@ -85,6 +87,7 @@ export const app = new Elysia()
   .use(returnsRoutes)
   .use(authRoutes)
   .use(reportsRoutes)
+  .use(notificationRoutes)
   .listen(PORT, ({ hostname, port }) => {
     console.log(`🚀 [Apoteku Backend] Server running at http://${hostname}:${port}`);
     console.log(`📚 [Swagger Docs] Available at http://${hostname}:${port}/swagger`);

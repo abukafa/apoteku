@@ -5,6 +5,7 @@ export default defineConfig({
   envDir: '../../',
   plugins: [sveltekit()],
   server: {
+    allowedHosts: ['192.168.1.121.nip.io'],
     port: 5173,
     strictPort: false,
     proxy: {

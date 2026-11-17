@@ -124,7 +124,7 @@
 
     <!-- Notifikasi & Pengingat (Span 4) -->
     <div class="lg:col-span-5 xl:col-span-4 relative flex min-h-0 flex-col">
-      <NotificationsCard {notifications} />
+      <NotificationsCard />
     </div>
   </div>
 

@@ -44,6 +44,10 @@
   import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
+  import DataTable from "$lib/components/ui/DataTable.svelte";
+  import SortableTh from "$lib/components/ui/SortableTh.svelte";
+  import type { SortDirection, SortState } from "$lib/components/ui/DataTable.types";
+  import { compareTableValues } from "$lib/components/ui/DataTable.types";
 
   let activeTab = $state<"profil" | "cabang" | "pengguna" | "printer" | "diagnostik">("profil");
   let branches = $state<any[]>([]);
@@ -461,6 +465,74 @@
       userModalError = e.message || "Gagal menambahkan pengguna baru";
     }
   }
+
+  // Manajemen Staf (Users) Sorting, Filter & Pagination
+  let userSearchQuery = $state("");
+  let userSortKey = $state<string>("fullName");
+  let userSortDirection = $state<SortDirection>("asc");
+  let userPage = $state(1);
+  const USER_PAGE_SIZE = 15;
+
+  function handleUserSort(state: SortState) {
+    userSortKey = state.key;
+    userSortDirection = state.direction;
+    userPage = 1;
+  }
+
+  let filteredUsers = $derived(
+    users.filter((u) => {
+      if (!userSearchQuery) return true;
+      const q = userSearchQuery.toLowerCase();
+      const bName = branches.find((b) => b.id === u.branchId)?.name || u.branchName || "";
+      return (
+        (u.fullName || "").toLowerCase().includes(q) ||
+        (u.username || "").toLowerCase().includes(q) ||
+        (u.email || "").toLowerCase().includes(q) ||
+        (u.phone || "").toLowerCase().includes(q) ||
+        (u.role || "").toLowerCase().includes(q) ||
+        bName.toLowerCase().includes(q)
+      );
+    })
+  );
+
+  let sortedUsers = $derived.by(() => {
+    if (!userSortKey || !userSortDirection) return filteredUsers;
+    const copy = [...filteredUsers];
+    return copy.sort((a, b) => {
+      let valA: any = "";
+      let valB: any = "";
+      switch (userSortKey) {
+        case "fullName":
+          valA = a.fullName || "";
+          valB = b.fullName || "";
+          break;
+        case "username":
+          valA = a.username || a.email || "";
+          valB = b.username || b.email || "";
+          break;
+        case "role":
+          valA = a.role || "";
+          valB = b.role || "";
+          break;
+        case "branchName":
+          valA = branches.find((br) => br.id === a.branchId)?.name || a.branchName || "";
+          valB = branches.find((br) => br.id === b.branchId)?.name || b.branchName || "";
+          break;
+        default:
+          valA = (a as Record<string, any>)[userSortKey];
+          valB = (b as Record<string, any>)[userSortKey];
+      }
+      return compareTableValues(valA, valB, userSortDirection, "string");
+    });
+  });
+
+  let userTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedUsers.length / USER_PAGE_SIZE))
+  );
+
+  let paginatedUsers = $derived(
+    sortedUsers.slice((userPage - 1) * USER_PAGE_SIZE, userPage * USER_PAGE_SIZE)
+  );
 
   async function loadMasterFoundationData() {
     try {
@@ -1916,12 +1988,25 @@
 
   <!-- TAB 2: PENGGUNA & PIN KASIR -->
   {:else if activeTab === "pengguna" && isSuperOrOwner}
-    <div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 sm:p-6 space-y-6">
-      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-        <div>
-          <h3 class="text-sm font-bold text-slate-800">Manajemen Staf, Hak Akses & PIN</h3>
-          <p class="text-xs text-slate-500 mt-0.5">Super Admin dapat mengubah peran (role) staf dan memindahkan cabang penugasan</p>
-        </div>
+    <DataTable
+      title="Manajemen Staf, Hak Akses & PIN"
+      subtitle="Super Admin dapat mengubah peran (role) staf dan memindahkan cabang penugasan"
+      totalCount={sortedUsers.length}
+      currentPage={userPage}
+      totalPages={userTotalPages}
+      pageSize={USER_PAGE_SIZE}
+      onPageChange={(p) => (userPage = p)}
+      bind:searchValue={userSearchQuery}
+      searchPlaceholder="Cari nama staf, username, email, peran..."
+      emptyText="Belum ada pengguna terdaftar di database PostgreSQL."
+    >
+      {#snippet badgeContent()}
+        <span class="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-blue-50 text-brand-blue border border-blue-100">
+          {sortedUsers.length} Pengguna
+        </span>
+      {/snippet}
+
+      {#snippet actions()}
         <button
           type="button"
           onclick={() => { userModalError = ""; isAddUserModalOpen = true; }}
@@ -1930,88 +2015,87 @@
           <Plus class="w-3.5 h-3.5" />
           <span>Tambah Pengguna</span>
         </button>
-      </div>
+      {/snippet}
 
-      <!-- MOBILE CARD VIEW (< md) UNTUK DAFTAR PENGGUNA -->
-      <div class="md:hidden space-y-3">
-        {#if users.length === 0}
-          <div class="py-10 text-center text-xs text-slate-400">
-            <div class="flex flex-col items-center justify-center gap-2">
-              <Users class="w-8 h-8 text-slate-300" />
-              <span class="font-bold">Belum ada pengguna terdaftar di database PostgreSQL</span>
-              <a href="/register" class="text-brand-blue hover:underline font-semibold mt-1">Daftarkan akun Super Admin pertama &rarr;</a>
-            </div>
-          </div>
+      {#snippet header()}
+        <SortableTh key="fullName" label="Nama Lengkap" sortKey={userSortKey} sortDirection={userSortDirection} onsort={handleUserSort} />
+        <SortableTh key="username" label="Username / Email" sortKey={userSortKey} sortDirection={userSortDirection} onsort={handleUserSort} />
+        <SortableTh key="role" label="Peran (Role)" sortKey={userSortKey} sortDirection={userSortDirection} onsort={handleUserSort} />
+        <SortableTh key="branchName" label="Penugasan Cabang" sortKey={userSortKey} sortDirection={userSortDirection} onsort={handleUserSort} />
+        <th class="py-3 px-4 text-center">Status</th>
+        <th class="py-3 px-4 text-center">Aksi</th>
+      {/snippet}
+
+      {#snippet rows()}
+        {#if paginatedUsers.length === 0}
+          <tr>
+            <td colspan="6" class="py-12 text-center text-xs text-slate-400">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <Users class="w-8 h-8 text-slate-300" />
+                <span class="font-bold">Belum ada pengguna terdaftar di database PostgreSQL</span>
+                <a href="/register" class="text-brand-blue hover:underline font-semibold mt-1">Daftarkan akun Super Admin pertama &rarr;</a>
+              </div>
+            </td>
+          </tr>
         {:else}
-          {#each users as u}
-            <div class="rounded-2xl border border-slate-200/80 bg-slate-50/40 p-4 space-y-3 text-xs">
-              <div class="flex items-start justify-between gap-2 border-b border-slate-200/70 pb-2.5">
-                <div class="min-w-0">
-                  <div class="font-bold text-slate-900 text-xs">{u.fullName}</div>
-                  {#if u.email}
-                    <div class="text-[10px] text-slate-400 break-all">{u.email}</div>
-                  {:else}
-                    <div class="text-[10px] text-slate-400 break-all">@{u.username}</div>
-                  {/if}
-                </div>
-                <div class="shrink-0">
-                  <Badge type="SUCCESS" label="AKTIF" />
-                </div>
-              </div>
-
-              <div class="grid grid-cols-2 gap-2.5">
-                <div>
-                  <span class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Peran (Role)</span>
-                  {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
-                    <select
-                      value={u.role}
-                      onchange={(e) => handleUpdateUserRole(u.id, e.currentTarget.value)}
-                      class="w-full bg-white border border-slate-200 text-slate-800 text-[11px] font-bold rounded-xl px-2.5 py-1.5 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer"
-                    >
-                      <option value="GUEST">GUEST</option>
-                      <option value="CASHIER">CASHIER</option>
-                      <option value="PHARMACIST">PHARMACIST</option>
-                      <option value="INVENTORY">INVENTORY</option>
-                      <option value="FINANCE">FINANCE</option>
-                      <option value="OWNER">OWNER</option>
-                      <option value="SUPERADMIN">SUPERADMIN</option>
-                    </select>
-                  {:else}
-                    <span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold {u.role === 'SUPERADMIN' ? 'bg-blue-100 text-blue-800' : u.role === 'GUEST' ? 'bg-amber-100 text-amber-900 border border-amber-300' : u.role === 'PHARMACIST' ? 'bg-purple-100 text-purple-800' : u.role === 'CASHIER' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}">
-                      {u.role}
-                    </span>
-                  {/if}
-                </div>
-
-                <div>
-                  <span class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Penugasan Cabang</span>
-                  {#if (authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER") && branches.length > 0}
-                    <select
-                      value={u.branchId || branches[0]?.id}
-                      onchange={(e) => handleUpdateUserBranch(u.id, e.currentTarget.value)}
-                      class="w-full bg-white border border-slate-200 text-slate-700 text-[11px] font-medium rounded-xl px-2.5 py-1.5 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer"
-                    >
-                      {#each branches as b}
-                        <option value={b.id}>{b.name}</option>
-                      {/each}
-                    </select>
-                  {:else}
-                    <span class="font-semibold text-slate-700">{u.branchName || "Cabang Pusat"}</span>
-                  {/if}
-                </div>
-              </div>
-
-              <div class="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/70">
-                <div class="text-[11px] text-slate-500 flex items-center gap-1.5">
-                  <KeyRound class="w-3.5 h-3.5 text-slate-400" />
-                  <span>PIN: <strong class="font-mono tracking-widest">••••••</strong></span>
-                </div>
-
-                <div class="flex items-center gap-1.5">
+          {#each paginatedUsers as u}
+            <tr class="hover:bg-slate-50/50 transition-colors">
+              <td class="py-3.5 px-4">
+                <div class="font-bold text-slate-900">{u.fullName}</div>
+                {#if u.phone}
+                  <div class="text-[10px] text-slate-400 font-mono">{u.phone}</div>
+                {/if}
+              </td>
+              <td class="py-3.5 px-4 font-mono text-slate-500 text-[11px]">
+                <div class="font-bold text-slate-700">{u.username}</div>
+                <div class="text-[10px]">{u.email}</div>
+              </td>
+              <td class="py-3.5 px-4">
+                {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+                  <select
+                    value={u.role}
+                    onchange={(e) => handleUpdateUserRole(u.id, e.currentTarget.value)}
+                    class="bg-slate-50 border border-slate-200 text-slate-800 text-[11px] font-bold rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer"
+                  >
+                    <option value="GUEST">GUEST (Tamu - Belum Diberi Akses)</option>
+                    <option value="CASHIER">CASHIER (Kasir Penjualan POS)</option>
+                    <option value="PHARMACIST">PHARMACIST (Apoteker APA)</option>
+                    <option value="INVENTORY">INVENTORY (Gudang & Logistik)</option>
+                    <option value="FINANCE">FINANCE (Keuangan & Kas)</option>
+                    <option value="OWNER">OWNER (Pemilik Apotek)</option>
+                    <option value="SUPERADMIN">SUPERADMIN (Programmer)</option>
+                  </select>
+                {:else}
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold {u.role === 'SUPERADMIN' ? 'bg-blue-100 text-blue-800' : u.role === 'GUEST' ? 'bg-amber-100 text-amber-900 border border-amber-300' : u.role === 'PHARMACIST' ? 'bg-purple-100 text-purple-800' : u.role === 'CASHIER' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}">
+                    {u.role}
+                  </span>
+                {/if}
+              </td>
+              <td class="py-3.5 px-4 text-slate-600 font-semibold">
+                {#if (authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER") && branches.length > 0}
+                  <select
+                    value={u.branchId || branches[0]?.id}
+                    onchange={(e) => handleUpdateUserBranch(u.id, e.currentTarget.value)}
+                    class="bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-medium rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer max-w-[180px]"
+                  >
+                    {#each branches as b}
+                      <option value={b.id}>{b.name}</option>
+                    {/each}
+                  </select>
+                {:else}
+                  <span>{branches.find((b) => b.id === u.branchId)?.name || u.branchName || "Cabang Pusat"}</span>
+                {/if}
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                <Badge type="SUCCESS" label="AKTIF" />
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                <div class="flex items-center justify-center gap-1.5">
                   <button
                     type="button"
                     onclick={() => openPinModal(u)}
-                    class="px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-700 hover:text-brand-blue text-[11px] font-bold transition-all cursor-pointer"
+                    class="px-2 py-1 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-600 hover:text-brand-blue text-[11px] font-bold transition-all cursor-pointer"
+                    title="Ubah PIN Kasir"
                   >
                     Ubah PIN
                   </button>
@@ -2019,124 +2103,19 @@
                     <button
                       type="button"
                       onclick={() => handleDeleteUser(u.id, u.fullName)}
-                      class="p-1.5 rounded-xl bg-white border border-slate-200 hover:border-red-400 hover:bg-red-50 text-slate-400 hover:text-red-600 transition-all cursor-pointer"
+                      class="p-1 rounded-lg border border-slate-200 hover:border-red-400 hover:bg-red-50 text-slate-400 hover:text-red-600 transition-all cursor-pointer"
                       title="Hapus Pengguna"
                     >
                       <Trash2 class="w-3.5 h-3.5" />
                     </button>
                   {/if}
                 </div>
-              </div>
-            </div>
+              </td>
+            </tr>
           {/each}
         {/if}
-      </div>
-
-      <!-- DESKTOP TABLE VIEW (md+) UNTUK DAFTAR PENGGUNA -->
-      <div class="hidden md:block overflow-x-auto no-scrollbar">
-        <table class="w-full text-left text-xs border-collapse">
-          <thead>
-            <tr class="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider text-[11px] border-b border-slate-100">
-              <th class="py-3 px-4">Nama Lengkap</th>
-              <th class="py-3 px-4">Username / Email</th>
-              <th class="py-3 px-4">Peran (Role)</th>
-              <th class="py-3 px-4">Penugasan Cabang</th>
-              <th class="py-3 px-4 text-center">Status</th>
-              <th class="py-3 px-4 text-center">Aksi</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100 font-medium text-slate-700">
-            {#if users.length === 0}
-              <tr>
-                <td colspan="7" class="py-12 text-center text-xs text-slate-400">
-                  <div class="flex flex-col items-center justify-center gap-2">
-                    <Users class="w-8 h-8 text-slate-300" />
-                    <span class="font-bold">Belum ada pengguna terdaftar di database PostgreSQL</span>
-                    <a href="/register" class="text-brand-blue hover:underline font-semibold mt-1">Daftarkan akun Super Admin pertama &rarr;</a>
-                  </div>
-                </td>
-              </tr>
-            {:else}
-              {#each users as u}
-                <tr class="hover:bg-slate-50/50 transition-colors">
-                  <td class="py-3.5 px-4">
-                    <div class="font-bold text-slate-900">{u.fullName}</div>
-                    {#if u.phone}
-                      <div class="text-[10px] text-slate-400 font-mono">{u.phone}</div>
-                    {/if}
-                  </td>
-                  <td class="py-3.5 px-4 font-mono text-slate-500 text-[11px]">
-                    <div class="font-bold text-slate-700">{u.username}</div>
-                    <div class="text-[10px]">{u.email}</div>
-                  </td>
-                  <td class="py-3.5 px-4">
-                    {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
-                      <select
-                        value={u.role}
-                        onchange={(e) => handleUpdateUserRole(u.id, e.currentTarget.value)}
-                        class="bg-slate-50 border border-slate-200 text-slate-800 text-[11px] font-bold rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer"
-                      >
-                        <option value="GUEST">GUEST (Tamu - Belum Diberi Akses)</option>
-                        <option value="CASHIER">CASHIER (Kasir Penjualan POS)</option>
-                        <option value="PHARMACIST">PHARMACIST (Apoteker APA)</option>
-                        <option value="INVENTORY">INVENTORY (Gudang & Logistik)</option>
-                        <option value="FINANCE">FINANCE (Keuangan & Kas)</option>
-                        <option value="OWNER">OWNER (Pemilik Apotek)</option>
-                        <option value="SUPERADMIN">SUPERADMIN (Programmer)</option>
-                      </select>
-                    {:else}
-                      <span class="px-2 py-0.5 rounded text-[10px] font-bold {u.role === 'SUPERADMIN' ? 'bg-blue-100 text-blue-800' : u.role === 'GUEST' ? 'bg-amber-100 text-amber-900 border border-amber-300' : u.role === 'PHARMACIST' ? 'bg-purple-100 text-purple-800' : u.role === 'CASHIER' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}">
-                        {u.role}
-                      </span>
-                    {/if}
-                  </td>
-                  <td class="py-3.5 px-4 text-slate-600 font-semibold">
-                    {#if (authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER") && branches.length > 0}
-                      <select
-                        value={u.branchId || branches[0]?.id}
-                        onchange={(e) => handleUpdateUserBranch(u.id, e.currentTarget.value)}
-                        class="bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-medium rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer max-w-[180px]"
-                      >
-                        {#each branches as b}
-                          <option value={b.id}>{b.name}</option>
-                        {/each}
-                      </select>
-                    {:else}
-                      <span>{u.branchName || "Cabang Pusat"}</span>
-                    {/if}
-                  </td>
-                  <td class="py-3.5 px-4 text-center">
-                    <Badge type="SUCCESS" label="AKTIF" />
-                  </td>
-                  <td class="py-3.5 px-4 text-center">
-                    <div class="flex items-center justify-center gap-1.5">
-                      <button
-                        type="button"
-                        onclick={() => openPinModal(u)}
-                        class="px-2 py-1 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-600 hover:text-brand-blue text-[11px] font-bold transition-all cursor-pointer"
-                        title="Ubah PIN Kasir"
-                      >
-                        Ubah PIN
-                      </button>
-                      {#if (authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER") && u.id !== authStore.user?.id}
-                        <button
-                          type="button"
-                          onclick={() => handleDeleteUser(u.id, u.fullName)}
-                          class="p-1 rounded-lg border border-slate-200 hover:border-red-400 hover:bg-red-50 text-slate-400 hover:text-red-600 transition-all cursor-pointer"
-                          title="Hapus Pengguna"
-                        >
-                          <Trash2 class="w-3.5 h-3.5" />
-                        </button>
-                      {/if}
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            {/if}
-          </tbody>
-        </table>
-      </div>
-    </div>
+      {/snippet}
+    </DataTable>
 
   <!-- TAB 3: PRINTER & LACI KASIR -->
   {:else if activeTab === "printer"}

@@ -19,6 +19,8 @@
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
+  import SortableTh from "$lib/components/ui/SortableTh.svelte";
+  import { compareTableValues, type SortDirection, type SortState } from "$lib/components/ui/DataTable.types";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import { portal } from "$lib/actions/portal";
@@ -226,6 +228,148 @@
   );
   let currentBalance = $derived(
     branchCashEntries.length > 0 ? branchCashEntries[0].balance : totalKasBank
+  );
+
+  // Pagination & Sorting State
+  const PAGE_SIZE = 25;
+  let cashPage = $state(1);
+  let shiftPage = $state(1);
+
+  // Sorting state untuk Tab 1: Arus Kas
+  let cashSortKey = $state<string>("time");
+  let cashSortDirection = $state<SortDirection>("desc");
+
+  function handleCashSort(state: SortState) {
+    cashSortKey = state.key;
+    cashSortDirection = state.direction;
+    cashPage = 1;
+  }
+
+  let sortedCashEntries = $derived.by(() => {
+    if (!cashSortKey || !cashSortDirection) return filteredCashEntries;
+    const copy = [...filteredCashEntries];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (cashSortKey) {
+        case "time":
+          valA = a.time;
+          valB = b.time;
+          type = "date";
+          break;
+        case "refNumber":
+          valA = a.refNumber;
+          valB = b.refNumber;
+          break;
+        case "account":
+          valA = a.account;
+          valB = b.account;
+          break;
+        case "description":
+          valA = a.description;
+          valB = b.description;
+          break;
+        case "in":
+          valA = a.type === "IN" ? a.amount : 0;
+          valB = b.type === "IN" ? b.amount : 0;
+          type = "number";
+          break;
+        case "out":
+          valA = a.type === "OUT" ? a.amount : 0;
+          valB = b.type === "OUT" ? b.amount : 0;
+          type = "number";
+          break;
+        case "operator":
+          valA = a.operator;
+          valB = b.operator;
+          break;
+        default:
+          valA = (a as Record<string, any>)[cashSortKey];
+          valB = (b as Record<string, any>)[cashSortKey];
+      }
+      return compareTableValues(valA, valB, cashSortDirection, type);
+    });
+  });
+
+  let cashTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedCashEntries.length / PAGE_SIZE))
+  );
+  let paginatedCashEntries = $derived(
+    sortedCashEntries.slice((cashPage - 1) * PAGE_SIZE, cashPage * PAGE_SIZE)
+  );
+
+  // Sorting state untuk Tab 2: Rekonsiliasi Shift
+  let shiftSortKey = $state<string>("shiftCode");
+  let shiftSortDirection = $state<SortDirection>("desc");
+
+  function handleShiftSort(state: SortState) {
+    shiftSortKey = state.key;
+    shiftSortDirection = state.direction;
+    shiftPage = 1;
+  }
+
+  let sortedShiftRecords = $derived.by(() => {
+    if (!shiftSortKey || !shiftSortDirection) return filteredShiftRecords;
+    const copy = [...filteredShiftRecords];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "boolean" = "string";
+
+      switch (shiftSortKey) {
+        case "shiftCode":
+          valA = a.shiftCode;
+          valB = b.shiftCode;
+          break;
+        case "cashierName":
+          valA = a.cashierName;
+          valB = b.cashierName;
+          break;
+        case "initialCash":
+          valA = a.initialCash;
+          valB = b.initialCash;
+          type = "number";
+          break;
+        case "expectedCash":
+          valA = a.expectedCash;
+          valB = b.expectedCash;
+          type = "number";
+          break;
+        case "actualCash":
+          valA = a.actualCash;
+          valB = b.actualCash;
+          type = "number";
+          break;
+        case "totalNonCash":
+          valA = a.totalNonCash;
+          valB = b.totalNonCash;
+          type = "number";
+          break;
+        case "cashDifference":
+          valA = a.cashDifference;
+          valB = b.cashDifference;
+          type = "number";
+          break;
+        case "isOpen":
+          valA = a.isOpen;
+          valB = b.isOpen;
+          type = "boolean";
+          break;
+        default:
+          valA = (a as Record<string, any>)[shiftSortKey];
+          valB = (b as Record<string, any>)[shiftSortKey];
+      }
+      return compareTableValues(valA, valB, shiftSortDirection, type);
+    });
+  });
+
+  let shiftTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedShiftRecords.length / PAGE_SIZE))
+  );
+  let paginatedShiftRecords = $derived(
+    sortedShiftRecords.slice((shiftPage - 1) * PAGE_SIZE, shiftPage * PAGE_SIZE)
   );
 
   async function handleSaveExpense() {
@@ -509,15 +653,43 @@
   {#if activeTab === "buku_kas"}
     <DataTable
       title="Buku Kas Operasional Harian"
+      subtitle="Arus kas masuk dan keluar per cabang operasional"
       searchPlaceholder="Cari keterangan, nomor referensi, atau kategori..."
       bind:searchValue={searchQuery}
-      totalCount={filteredCashEntries.length}
+      totalCount={sortedCashEntries.length}
+      currentPage={cashPage}
+      totalPages={cashTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (cashPage = p)}
+      isLoading={isLoading}
+      emptyText="Belum ada transaksi arus kas untuk cabang ini."
+      emptyIcon={Wallet}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-blue-50 text-[#1d63d8] flex items-center justify-center font-bold">
+            <Wallet class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Buku Kas Operasional Harian</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-[#1d63d8] border border-blue-200/60">
+                {sortedCashEntries.length} Mutasi
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Arus kas masuk dan keluar per cabang operasional</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet filters()}
         <div class="w-44 shrink-0">
           <Select
             value={ledgerTypeFilter}
-            onchange={(val) => (ledgerTypeFilter = val as typeof ledgerTypeFilter)}
+            onchange={(val) => {
+              ledgerTypeFilter = val as typeof ledgerTypeFilter;
+              cashPage = 1;
+            }}
             options={[
               { value: "ALL", label: "Semua Arus Kas" },
               { value: "IN", label: "Kas Masuk (IN)" },
@@ -528,25 +700,25 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Waktu</th>
-        <th class="py-3 px-4">Referensi</th>
-        <th class="py-3 px-4">Akun</th>
-        <th class="py-3 px-4">Keterangan</th>
-        <th class="py-3 px-4 text-right">Masuk</th>
-        <th class="py-3 px-4 text-right">Keluar</th>
-        <th class="py-3 px-4 text-center">Petugas</th>
+        <SortableTh key="time" label="Waktu" dataType="date" sortKey={cashSortKey} sortDirection={cashSortDirection} onsort={handleCashSort} />
+        <SortableTh key="refNumber" label="Referensi" sortKey={cashSortKey} sortDirection={cashSortDirection} onsort={handleCashSort} />
+        <SortableTh key="account" label="Akun" sortKey={cashSortKey} sortDirection={cashSortDirection} onsort={handleCashSort} />
+        <SortableTh key="description" label="Keterangan" sortKey={cashSortKey} sortDirection={cashSortDirection} onsort={handleCashSort} />
+        <SortableTh key="in" label="Masuk" dataType="currency" align="right" sortKey={cashSortKey} sortDirection={cashSortDirection} onsort={handleCashSort} />
+        <SortableTh key="out" label="Keluar" dataType="currency" align="right" sortKey={cashSortKey} sortDirection={cashSortDirection} onsort={handleCashSort} />
+        <SortableTh key="operator" label="Petugas" align="center" sortKey={cashSortKey} sortDirection={cashSortDirection} onsort={handleCashSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredCashEntries.length === 0}
+        {#if paginatedCashEntries.length === 0}
           <tr>
-            <td colspan="9" class="py-12 text-center text-slate-400 text-xs">
+            <td colspan="8" class="py-12 text-center text-slate-400 text-xs">
               {isLoading ? "Memuat riwayat transaksi kas..." : "Belum ada transaksi arus kas untuk cabang ini."}
             </td>
           </tr>
         {/if}
-        {#each filteredCashEntries as entry}
+        {#each paginatedCashEntries as entry}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono text-slate-500 text-[11px]">
               {entry.time}
@@ -596,15 +768,43 @@
   {:else if activeTab === "rekonsiliasi_shift"}
     <DataTable
       title="Rekonsiliasi Kasir & Setoran Laci"
+      subtitle="Pencatatan modal kasir, penerimaan penjualan, dan selisih fisik tutup shift"
       searchPlaceholder="Cari kode shift, nama kasir, atau jadwal..."
       bind:searchValue={shiftSearchQuery}
-      totalCount={filteredShiftRecords.length}
+      totalCount={sortedShiftRecords.length}
+      currentPage={shiftPage}
+      totalPages={shiftTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (shiftPage = p)}
+      isLoading={isLoading}
+      emptyText="Belum ada catatan shift kasir untuk cabang ini."
+      emptyIcon={Lock}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+            <Lock class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Rekonsiliasi Kasir & Setoran Laci</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200/60">
+                {sortedShiftRecords.length} Shift
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Pencatatan modal kasir, penerimaan penjualan, dan selisih fisik tutup shift</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet filters()}
         <div class="w-44 shrink-0">
           <Select
             value={shiftStatusFilter}
-            onchange={(val) => (shiftStatusFilter = val as typeof shiftStatusFilter)}
+            onchange={(val) => {
+              shiftStatusFilter = val as typeof shiftStatusFilter;
+              shiftPage = 1;
+            }}
             options={[
               { value: "ALL", label: "Semua Shift" },
               { value: "OPEN", label: "Shift Aktif" },
@@ -615,25 +815,26 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Shift</th>
-        <th class="py-3 px-4">Kasir</th>
-        <th class="py-3 px-4 text-right">Modal</th>
-        <th class="py-3 px-4 text-right">Sistem</th>
-        <th class="py-3 px-4 text-right">Fisik</th>
-        <th class="py-3 px-4 text-right">Non-Tunai</th>
-        <th class="py-3 px-4 text-center">Selisih</th>
-        <th class="py-3 px-4 text-center">Status</th>
+        <SortableTh key="shiftCode" label="Shift" sortKey={shiftSortKey} sortDirection={shiftSortDirection} onsort={handleShiftSort} />
+        <SortableTh key="cashierName" label="Kasir" sortKey={shiftSortKey} sortDirection={shiftSortDirection} onsort={handleShiftSort} />
+        <SortableTh key="initialCash" label="Modal" dataType="currency" align="right" sortKey={shiftSortKey} sortDirection={shiftSortDirection} onsort={handleShiftSort} />
+        <SortableTh key="expectedCash" label="Sistem" dataType="currency" align="right" sortKey={shiftSortKey} sortDirection={shiftSortDirection} onsort={handleShiftSort} />
+        <SortableTh key="actualCash" label="Fisik" dataType="currency" align="right" sortKey={shiftSortKey} sortDirection={shiftSortDirection} onsort={handleShiftSort} />
+        <SortableTh key="totalNonCash" label="Non-Tunai" dataType="currency" align="right" sortKey={shiftSortKey} sortDirection={shiftSortDirection} onsort={handleShiftSort} />
+        <SortableTh key="cashDifference" label="Selisih" dataType="currency" align="center" sortKey={shiftSortKey} sortDirection={shiftSortDirection} onsort={handleShiftSort} />
+        <SortableTh key="isOpen" label="Status" align="center" sortKey={shiftSortKey} sortDirection={shiftSortDirection} onsort={handleShiftSort} />
+        <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredShiftRecords.length === 0}
+        {#if paginatedShiftRecords.length === 0}
           <tr>
-            <td colspan="8" class="py-12 text-center text-slate-400 text-xs">
+            <td colspan="9" class="py-12 text-center text-slate-400 text-xs">
               {isLoading ? "Memuat riwayat shift kasir..." : "Belum ada catatan shift kasir untuk cabang ini."}
             </td>
           </tr>
         {/if}
-        {#each filteredShiftRecords as s}
+        {#each paginatedShiftRecords as s}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4">
               <div class="font-mono font-bold text-slate-900">{s.shiftCode}</div>

@@ -17,6 +17,8 @@
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
+  import SortableTh from "$lib/components/ui/SortableTh.svelte";
+  import { compareTableValues, type SortDirection, type SortState } from "$lib/components/ui/DataTable.types";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import { portal } from "$lib/actions/portal";
@@ -352,11 +354,59 @@
     })
   );
 
+  // Tab 1 Sorting State
+  let supplierSortKey = $state<string>("name");
+  let supplierSortDirection = $state<SortDirection>("asc");
+
+  function handleSupplierSort(state: SortState) {
+    supplierSortKey = state.key;
+    supplierSortDirection = state.direction;
+    supplierPage = 1;
+  }
+
+  let sortedSuppliers = $derived.by(() => {
+    if (!supplierSortKey || !supplierSortDirection) return filteredSuppliers;
+    const copy = [...filteredSuppliers];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "boolean" = "string";
+
+      switch (supplierSortKey) {
+        case "code":
+          valA = a.code;
+          valB = b.code;
+          break;
+        case "name":
+          valA = a.name;
+          valB = b.name;
+          break;
+        case "phone":
+          valA = a.phone;
+          valB = b.phone;
+          break;
+        case "address":
+          valA = a.address;
+          valB = b.address;
+          break;
+        case "isActive":
+          valA = a.isActive !== false;
+          valB = b.isActive !== false;
+          type = "boolean";
+          break;
+        default:
+          valA = (a as Record<string, any>)[supplierSortKey];
+          valB = (b as Record<string, any>)[supplierSortKey];
+      }
+      return compareTableValues(valA, valB, supplierSortDirection, type);
+    });
+  });
+
   let supplierTotalPages = $derived(
-    Math.max(1, Math.ceil(filteredSuppliers.length / PAGE_SIZE))
+    Math.max(1, Math.ceil(sortedSuppliers.length / PAGE_SIZE))
   );
   let paginatedSuppliers = $derived(
-    filteredSuppliers.slice((supplierPage - 1) * PAGE_SIZE, supplierPage * PAGE_SIZE)
+    sortedSuppliers.slice((supplierPage - 1) * PAGE_SIZE, supplierPage * PAGE_SIZE)
   );
 
   let filteredPbfDebts = $derived(
@@ -367,11 +417,61 @@
     )
   );
 
+  // Tab 2 Sorting State
+  let debtSortKey = $state<string>("dueDate");
+  let debtSortDirection = $state<SortDirection>("asc");
+
+  function handleDebtSort(state: SortState) {
+    debtSortKey = state.key;
+    debtSortDirection = state.direction;
+    debtPage = 1;
+  }
+
+  let sortedPbfDebts = $derived.by(() => {
+    if (!debtSortKey || !debtSortDirection) return filteredPbfDebts;
+    const copy = [...filteredPbfDebts];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (debtSortKey) {
+        case "invoiceRef":
+          valA = a.invoiceRef;
+          valB = b.invoiceRef;
+          break;
+        case "supplierName":
+          valA = a.supplierName;
+          valB = b.supplierName;
+          break;
+        case "dueDate":
+          valA = a.dueDate;
+          valB = b.dueDate;
+          type = "date";
+          break;
+        case "totalDebt":
+          valA = Number(a.totalDebt || 0);
+          valB = Number(b.totalDebt || 0);
+          type = "number";
+          break;
+        case "status":
+          valA = a.daysLeft;
+          valB = b.daysLeft;
+          type = "number";
+          break;
+        default:
+          valA = (a as Record<string, any>)[debtSortKey];
+          valB = (b as Record<string, any>)[debtSortKey];
+      }
+      return compareTableValues(valA, valB, debtSortDirection, type);
+    });
+  });
+
   let debtTotalPages = $derived(
-    Math.max(1, Math.ceil(filteredPbfDebts.length / PAGE_SIZE))
+    Math.max(1, Math.ceil(sortedPbfDebts.length / PAGE_SIZE))
   );
   let paginatedPbfDebts = $derived(
-    filteredPbfDebts.slice((debtPage - 1) * PAGE_SIZE, debtPage * PAGE_SIZE)
+    sortedPbfDebts.slice((debtPage - 1) * PAGE_SIZE, debtPage * PAGE_SIZE)
   );
 
   let totalPayables = $derived(pbfDebts.reduce((a, b) => a + b.totalDebt, 0));
@@ -389,11 +489,64 @@
     )
   );
 
+  // Tab 3 Sorting State
+  let paymentSortKey = $state<string>("paymentDate");
+  let paymentSortDirection = $state<SortDirection>("desc");
+
+  function handlePaymentSort(state: SortState) {
+    paymentSortKey = state.key;
+    paymentSortDirection = state.direction;
+    paymentPage = 1;
+  }
+
+  let sortedDebtPayments = $derived.by(() => {
+    if (!paymentSortKey || !paymentSortDirection) return filteredDebtPayments;
+    const copy = [...filteredDebtPayments];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (paymentSortKey) {
+        case "paymentNumber":
+          valA = a.paymentNumber;
+          valB = b.paymentNumber;
+          break;
+        case "paymentDate":
+          valA = a.paymentDate;
+          valB = b.paymentDate;
+          type = "date";
+          break;
+        case "supplierName":
+          valA = a.supplierName;
+          valB = b.supplierName;
+          break;
+        case "invoiceNumber":
+          valA = a.invoiceNumber;
+          valB = b.invoiceNumber;
+          break;
+        case "paymentMethod":
+          valA = a.paymentMethod;
+          valB = b.paymentMethod;
+          break;
+        case "amountPaid":
+          valA = Number(a.amountPaid || 0);
+          valB = Number(b.amountPaid || 0);
+          type = "number";
+          break;
+        default:
+          valA = (a as Record<string, any>)[paymentSortKey];
+          valB = (b as Record<string, any>)[paymentSortKey];
+      }
+      return compareTableValues(valA, valB, paymentSortDirection, type);
+    });
+  });
+
   let paymentTotalPages = $derived(
-    Math.max(1, Math.ceil(filteredDebtPayments.length / PAGE_SIZE))
+    Math.max(1, Math.ceil(sortedDebtPayments.length / PAGE_SIZE))
   );
   let paginatedDebtPayments = $derived(
-    filteredDebtPayments.slice((paymentPage - 1) * PAGE_SIZE, paymentPage * PAGE_SIZE)
+    sortedDebtPayments.slice((paymentPage - 1) * PAGE_SIZE, paymentPage * PAGE_SIZE)
   );
 </script>
 
@@ -515,14 +668,34 @@
   {#if activeTab === "semua"}
     <DataTable
       title="Daftar Distributor PBF"
+      subtitle="Database rekanan PBF, kontak logistik, dan jenis kerjasama vendor"
       searchPlaceholder="Cari nama distributor, kode PBF, atau kontak..."
       bind:searchValue={searchQuery}
-      totalCount={filteredSuppliers.length}
+      totalCount={sortedSuppliers.length}
       currentPage={supplierPage}
       totalPages={supplierTotalPages}
       pageSize={PAGE_SIZE}
       onPageChange={(p) => (supplierPage = p)}
+      emptyText="Tidak ada data distributor PBF yang ditemukan."
+      emptyIcon={Building2}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-blue-50 text-[#1d63d8] flex items-center justify-center font-bold">
+            <Building2 class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Daftar Distributor PBF</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-[#1d63d8] border border-blue-200/60">
+                {sortedSuppliers.length} Distributor
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Database rekanan PBF, kontak logistik, dan jenis kerjasama vendor</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet filters()}
         <div class="w-48 shrink-0">
           <Select
@@ -542,11 +715,11 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Kode</th>
-        <th class="py-3 px-4">Distributor</th>
-        <th class="py-3 px-4">Kontak</th>
-        <th class="py-3 px-4">Alamat</th>
-        <th class="py-3 px-4 text-center">Status</th>
+        <SortableTh key="code" label="Kode" sortKey={supplierSortKey} sortDirection={supplierSortDirection} onsort={handleSupplierSort} />
+        <SortableTh key="name" label="Distributor" sortKey={supplierSortKey} sortDirection={supplierSortDirection} onsort={handleSupplierSort} />
+        <SortableTh key="phone" label="Kontak" sortKey={supplierSortKey} sortDirection={supplierSortDirection} onsort={handleSupplierSort} />
+        <SortableTh key="address" label="Alamat" sortKey={supplierSortKey} sortDirection={supplierSortDirection} onsort={handleSupplierSort} />
+        <SortableTh key="isActive" label="Status" align="center" sortKey={supplierSortKey} sortDirection={supplierSortDirection} onsort={handleSupplierSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
@@ -615,65 +788,96 @@
   {:else if activeTab === "hutang"}
     <DataTable
       title="Buku Hutang PBF"
+      subtitle="Daftar faktur pembelian tempo dengan status jatuh tempo dan pembayaran"
       searchPlaceholder="Cari nama PBF atau nomor faktur..."
       bind:searchValue={searchQuery}
-      totalCount={filteredPbfDebts.length}
+      totalCount={sortedPbfDebts.length}
       currentPage={debtPage}
       totalPages={debtTotalPages}
       pageSize={PAGE_SIZE}
       onPageChange={(p) => (debtPage = p)}
+      emptyText="Tidak ada tagihan hutang PBF yang aktif."
+      emptyIcon={Clock}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+            <Clock class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Buku Hutang PBF</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200/60">
+                {sortedPbfDebts.length} Faktur Tagihan
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Daftar faktur pembelian tempo dengan status jatuh tempo dan pembayaran</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet header()}
-        <th class="py-3 px-4">Faktur</th>
-        <th class="py-3 px-4">Distributor</th>
-        <th class="py-3 px-4">Tempo</th>
-        <th class="py-3 px-4 text-right">Hutang</th>
-        <th class="py-3 px-4 text-center">Status</th>
+        <SortableTh key="invoiceRef" label="Faktur" sortKey={debtSortKey} sortDirection={debtSortDirection} onsort={handleDebtSort} />
+        <SortableTh key="supplierName" label="Distributor" sortKey={debtSortKey} sortDirection={debtSortDirection} onsort={handleDebtSort} />
+        <SortableTh key="dueDate" label="Tempo" dataType="date" sortKey={debtSortKey} sortDirection={debtSortDirection} onsort={handleDebtSort} />
+        <SortableTh key="totalDebt" label="Hutang" dataType="currency" align="right" sortKey={debtSortKey} sortDirection={debtSortDirection} onsort={handleDebtSort} />
+        <SortableTh key="status" label="Status" align="center" sortKey={debtSortKey} sortDirection={debtSortDirection} onsort={handleDebtSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#each paginatedPbfDebts as d}
-          <tr class="hover:bg-blue-50/40 transition-colors">
-            <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{d.invoiceRef}</td>
-            <td class="py-3.5 px-4 font-bold text-slate-800">{d.supplierName}</td>
-            <td class="py-3.5 px-4 font-mono">
-              <div class="font-bold {d.status === 'OVERDUE' ? 'text-brand-red-600' : d.status === 'DUE_SOON' ? 'text-amber-600' : 'text-slate-800'}">
-                {d.dueDate}
+        {#if paginatedPbfDebts.length === 0}
+          <tr>
+            <td colspan="6" class="py-12 text-center text-xs text-slate-400">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <Clock class="w-8 h-8 text-slate-300" />
+                <span>Tidak ada tagihan hutang PBF yang aktif.</span>
               </div>
-              <div class="text-[10px] {d.status === 'OVERDUE' ? 'text-brand-red-600 font-semibold' : d.status === 'DUE_SOON' ? 'text-amber-600 font-semibold' : 'text-slate-400'}">
-                {d.daysLeft < 0 ? `Lewat ${Math.abs(d.daysLeft)} hari` : d.daysLeft === 0 ? 'Jatuh tempo hari ini' : `${d.daysLeft} hari lagi`}
-              </div>
-            </td>
-            <td class="py-3.5 px-4 text-right font-mono font-black text-brand-red-600">
-              {formatRupiah(d.totalDebt)}
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              {#if d.status === "OVERDUE"}
-                <Badge type="DANGER" label={`LEWAT ${Math.abs(d.daysLeft)} HARI`} />
-              {:else if d.status === "DUE_SOON"}
-                <Badge type="WARNING" label={d.daysLeft === 0 ? "HARI INI" : `H-${d.daysLeft} TEMPO`} />
-              {:else}
-                <Badge type="INFO" label="BERJALAN" />
-              {/if}
-            </td>
-            <td class="py-3.5 px-4 text-center">
-              {#if d.totalDebt > 0}
-                <button
-                  type="button"
-                  onclick={() => openPayPbfDebt(d)}
-                  class="px-2.5 py-1 rounded-lg bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-[11px] transition-colors"
-                >
-                  Bayar Hutang
-                </button>
-              {:else}
-                <span class="text-emerald-600 font-bold text-[11px] flex items-center justify-center gap-1">
-                  <CheckCircle2 class="w-3.5 h-3.5" /> Lunas
-                </span>
-              {/if}
             </td>
           </tr>
-        {/each}
+        {:else}
+          {#each paginatedPbfDebts as d}
+            <tr class="hover:bg-blue-50/40 transition-colors">
+              <td class="py-3.5 px-4 font-mono font-bold text-slate-900">{d.invoiceRef}</td>
+              <td class="py-3.5 px-4 font-bold text-slate-800">{d.supplierName}</td>
+              <td class="py-3.5 px-4 font-mono">
+                <div class="font-bold {d.status === 'OVERDUE' ? 'text-brand-red-600' : d.status === 'DUE_SOON' ? 'text-amber-600' : 'text-slate-800'}">
+                  {d.dueDate}
+                </div>
+                <div class="text-[10px] {d.status === 'OVERDUE' ? 'text-brand-red-600 font-semibold' : d.status === 'DUE_SOON' ? 'text-amber-600 font-semibold' : 'text-slate-400'}">
+                  {d.daysLeft < 0 ? `Lewat ${Math.abs(d.daysLeft)} hari` : d.daysLeft === 0 ? 'Jatuh tempo hari ini' : `${d.daysLeft} hari lagi`}
+                </div>
+              </td>
+              <td class="py-3.5 px-4 text-right font-mono font-black text-brand-red-600">
+                {formatRupiah(d.totalDebt)}
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                {#if d.status === "OVERDUE"}
+                  <Badge type="DANGER" label={`LEWAT ${Math.abs(d.daysLeft)} HARI`} />
+                {:else if d.status === "DUE_SOON"}
+                  <Badge type="WARNING" label={d.daysLeft === 0 ? "HARI INI" : `H-${d.daysLeft} TEMPO`} />
+                {:else}
+                  <Badge type="INFO" label="BERJALAN" />
+                {/if}
+              </td>
+              <td class="py-3.5 px-4 text-center">
+                {#if d.totalDebt > 0}
+                  <button
+                    type="button"
+                    onclick={() => openPayPbfDebt(d)}
+                    class="px-2.5 py-1 rounded-lg bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-[11px] transition-colors"
+                  >
+                    Bayar Hutang
+                  </button>
+                {:else}
+                  <span class="text-emerald-600 font-bold text-[11px] flex items-center justify-center gap-1">
+                    <CheckCircle2 class="w-3.5 h-3.5" /> Lunas
+                  </span>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        {/if}
       {/snippet}
     </DataTable>
 
@@ -681,21 +885,41 @@
   {:else if activeTab === "riwayat"}
     <DataTable
       title="Riwayat Pembayaran PBF"
+      subtitle="Log transaksi pelunasan hutang dan bukti pengeluaran kas/bank"
       searchPlaceholder="Cari nomor bukti kas keluar, faktur, distributor, atau metode bayar..."
       bind:searchValue={searchQuery}
-      totalCount={filteredDebtPayments.length}
+      totalCount={sortedDebtPayments.length}
       currentPage={paymentPage}
       totalPages={paymentTotalPages}
       pageSize={PAGE_SIZE}
       onPageChange={(p) => (paymentPage = p)}
+      emptyText="Belum ada riwayat pembayaran hutang yang tercatat."
+      emptyIcon={Clock}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+            <Clock class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Riwayat Pembayaran PBF</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                {sortedDebtPayments.length} Pembayaran
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Log transaksi pelunasan hutang dan bukti pengeluaran kas/bank</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet header()}
-        <th class="py-3 px-4">Dokumen</th>
-        <th class="py-3 px-4">Tanggal</th>
-        <th class="py-3 px-4">Distributor</th>
-        <th class="py-3 px-4">Faktur</th>
-        <th class="py-3 px-4">Metode</th>
-        <th class="py-3 px-4 text-right">Nominal</th>
+        <SortableTh key="paymentNumber" label="Dokumen" sortKey={paymentSortKey} sortDirection={paymentSortDirection} onsort={handlePaymentSort} />
+        <SortableTh key="paymentDate" label="Tanggal" dataType="date" sortKey={paymentSortKey} sortDirection={paymentSortDirection} onsort={handlePaymentSort} />
+        <SortableTh key="supplierName" label="Distributor" sortKey={paymentSortKey} sortDirection={paymentSortDirection} onsort={handlePaymentSort} />
+        <SortableTh key="invoiceNumber" label="Faktur" sortKey={paymentSortKey} sortDirection={paymentSortDirection} onsort={handlePaymentSort} />
+        <SortableTh key="paymentMethod" label="Metode" sortKey={paymentSortKey} sortDirection={paymentSortDirection} onsort={handlePaymentSort} />
+        <SortableTh key="amountPaid" label="Nominal" dataType="currency" align="right" sortKey={paymentSortKey} sortDirection={paymentSortDirection} onsort={handlePaymentSort} />
         <th class="py-3 px-4 text-center">Status</th>
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}

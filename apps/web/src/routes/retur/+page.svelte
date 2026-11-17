@@ -18,6 +18,8 @@
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
+  import SortableTh from "$lib/components/ui/SortableTh.svelte";
+  import { compareTableValues, type SortDirection, type SortState } from "$lib/components/ui/DataTable.types";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
@@ -487,6 +489,134 @@
     })
   );
 
+  // Pagination & Sorting State
+  const PAGE_SIZE = 25;
+  let salesReturnPage = $state(1);
+  let purchaseReturnPage = $state(1);
+
+  // Tab 1 Sorting State: Retur Penjualan Kasir
+  let salesReturnSortKey = $state<string>("date");
+  let salesReturnSortDirection = $state<SortDirection>("desc");
+
+  function handleSalesReturnSort(state: SortState) {
+    salesReturnSortKey = state.key;
+    salesReturnSortDirection = state.direction;
+    salesReturnPage = 1;
+  }
+
+  let sortedCustomerReturns = $derived.by(() => {
+    if (!salesReturnSortKey || !salesReturnSortDirection) return filteredCustomerReturns;
+    const copy = [...filteredCustomerReturns];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (salesReturnSortKey) {
+        case "date":
+          valA = a.date;
+          valB = b.date;
+          type = "date";
+          break;
+        case "productName":
+          valA = a.productName;
+          valB = b.productName;
+          break;
+        case "stockDisposition":
+          valA = a.stockDisposition;
+          valB = b.stockDisposition;
+          break;
+        case "customerName":
+          valA = a.customerName;
+          valB = b.customerName;
+          break;
+        case "refundAmount":
+          valA = Number(a.refundAmount || 0);
+          valB = Number(b.refundAmount || 0);
+          type = "number";
+          break;
+        case "status":
+          valA = a.status;
+          valB = b.status;
+          break;
+        default:
+          valA = (a as Record<string, any>)[salesReturnSortKey];
+          valB = (b as Record<string, any>)[salesReturnSortKey];
+      }
+      return compareTableValues(valA, valB, salesReturnSortDirection, type);
+    });
+  });
+
+  let salesReturnTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedCustomerReturns.length / PAGE_SIZE))
+  );
+  let paginatedCustomerReturns = $derived(
+    sortedCustomerReturns.slice((salesReturnPage - 1) * PAGE_SIZE, salesReturnPage * PAGE_SIZE)
+  );
+
+  // Tab 2 Sorting State: Retur Pembelian PBF
+  let purchaseReturnSortKey = $state<string>("date");
+  let purchaseReturnSortDirection = $state<SortDirection>("desc");
+
+  function handlePurchaseReturnSort(state: SortState) {
+    purchaseReturnSortKey = state.key;
+    purchaseReturnSortDirection = state.direction;
+    purchaseReturnPage = 1;
+  }
+
+  let sortedSupplierReturns = $derived.by(() => {
+    if (!purchaseReturnSortKey || !purchaseReturnSortDirection) return filteredSupplierReturns;
+    const copy = [...filteredSupplierReturns];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (purchaseReturnSortKey) {
+        case "returnNumber":
+          valA = a.returnNumber;
+          valB = b.returnNumber;
+          break;
+        case "invoiceRef":
+          valA = a.invoiceRef;
+          valB = b.invoiceRef;
+          break;
+        case "supplierName":
+          valA = a.supplierName;
+          valB = b.supplierName;
+          break;
+        case "productName":
+          valA = a.productName;
+          valB = b.productName;
+          break;
+        case "reason":
+          valA = a.reason;
+          valB = b.reason;
+          break;
+        case "totalValue":
+          valA = Number(a.totalValue || 0);
+          valB = Number(b.totalValue || 0);
+          type = "number";
+          break;
+        case "status":
+          valA = a.status;
+          valB = b.status;
+          break;
+        default:
+          valA = (a as Record<string, any>)[purchaseReturnSortKey];
+          valB = (b as Record<string, any>)[purchaseReturnSortKey];
+      }
+      return compareTableValues(valA, valB, purchaseReturnSortDirection, type);
+    });
+  });
+
+  let purchaseReturnTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedSupplierReturns.length / PAGE_SIZE))
+  );
+  let paginatedSupplierReturns = $derived(
+    sortedSupplierReturns.slice((purchaseReturnPage - 1) * PAGE_SIZE, purchaseReturnPage * PAGE_SIZE)
+  );
+
   // Reactive Metrics
   let totalCustomerRefunds = $derived(
     branchCustomerReturns.reduce((a, b) => a + Number(b.refundAmount || 0), 0)
@@ -953,15 +1083,42 @@
   {#if activeTab === "penjualan"}
     <DataTable
       title="Daftar Retur Penjualan Kasir"
+      subtitle="Pengembalian obat dari pasien/pelanggan, refund tunai, dan disposisi fisik stok"
       searchPlaceholder="Cari nomor retur, struk, pelanggan, atau obat..."
       bind:searchValue={searchQuery}
-      totalCount={filteredCustomerReturns.length}
+      totalCount={sortedCustomerReturns.length}
+      currentPage={salesReturnPage}
+      totalPages={salesReturnTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (salesReturnPage = p)}
+      emptyText="Belum ada riwayat retur penjualan"
+      emptyIcon={ShoppingBag}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-blue-50 text-[#1d63d8] flex items-center justify-center font-bold">
+            <ShoppingBag class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Daftar Retur Penjualan Kasir</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-[#1d63d8] border border-blue-200/60">
+                {sortedCustomerReturns.length} Retur
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Pengembalian obat dari pasien/pelanggan, refund tunai, dan disposisi fisik stok</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet filters()}
         <div class="w-44 shrink-0">
           <Select
             value={salesReturnStatusFilter}
-            onchange={(val) => (salesReturnStatusFilter = val as typeof salesReturnStatusFilter)}
+            onchange={(val) => {
+              salesReturnStatusFilter = val as typeof salesReturnStatusFilter;
+              salesReturnPage = 1;
+            }}
             options={[
               { value: "ALL", label: "Semua Status" },
               { value: "PENDING", label: "Menunggu" },
@@ -972,26 +1129,26 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Tanggal</th>
-        <th class="py-3 px-4">Produk</th>
-        <th class="py-3 px-4">Alokasi</th>
-        <th class="py-3 px-4">Pelanggan</th>
-        <th class="py-3 px-4 text-right">Pengembalian</th>
-        <th class="py-3 px-4 text-center">Status</th>
+        <SortableTh key="date" label="Tanggal" dataType="date" sortKey={salesReturnSortKey} sortDirection={salesReturnSortDirection} onsort={handleSalesReturnSort} />
+        <SortableTh key="productName" label="Produk" sortKey={salesReturnSortKey} sortDirection={salesReturnSortDirection} onsort={handleSalesReturnSort} />
+        <SortableTh key="stockDisposition" label="Alokasi" sortKey={salesReturnSortKey} sortDirection={salesReturnSortDirection} onsort={handleSalesReturnSort} />
+        <SortableTh key="customerName" label="Pelanggan" sortKey={salesReturnSortKey} sortDirection={salesReturnSortDirection} onsort={handleSalesReturnSort} />
+        <SortableTh key="refundAmount" label="Pengembalian" dataType="currency" align="right" sortKey={salesReturnSortKey} sortDirection={salesReturnSortDirection} onsort={handleSalesReturnSort} />
+        <SortableTh key="status" label="Status" align="center" sortKey={salesReturnSortKey} sortDirection={salesReturnSortDirection} onsort={handleSalesReturnSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredCustomerReturns.length === 0}
+        {#if paginatedCustomerReturns.length === 0}
           <tr>
-            <td colspan="8" class="text-center py-12 text-slate-400">
+            <td colspan="7" class="text-center py-12 text-slate-400">
               <ShoppingBag class="w-10 h-10 mx-auto mb-2 opacity-30" />
               <p class="font-medium text-sm">Belum ada riwayat retur penjualan</p>
               <p class="text-xs text-slate-400">Retur dari pelanggan akan otomatis tercatat dan dapat diproses di sini.</p>
             </td>
           </tr>
         {:else}
-          {#each filteredCustomerReturns as r}
+          {#each paginatedCustomerReturns as r}
             <tr class="hover:bg-blue-50/40 transition-colors">
               <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
                 {r.date}
@@ -1062,16 +1219,42 @@
   {:else if activeTab === "pembelian"}
     <DataTable
       title="Daftar Retur Pembelian ke Distributor PBF"
+      subtitle="Pengembalian obat rusak atau near-ED ke PBF dan penerbitan nota kredit (CN)"
       searchPlaceholder="Cari nomor retur, faktur PBF, distributor, atau obat..."
       bind:searchValue={pbfSearchQuery}
-      totalCount={filteredSupplierReturns.length}
+      totalCount={sortedSupplierReturns.length}
+      currentPage={purchaseReturnPage}
+      totalPages={purchaseReturnTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (purchaseReturnPage = p)}
+      emptyText="Belum ada klaim retur pembelian ke PBF"
+      emptyIcon={RotateCcw}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+            <RotateCcw class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Daftar Retur Pembelian ke Distributor PBF</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200/60">
+                {sortedSupplierReturns.length} Retur
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Pengembalian obat rusak atau near-ED ke PBF dan penerbitan nota kredit (CN)</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet filters()}
         <div class="w-44 shrink-0">
           <Select
             value={purchaseReturnStatusFilter}
-            onchange={(val) =>
-              (purchaseReturnStatusFilter = val as typeof purchaseReturnStatusFilter)}
+            onchange={(val) => {
+              purchaseReturnStatusFilter = val as typeof purchaseReturnStatusFilter;
+              purchaseReturnPage = 1;
+            }}
             options={[
               { value: "ALL", label: "Semua Status" },
               { value: "QUARANTINED", label: "Karantina" },
@@ -1083,18 +1266,18 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Nomor</th>
-        <th class="py-3 px-4">Faktur</th>
-        <th class="py-3 px-4">Distributor</th>
-        <th class="py-3 px-4">Produk</th>
-        <th class="py-3 px-4">Alasan</th>
-        <th class="py-3 px-4 text-right">Nilai</th>
-        <th class="py-3 px-4 text-center">Status</th>
+        <SortableTh key="returnNumber" label="Nomor" sortKey={purchaseReturnSortKey} sortDirection={purchaseReturnSortDirection} onsort={handlePurchaseReturnSort} />
+        <SortableTh key="invoiceRef" label="Faktur" sortKey={purchaseReturnSortKey} sortDirection={purchaseReturnSortDirection} onsort={handlePurchaseReturnSort} />
+        <SortableTh key="supplierName" label="Distributor" sortKey={purchaseReturnSortKey} sortDirection={purchaseReturnSortDirection} onsort={handlePurchaseReturnSort} />
+        <SortableTh key="productName" label="Produk" sortKey={purchaseReturnSortKey} sortDirection={purchaseReturnSortDirection} onsort={handlePurchaseReturnSort} />
+        <SortableTh key="reason" label="Alasan" sortKey={purchaseReturnSortKey} sortDirection={purchaseReturnSortDirection} onsort={handlePurchaseReturnSort} />
+        <SortableTh key="totalValue" label="Nilai" dataType="currency" align="right" sortKey={purchaseReturnSortKey} sortDirection={purchaseReturnSortDirection} onsort={handlePurchaseReturnSort} />
+        <SortableTh key="status" label="Status" align="center" sortKey={purchaseReturnSortKey} sortDirection={purchaseReturnSortDirection} onsort={handlePurchaseReturnSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredSupplierReturns.length === 0}
+        {#if paginatedSupplierReturns.length === 0}
           <tr>
             <td colspan="8" class="text-center py-12 text-slate-400">
               <RotateCcw class="w-10 h-10 mx-auto mb-2 opacity-30" />
@@ -1103,7 +1286,7 @@
             </td>
           </tr>
         {:else}
-          {#each filteredSupplierReturns as r}
+          {#each paginatedSupplierReturns as r}
             <tr class="hover:bg-blue-50/40 transition-colors">
               <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
                 {r.returnNumber}

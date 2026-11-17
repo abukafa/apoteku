@@ -346,41 +346,60 @@ export const reportsRoutes = new Elysia({ prefix: "/api/reports" })
     try {
       const branchId = query.branchId;
       const period = query.period;
+      const isAllBranch = !branchId || branchId === "ALL";
+      const effectiveBranchId = isAllBranch ? "ALL" : branchId;
 
-      const conditions = [];
-      if (branchId && branchId !== "ALL") {
-        conditions.push(eq(schema.salesTransactions.branchId, branchId));
+      // Filter penjualan relatif terhadap cabang & periode
+      const salesConditions = [];
+      if (!isAllBranch) {
+        salesConditions.push(eq(schema.salesTransactions.branchId, branchId));
       }
       if (period) {
-        conditions.push(
+        salesConditions.push(
           sql`TO_CHAR(${schema.salesTransactions.createdAt} AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM') = ${period}`
         );
       }
 
-      // Agregasi produk terjual
+      // Subquery sisa stok per produk, relatif terhadap cabang yang dipilih
+      const stockConditions = [];
+      if (!isAllBranch) {
+        stockConditions.push(eq(schema.branchStocks.branchId, branchId));
+      }
+
+      const stockSubquery = db
+        .select({
+          productId: schema.branchStocks.productId,
+          totalStock: sql<number>`COALESCE(SUM(CAST(${schema.branchStocks.totalQtyBase} AS numeric)), 0)`.as("total_stock")
+        })
+        .from(schema.branchStocks)
+        .where(stockConditions.length > 0 ? and(...stockConditions) : undefined)
+        .groupBy(schema.branchStocks.productId)
+        .as("stock_sub");
+
+      // Agregasi produk terjual murni pada level Master Produk / SKU (bukan level unit/stok)
       const soldAgg = await db
         .select({
-          productId: schema.salesTransactionItems.productId,
+          productId: schema.products.id,
           name: schema.products.name,
           sku: schema.products.sku,
-          unit: schema.salesTransactionItems.unitName,
-          unitsSold: sql<number>`SUM(CAST(${schema.salesTransactionItems.qty} AS numeric))`,
-          totalRevenue: sql<number>`SUM(CAST(${schema.salesTransactionItems.subtotal} AS numeric))`,
+          unit: schema.products.baseUnit,
+          unitsSold: sql<number>`COALESCE(SUM(CAST(${schema.salesTransactionItems.qtyBase} AS numeric)), 0)`,
+          totalRevenue: sql<number>`COALESCE(SUM(CAST(${schema.salesTransactionItems.subtotal} AS numeric)), 0)`,
           refBuyPrice: schema.products.referenceBuyPriceBase,
-          stock: schema.branchStocks.totalQtyBase
+          stock: sql<number>`COALESCE(${stockSubquery.totalStock}, 0)`
         })
         .from(schema.salesTransactionItems)
-        .innerJoin(schema.products, eq(schema.salesTransactionItems.productId, schema.products.id))
         .innerJoin(schema.salesTransactions, eq(schema.salesTransactionItems.transactionId, schema.salesTransactions.id))
-        .leftJoin(schema.branchStocks, eq(schema.products.id, schema.branchStocks.productId))
-        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .innerJoin(schema.products, eq(schema.salesTransactionItems.productId, schema.products.id))
+        .leftJoin(stockSubquery, eq(schema.products.id, stockSubquery.productId))
+        .where(salesConditions.length > 0 ? and(...salesConditions) : undefined)
         .groupBy(
-          schema.salesTransactionItems.productId,
+          schema.products.id,
           schema.products.name,
           schema.products.sku,
-          schema.salesTransactionItems.unitName,
+          schema.products.baseUnit,
           schema.products.referenceBuyPriceBase,
-          schema.branchStocks.totalQtyBase
+          stockSubquery.totalStock
         )
         .orderBy(desc(sql`SUM(CAST(${schema.salesTransactionItems.subtotal} AS numeric))`));
 
@@ -390,9 +409,9 @@ export const reportsRoutes = new Elysia({ prefix: "/api/reports" })
         const qty = Number(item.unitsSold || 0);
         const estCost = refBuy > 0 ? refBuy * qty : rev * 0.75;
         return {
-          id: `par-${item.productId}-${item.unit}`,
+          id: `par-${item.productId}`,
           productId: item.productId,
-          branchId: branchId || "81d3bcff-9577-47b6-9a35-7d510c0d4225",
+          branchId: effectiveBranchId,
           name: item.name,
           sku: item.sku,
           unit: item.unit || "PCS",
@@ -421,25 +440,27 @@ export const reportsRoutes = new Elysia({ prefix: "/api/reports" })
       }));
 
       // Jika produk terjual masih sedikit, lengkapi dengan sampel katalog master sebagai Kelas C
+      // dengan stok yang juga konsisten relatif terhadap cabang yang dipilih
       if (paretoRows.length < 10) {
-        const existingIds = new Set(paretoRows.map((r) => r.sku));
+        const existingProductIds = new Set(soldAgg.map((r) => r.productId));
         const additionalProds = await db
           .select({
             id: schema.products.id,
             name: schema.products.name,
             sku: schema.products.sku,
             baseUnit: schema.products.baseUnit,
-            stock: schema.branchStocks.totalQtyBase
+            stock: sql<number>`COALESCE(${stockSubquery.totalStock}, 0)`
           })
           .from(schema.products)
-          .leftJoin(schema.branchStocks, eq(schema.products.id, schema.branchStocks.productId))
-          .limit(10);
+          .leftJoin(stockSubquery, eq(schema.products.id, stockSubquery.productId))
+          .limit(20);
 
         for (const p of additionalProds) {
-          if (!existingIds.has(p.sku) && paretoRows.length < 10) {
+          if (!existingProductIds.has(p.id) && paretoRows.length < 10) {
+            existingProductIds.add(p.id);
             paretoRows.push({
               id: `par-extra-${p.id}`,
-              branchId: branchId || "81d3bcff-9577-47b6-9a35-7d510c0d4225",
+              branchId: effectiveBranchId,
               name: p.name,
               sku: p.sku,
               category: "C",

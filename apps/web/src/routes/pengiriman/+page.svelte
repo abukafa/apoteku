@@ -18,6 +18,8 @@
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
+  import SortableTh from "$lib/components/ui/SortableTh.svelte";
+  import { compareTableValues, type SortDirection, type SortState } from "$lib/components/ui/DataTable.types";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
@@ -319,6 +321,63 @@
         );
       return matchSearch;
     })
+  );
+
+  // Sorting & Pagination State
+  const PAGE_SIZE = 25;
+  let transferPage = $state(1);
+  let transferSortKey = $state<string>("transferDate");
+  let transferSortDirection = $state<SortDirection>("desc");
+
+  function handleTransferSort(state: SortState) {
+    transferSortKey = state.key;
+    transferSortDirection = state.direction;
+    transferPage = 1;
+  }
+
+  let sortedTransfers = $derived.by(() => {
+    if (!transferSortKey || !transferSortDirection) return filteredTransfers;
+    const copy = [...filteredTransfers];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (transferSortKey) {
+        case "transferNumber":
+          valA = a.transferNumber;
+          valB = b.transferNumber;
+          break;
+        case "fromBranchName":
+          valA = a.fromBranchName;
+          valB = b.fromBranchName;
+          break;
+        case "toBranchName":
+          valA = a.toBranchName;
+          valB = b.toBranchName;
+          break;
+        case "transferDate":
+          valA = a.transferDate;
+          valB = b.transferDate;
+          type = "date";
+          break;
+        case "status":
+          valA = a.status;
+          valB = b.status;
+          break;
+        default:
+          valA = (a as Record<string, any>)[transferSortKey];
+          valB = (b as Record<string, any>)[transferSortKey];
+      }
+      return compareTableValues(valA, valB, transferSortDirection, type);
+    });
+  });
+
+  let transferTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedTransfers.length / PAGE_SIZE))
+  );
+  let paginatedTransfers = $derived(
+    sortedTransfers.slice((transferPage - 1) * PAGE_SIZE, transferPage * PAGE_SIZE)
   );
 
   // Metrics
@@ -1092,17 +1151,42 @@
   <!-- DATA TABLE -->
   <DataTable
     title="Riwayat Surat Jalan & Mutasi Cabang"
+    subtitle="Log pengiriman obat antar unit apotek, nomor resi kurir, dan konfirmasi selisih fisik"
     searchPlaceholder="Cari nomor surat jalan, nama obat, batch, atau cabang..."
     bind:searchValue={searchQuery}
-    totalCount={filteredTransfers.length}
+    totalCount={sortedTransfers.length}
+    currentPage={transferPage}
+    totalPages={transferTotalPages}
+    pageSize={PAGE_SIZE}
+    onPageChange={(p) => (transferPage = p)}
+    isLoading={isLoadingTransfers}
+    emptyText="Tidak ada data surat jalan atau mutasi cabang"
+    emptyIcon={Truck}
   >
+    {#snippet titleContent()}
+      <div class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-xl bg-blue-50 text-[#1d63d8] flex items-center justify-center font-bold">
+          <Truck class="w-5 h-5" />
+        </div>
+        <div>
+          <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+            <span>Riwayat Surat Jalan & Mutasi Cabang</span>
+            <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-[#1d63d8] border border-blue-200/60">
+              {sortedTransfers.length} Dokumen
+            </span>
+          </h3>
+          <p class="text-[11px] text-slate-500 font-medium">Log pengiriman obat antar unit apotek, nomor resi kurir, dan konfirmasi selisih fisik</p>
+        </div>
+      </div>
+    {/snippet}
+
     {#snippet header()}
-      <th class="py-3 px-4">No. Surat</th>
-      <th class="py-3 px-4">Cabang</th>
-      <th class="py-3 px-4">Cabang Tujuan</th>
-      <th class="py-3 px-4">Waktu</th>
+      <SortableTh key="transferNumber" label="No. Surat" sortKey={transferSortKey} sortDirection={transferSortDirection} onsort={handleTransferSort} />
+      <SortableTh key="fromBranchName" label="Cabang Asal" sortKey={transferSortKey} sortDirection={transferSortDirection} onsort={handleTransferSort} />
+      <SortableTh key="toBranchName" label="Cabang Tujuan" sortKey={transferSortKey} sortDirection={transferSortDirection} onsort={handleTransferSort} />
+      <SortableTh key="transferDate" label="Waktu" dataType="date" sortKey={transferSortKey} sortDirection={transferSortDirection} onsort={handleTransferSort} />
       <th class="py-3 px-4">Rincian Barang</th>
-      <th class="py-3 px-4 text-center">Status</th>
+      <SortableTh key="status" label="Status" align="center" sortKey={transferSortKey} sortDirection={transferSortDirection} onsort={handleTransferSort} />
       <th class="py-3 px-4 text-center">Aksi</th>
     {/snippet}
 
@@ -1114,7 +1198,7 @@
             <p class="font-medium text-xs">Memuat riwayat surat jalan dari database...</p>
           </td>
         </tr>
-      {:else if filteredTransfers.length === 0}
+      {:else if paginatedTransfers.length === 0}
         <tr>
           <td colspan="7" class="text-center py-12 text-slate-400">
             <Truck class="w-10 h-10 mx-auto mb-2 opacity-30" />
@@ -1123,7 +1207,7 @@
           </td>
         </tr>
       {:else}
-        {#each filteredTransfers as t}
+        {#each paginatedTransfers as t}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4">
               <div class="font-mono font-bold text-brand-blue">{t.transferNumber}</div>

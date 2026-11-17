@@ -15,6 +15,8 @@
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
+  import SortableTh from "$lib/components/ui/SortableTh.svelte";
+  import { compareTableValues, type SortDirection, type SortState } from "$lib/components/ui/DataTable.types";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import { portal } from "$lib/actions/portal";
@@ -175,7 +177,7 @@
 
   let branchParetoRecords = $derived(
     paretoRecords.filter(
-      (r) => selectedBranchId === "ALL" || r.branchId === selectedBranchId
+      (r) => selectedBranchId === "ALL" || !r.branchId || r.branchId === "ALL" || r.branchId === selectedBranchId
     )
   );
 
@@ -215,6 +217,217 @@
         r.name.toLowerCase().includes(q) || r.sku.toLowerCase().includes(q);
       return matchClass && matchSearch;
     })
+  );
+
+  // Pagination & Sorting State
+  const PAGE_SIZE = 25;
+  let salesPage = $state(1);
+  let sipnapPage = $state(1);
+  let paretoPage = $state(1);
+
+  // Tab 1: Sales Shift Sorting
+  let salesSortKey = $state<string>("date");
+  let salesSortDirection = $state<SortDirection>("desc");
+
+  function handleSalesSort(state: SortState) {
+    salesSortKey = state.key;
+    salesSortDirection = state.direction;
+    salesPage = 1;
+  }
+
+  let sortedSalesRecords = $derived.by(() => {
+    if (!salesSortKey || !salesSortDirection) return filteredSalesRecords;
+    const copy = [...filteredSalesRecords];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (salesSortKey) {
+        case "date":
+          valA = a.date;
+          valB = b.date;
+          type = "date";
+          break;
+        case "cashierName":
+          valA = a.cashierName;
+          valB = b.cashierName;
+          break;
+        case "paymentChannel":
+          valA = a.paymentChannel;
+          valB = b.paymentChannel;
+          break;
+        case "trxCount":
+          valA = Number(a.trxCount || 0);
+          valB = Number(b.trxCount || 0);
+          type = "number";
+          break;
+        case "grossSales":
+          valA = Number(a.grossSales || 0);
+          valB = Number(b.grossSales || 0);
+          type = "number";
+          break;
+        case "cogsHpp":
+          valA = Number(a.cogsHpp || 0);
+          valB = Number(b.cogsHpp || 0);
+          type = "number";
+          break;
+        case "grossProfit":
+          valA = Number(a.grossProfit || 0);
+          valB = Number(b.grossProfit || 0);
+          type = "number";
+          break;
+        case "cashVariance":
+          valA = Number(a.cashVariance || 0);
+          valB = Number(b.cashVariance || 0);
+          type = "number";
+          break;
+        default:
+          valA = (a as Record<string, any>)[salesSortKey];
+          valB = (b as Record<string, any>)[salesSortKey];
+      }
+      return compareTableValues(valA, valB, salesSortDirection, type);
+    });
+  });
+
+  let salesTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedSalesRecords.length / PAGE_SIZE))
+  );
+  let paginatedSalesRecords = $derived(
+    sortedSalesRecords.slice((salesPage - 1) * PAGE_SIZE, salesPage * PAGE_SIZE)
+  );
+
+  // Tab 2: SIPNAP Sorting
+  let sipnapSortKey = $state<string>("drugName");
+  let sipnapSortDirection = $state<SortDirection>("asc");
+
+  function handleSipnapSort(state: SortState) {
+    sipnapSortKey = state.key;
+    sipnapSortDirection = state.direction;
+    sipnapPage = 1;
+  }
+
+  let sortedSipnapRecords = $derived.by(() => {
+    if (!sipnapSortKey || !sipnapSortDirection) return filteredSipnapRecords;
+    const copy = [...filteredSipnapRecords];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" = "string";
+
+      switch (sipnapSortKey) {
+        case "drugName":
+          valA = a.drugName;
+          valB = b.drugName;
+          break;
+        case "group":
+          valA = a.group;
+          valB = b.group;
+          break;
+        case "initialStock":
+          valA = Number(a.initialStock || 0);
+          valB = Number(b.initialStock || 0);
+          type = "number";
+          break;
+        case "receivedQty":
+          valA = Number(a.receivedQty || 0);
+          valB = Number(b.receivedQty || 0);
+          type = "number";
+          break;
+        case "supplier":
+          valA = a.supplier;
+          valB = b.supplier;
+          break;
+        case "dispensedQty":
+          valA = Number(a.dispensedQty || 0);
+          valB = Number(b.dispensedQty || 0);
+          type = "number";
+          break;
+        case "finalStock":
+          valA = Number(a.finalStock || 0);
+          valB = Number(b.finalStock || 0);
+          type = "number";
+          break;
+        case "physicalStock":
+          valA = Number(a.physicalStock || 0);
+          valB = Number(b.physicalStock || 0);
+          type = "number";
+          break;
+        default:
+          valA = (a as Record<string, any>)[sipnapSortKey];
+          valB = (b as Record<string, any>)[sipnapSortKey];
+      }
+      return compareTableValues(valA, valB, sipnapSortDirection, type);
+    });
+  });
+
+  let sipnapTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedSipnapRecords.length / PAGE_SIZE))
+  );
+  let paginatedSipnapRecords = $derived(
+    sortedSipnapRecords.slice((sipnapPage - 1) * PAGE_SIZE, sipnapPage * PAGE_SIZE)
+  );
+
+  // Tab 3: Pareto Sorting
+  let paretoSortKey = $state<string>("totalRevenue");
+  let paretoSortDirection = $state<SortDirection>("desc");
+
+  function handleParetoSort(state: SortState) {
+    paretoSortKey = state.key;
+    paretoSortDirection = state.direction;
+    paretoPage = 1;
+  }
+
+  let sortedParetoRecords = $derived.by(() => {
+    if (!paretoSortKey || !paretoSortDirection) return filteredParetoRecords;
+    const copy = [...filteredParetoRecords];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" = "string";
+
+      switch (paretoSortKey) {
+        case "name":
+          valA = a.name;
+          valB = b.name;
+          break;
+        case "category":
+          valA = a.category;
+          valB = b.category;
+          break;
+        case "unitsSold":
+          valA = Number(a.unitsSold || 0);
+          valB = Number(b.unitsSold || 0);
+          type = "number";
+          break;
+        case "totalRevenue":
+          valA = Number(a.totalRevenue || 0);
+          valB = Number(b.totalRevenue || 0);
+          type = "number";
+          break;
+        case "cumulativeShare":
+          valA = Number(a.cumulativeShare || 0);
+          valB = Number(b.cumulativeShare || 0);
+          type = "number";
+          break;
+        case "grossMarginPercent":
+          valA = Number(a.grossMarginPercent || 0);
+          valB = Number(b.grossMarginPercent || 0);
+          type = "number";
+          break;
+        default:
+          valA = (a as Record<string, any>)[paretoSortKey];
+          valB = (b as Record<string, any>)[paretoSortKey];
+      }
+      return compareTableValues(valA, valB, paretoSortDirection, type);
+    });
+  });
+
+  let paretoTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedParetoRecords.length / PAGE_SIZE))
+  );
+  let paginatedParetoRecords = $derived(
+    sortedParetoRecords.slice((paretoPage - 1) * PAGE_SIZE, paretoPage * PAGE_SIZE)
   );
 
   // Reactive Summary Metrics
@@ -471,15 +684,43 @@
 
     <DataTable
       title="Omzet, HPP, & Laba Kotor per Shift Kasir"
+      subtitle="Kalkulasi performa penjualan harian, modal barang, dan laba kotor per kasir"
       searchPlaceholder="Cari nama kasir, shift, atau cabang..."
       bind:searchValue={salesSearchQuery}
-      totalCount={filteredSalesRecords.length}
+      totalCount={sortedSalesRecords.length}
+      currentPage={salesPage}
+      totalPages={salesTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (salesPage = p)}
+      isLoading={isLoading}
+      emptyText="Belum ada data transaksi shift kasir pada periode ini."
+      emptyIcon={BarChart3}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-blue-50 text-[#1d63d8] flex items-center justify-center font-bold">
+            <BarChart3 class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Omzet, HPP, & Laba Kotor per Shift Kasir</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-[#1d63d8] border border-blue-200/60">
+                {sortedSalesRecords.length} Shift
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Kalkulasi performa penjualan harian, modal barang, dan laba kotor per kasir</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet filters()}
         <div class="w-44 shrink-0">
           <Select
             value={salesChannelFilter}
-            onchange={(val) => (salesChannelFilter = val as typeof salesChannelFilter)}
+            onchange={(val) => {
+              salesChannelFilter = val as typeof salesChannelFilter;
+              salesPage = 1;
+            }}
             options={[
               { value: "ALL", label: "Semua Kanal" },
               { value: "CASH", label: "Tunai (Cash)" },
@@ -491,18 +732,18 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Tanggal & Shift</th>
-        <th class="py-3 px-4">Kasir & Cabang</th>
-        <th class="py-3 px-4 text-center">Kanal</th>
-        <th class="py-3 px-4 text-center">Trx</th>
-        <th class="py-3 px-4 text-right">Omzet Bruto</th>
-        <th class="py-3 px-4 text-right">Modal (HPP)</th>
-        <th class="py-3 px-4 text-right">Laba Kotor</th>
-        <th class="py-3 px-4 text-center">Selisih Kas</th>
+        <SortableTh key="date" label="Tanggal & Shift" dataType="date" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
+        <SortableTh key="cashierName" label="Kasir & Cabang" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
+        <SortableTh key="paymentChannel" label="Kanal" align="center" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
+        <SortableTh key="trxCount" label="Trx" align="center" dataType="number" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
+        <SortableTh key="grossSales" label="Omzet Bruto" align="right" dataType="currency" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
+        <SortableTh key="cogsHpp" label="Modal (HPP)" align="right" dataType="currency" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
+        <SortableTh key="grossProfit" label="Laba Kotor" align="right" dataType="currency" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
+        <SortableTh key="cashVariance" label="Selisih Kas" align="center" dataType="currency" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredSalesRecords.length === 0}
+        {#if paginatedSalesRecords.length === 0}
           <tr>
             <td colspan="8" class="text-center py-10 text-slate-400 text-xs">
               {#if isLoading}
@@ -513,7 +754,7 @@
             </td>
           </tr>
         {:else}
-          {#each filteredSalesRecords as r}
+          {#each paginatedSalesRecords as r}
             {@const marginPct = calculateGrossMarginPercent(r.grossSales, r.grossProfit).toFixed(1)}
             <tr class="hover:bg-blue-50/40 transition-colors">
               <td class="py-3.5 px-4">
@@ -557,15 +798,43 @@
   {:else if activeTab === "sipnap"}
     <DataTable
       title="Mutasi Narkotika, Psikotropika, & Prekursor"
+      subtitle="Kartu stok dan mutasi regulasi obat terkontrol pelaporan SIPNAP Kemenkes RI"
       searchPlaceholder="Cari nama obat, distributor PBF, atau nomor SP..."
       bind:searchValue={sipnapSearchQuery}
-      totalCount={filteredSipnapRecords.length}
+      totalCount={sortedSipnapRecords.length}
+      currentPage={sipnapPage}
+      totalPages={sipnapTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (sipnapPage = p)}
+      isLoading={isLoading}
+      emptyText="Tidak ada data obat terkontrol (Narkotika/Psikotropika/Prekursor) pada periode ini."
+      emptyIcon={ShieldAlert}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+            <ShieldAlert class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Mutasi Narkotika, Psikotropika, & Prekursor</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200/60">
+                {sortedSipnapRecords.length} Obat Terkontrol
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Kartu stok dan mutasi regulasi obat terkontrol pelaporan SIPNAP Kemenkes RI</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet filters()}
         <div class="w-44 shrink-0">
           <Select
             value={sipnapGroupFilter}
-            onchange={(val) => (sipnapGroupFilter = val as typeof sipnapGroupFilter)}
+            onchange={(val) => {
+              sipnapGroupFilter = val as typeof sipnapGroupFilter;
+              sipnapPage = 1;
+            }}
             options={[
               { value: "ALL", label: "Semua Golongan" },
               { value: "NARKOTIKA", label: "Narkotika" },
@@ -577,19 +846,19 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Nama Obat</th>
-        <th class="py-3 px-4">Golongan</th>
-        <th class="py-3 px-4 text-right">Awal</th>
-        <th class="py-3 px-4 text-right">Masuk</th>
-        <th class="py-3 px-4">Distributor</th>
-        <th class="py-3 px-4 text-right">Keluar</th>
-        <th class="py-3 px-4 text-right">Saldo</th>
-        <th class="py-3 px-4 text-center">Fisik</th>
+        <SortableTh key="drugName" label="Nama Obat" sortKey={sipnapSortKey} sortDirection={sipnapSortDirection} onsort={handleSipnapSort} />
+        <SortableTh key="group" label="Golongan" sortKey={sipnapSortKey} sortDirection={sipnapSortDirection} onsort={handleSipnapSort} />
+        <SortableTh key="initialStock" label="Awal" align="right" dataType="number" sortKey={sipnapSortKey} sortDirection={sipnapSortDirection} onsort={handleSipnapSort} />
+        <SortableTh key="receivedQty" label="Masuk" align="right" dataType="number" sortKey={sipnapSortKey} sortDirection={sipnapSortDirection} onsort={handleSipnapSort} />
+        <SortableTh key="supplier" label="Distributor" sortKey={sipnapSortKey} sortDirection={sipnapSortDirection} onsort={handleSipnapSort} />
+        <SortableTh key="dispensedQty" label="Keluar" align="right" dataType="number" sortKey={sipnapSortKey} sortDirection={sipnapSortDirection} onsort={handleSipnapSort} />
+        <SortableTh key="finalStock" label="Saldo" align="right" dataType="number" sortKey={sipnapSortKey} sortDirection={sipnapSortDirection} onsort={handleSipnapSort} />
+        <SortableTh key="physicalStock" label="Fisik" align="center" dataType="number" sortKey={sipnapSortKey} sortDirection={sipnapSortDirection} onsort={handleSipnapSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredSipnapRecords.length === 0}
+        {#if paginatedSipnapRecords.length === 0}
           <tr>
             <td colspan="9" class="text-center py-10 text-slate-400 text-xs">
               {#if isLoading}
@@ -600,7 +869,7 @@
             </td>
           </tr>
         {:else}
-          {#each filteredSipnapRecords as rec}
+          {#each paginatedSipnapRecords as rec}
             {@const isBalanced =
               rec.initialStock + rec.receivedQty - rec.dispensedQty - rec.expiredOrDestroyedQty ===
                 rec.finalStock && rec.finalStock === rec.physicalStock}
@@ -662,16 +931,44 @@
   <!-- TAB 3: PARETO ABC -->
   {:else if activeTab === "pareto"}
     <DataTable
-      title="Analisis Pareto ABC (Investasi & Perputaran Stok)"
+      title="Analisis Pareto (Investasi & Perputaran Stok)"
+      subtitle="Kontribusi produk terhadap omzet (Kelas A 80%, B 15%, C 5%)"
       searchPlaceholder="Cari nama produk atau SKU..."
       bind:searchValue={paretoSearchQuery}
-      totalCount={filteredParetoRecords.length}
+      totalCount={sortedParetoRecords.length}
+      currentPage={paretoPage}
+      totalPages={paretoTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (paretoPage = p)}
+      isLoading={isLoading}
+      emptyText="Belum ada data perputaran produk untuk analisis Pareto pada periode ini."
+      emptyIcon={PieChart}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+            <PieChart class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Analisis Pareto (Investasi & Perputaran Stok)</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200/60">
+                {sortedParetoRecords.length} Item SKU
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Klasifikasi kontribusi produk terhadap omzet (Kelas A 80%, B 15%, C 5%)</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet filters()}
         <div class="w-44 shrink-0">
           <Select
             value={paretoClassFilter}
-            onchange={(val) => (paretoClassFilter = val as typeof paretoClassFilter)}
+            onchange={(val) => {
+              paretoClassFilter = val as typeof paretoClassFilter;
+              paretoPage = 1;
+            }}
             options={[
               { value: "ALL", label: "Semua Kelas" },
               { value: "A", label: "Kelas A (80% Omzet)" },
@@ -683,17 +980,17 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Produk</th>
-        <th class="py-3 px-4 text-center">Kelas</th>
-        <th class="py-3 px-4 text-center">Terjual</th>
-        <th class="py-3 px-4 text-right">Omzet</th>
-        <th class="py-3 px-4 text-right">Kumulatif</th>
-        <th class="py-3 px-4 text-center">Margin</th>
+        <SortableTh key="name" label="Produk" sortKey={paretoSortKey} sortDirection={paretoSortDirection} onsort={handleParetoSort} />
+        <SortableTh key="category" label="Kelas" align="center" sortKey={paretoSortKey} sortDirection={paretoSortDirection} onsort={handleParetoSort} />
+        <SortableTh key="unitsSold" label="Terjual" align="center" dataType="number" sortKey={paretoSortKey} sortDirection={paretoSortDirection} onsort={handleParetoSort} />
+        <SortableTh key="totalRevenue" label="Omzet" align="right" dataType="currency" sortKey={paretoSortKey} sortDirection={paretoSortDirection} onsort={handleParetoSort} />
+        <SortableTh key="cumulativeShare" label="Kumulatif" align="right" dataType="number" sortKey={paretoSortKey} sortDirection={paretoSortDirection} onsort={handleParetoSort} />
+        <SortableTh key="grossMarginPercent" label="Margin" align="center" dataType="number" sortKey={paretoSortKey} sortDirection={paretoSortDirection} onsort={handleParetoSort} />
         <th class="py-3 px-4">Rekomendasi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredParetoRecords.length === 0}
+        {#if paginatedParetoRecords.length === 0}
           <tr>
             <td colspan="7" class="text-center py-10 text-slate-400 text-xs">
               {#if isLoading}
@@ -704,9 +1001,9 @@
             </td>
           </tr>
         {:else}
-          {#each filteredParetoRecords as p}
+          {#each paginatedParetoRecords as p}
             <tr class="hover:bg-blue-50/40 transition-colors">
-              <td class="py-3.5 px-4">
+              <td class="py-3.5 px-4 max-w-[200px]">
                 <div class="font-bold text-slate-900">{p.name}</div>
                 <div class="font-mono text-[10px] text-slate-400">SKU: {p.sku} • Sisa Stok: {p.currentStock}</div>
               </td>

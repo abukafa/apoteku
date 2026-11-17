@@ -18,6 +18,8 @@
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
+  import SortableTh from "$lib/components/ui/SortableTh.svelte";
+  import { compareTableValues, type SortDirection, type SortState } from "$lib/components/ui/DataTable.types";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
@@ -633,6 +635,126 @@
     })
   );
 
+  // Pagination & Sorting State
+  const PAGE_SIZE = 25;
+  let resepPage = $state(1);
+  let pioPage = $state(1);
+
+  // Tab 1 Sorting: Resep Dokter
+  let resepSortKey = $state<string>("recipeNumber");
+  let resepSortDirection = $state<SortDirection>("desc");
+
+  function handleResepSort(state: SortState) {
+    resepSortKey = state.key;
+    resepSortDirection = state.direction;
+    resepPage = 1;
+  }
+
+  let sortedPrescriptions = $derived.by(() => {
+    if (!resepSortKey || !resepSortDirection) return filteredPrescriptions;
+    const copy = [...filteredPrescriptions];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" = "string";
+
+      switch (resepSortKey) {
+        case "recipeNumber":
+          valA = a.recipeNumber;
+          valB = b.recipeNumber;
+          break;
+        case "patientName":
+          valA = a.patientName;
+          valB = b.patientName;
+          break;
+        case "tuslah":
+          valA = Number(a.tuslah || 0) + Number(a.embalase || 0);
+          valB = Number(b.tuslah || 0) + Number(b.embalase || 0);
+          type = "number";
+          break;
+        case "totalPrice":
+          valA = Number(a.totalPrice || 0);
+          valB = Number(b.totalPrice || 0);
+          type = "number";
+          break;
+        case "status":
+          valA = a.status;
+          valB = b.status;
+          break;
+        default:
+          valA = (a as Record<string, any>)[resepSortKey];
+          valB = (b as Record<string, any>)[resepSortKey];
+      }
+      return compareTableValues(valA, valB, resepSortDirection, type);
+    });
+  });
+
+  let resepTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedPrescriptions.length / PAGE_SIZE))
+  );
+  let paginatedPrescriptions = $derived(
+    sortedPrescriptions.slice((resepPage - 1) * PAGE_SIZE, resepPage * PAGE_SIZE)
+  );
+
+  // Tab 2 Sorting: Log Konseling PIO
+  let pioSortKey = $state<string>("date");
+  let pioSortDirection = $state<SortDirection>("desc");
+
+  function handlePioSort(state: SortState) {
+    pioSortKey = state.key;
+    pioSortDirection = state.direction;
+    pioPage = 1;
+  }
+
+  let sortedCounselings = $derived.by(() => {
+    if (!pioSortKey || !pioSortDirection) return filteredCounselings;
+    const copy = [...filteredCounselings];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (pioSortKey) {
+        case "date":
+          valA = a.date;
+          valB = b.date;
+          type = "date";
+          break;
+        case "patientName":
+          valA = a.patientName;
+          valB = b.patientName;
+          break;
+        case "drugSummary":
+          valA = a.drugSummary;
+          valB = b.drugSummary;
+          break;
+        case "allergyNote":
+          valA = a.allergyNote;
+          valB = b.allergyNote;
+          break;
+        case "pioPoints":
+          valA = a.pioPoints;
+          valB = b.pioPoints;
+          break;
+        case "pharmacistName":
+          valA = a.pharmacistName;
+          valB = b.pharmacistName;
+          break;
+        default:
+          valA = (a as Record<string, any>)[pioSortKey];
+          valB = (b as Record<string, any>)[pioSortKey];
+      }
+      return compareTableValues(valA, valB, pioSortDirection, type);
+    });
+  });
+
+  let pioTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedCounselings.length / PAGE_SIZE))
+  );
+  let paginatedCounselings = $derived(
+    sortedCounselings.slice((pioPage - 1) * PAGE_SIZE, pioPage * PAGE_SIZE)
+  );
+
   let newResepDrugSubtotal = $derived(
     newResepForm.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0)
   );
@@ -1156,15 +1278,43 @@
   {#if activeTab === "resep"}
     <DataTable
       title="Antrian Resep Dokter & Racikan"
+      subtitle="Verifikasi legalitas skrining resep dokter, perhitungan tuslah/embalase, dan penyiapan obat"
       searchPlaceholder="Cari nomor resep, nama pasien, atau dokter..."
       bind:searchValue={searchQuery}
-      totalCount={filteredPrescriptions.length}
+      totalCount={sortedPrescriptions.length}
+      currentPage={resepPage}
+      totalPages={resepTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (resepPage = p)}
+      isLoading={isLoadingData}
+      emptyText="Belum ada antrian resep dokter di database."
+      emptyIcon={FileText}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+            <FileText class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Antrian Resep Dokter & Racikan</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200/60">
+                {sortedPrescriptions.length} Resep
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Verifikasi legalitas skrining resep dokter, perhitungan tuslah/embalase, dan penyiapan obat</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet filters()}
         <div class="w-44 shrink-0">
           <Select
             value={statusFilter}
-            onchange={(val) => (statusFilter = val as typeof statusFilter)}
+            onchange={(val) => {
+              statusFilter = val as typeof statusFilter;
+              resepPage = 1;
+            }}
             options={[
               { value: "ALL", label: "Semua Status" },
               { value: "DRAFT", label: "Draft Skrining" },
@@ -1176,11 +1326,11 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">No. Resep</th>
-        <th class="py-3 px-4">Pasien</th>
-        <th class="py-3 px-4 text-right">Tuslah & Embalase</th>
-        <th class="py-3 px-4 text-right">Total Resep</th>
-        <th class="py-3 px-4 text-center">Status</th>
+        <SortableTh key="recipeNumber" label="No. Resep" sortKey={resepSortKey} sortDirection={resepSortDirection} onsort={handleResepSort} />
+        <SortableTh key="patientName" label="Pasien" sortKey={resepSortKey} sortDirection={resepSortDirection} onsort={handleResepSort} />
+        <SortableTh key="tuslah" label="Tuslah & Embalase" dataType="currency" align="right" sortKey={resepSortKey} sortDirection={resepSortDirection} onsort={handleResepSort} />
+        <SortableTh key="totalPrice" label="Total Resep" dataType="currency" align="right" sortKey={resepSortKey} sortDirection={resepSortDirection} onsort={handleResepSort} />
+        <SortableTh key="status" label="Status" align="center" sortKey={resepSortKey} sortDirection={resepSortDirection} onsort={handleResepSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
@@ -1191,7 +1341,7 @@
               Memuat data pelayanan resep dari server...
             </td>
           </tr>
-        {:else if filteredPrescriptions.length === 0}
+        {:else if paginatedPrescriptions.length === 0}
           <tr>
             <td colspan="7" class="py-12 text-center text-xs text-slate-400">
               <div class="flex flex-col items-center justify-center gap-2">
@@ -1201,7 +1351,7 @@
             </td>
           </tr>
         {:else}
-          {#each filteredPrescriptions as r}
+          {#each paginatedPrescriptions as r}
             <tr class="hover:bg-blue-50/40 transition-colors">
               <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
                 {r.recipeNumber}
@@ -1469,17 +1619,42 @@
   {:else if activeTab === "konseling"}
     <DataTable
       title="Log Pelayanan Informasi Obat (PIO)"
+      subtitle="Dokumentasi konseling apoteker kepada pasien, riwayat alergi, dan catatan cara pakai"
       searchPlaceholder="Cari nomor resep, nama pasien, atau obat..."
       bind:searchValue={pioSearchQuery}
-      totalCount={filteredCounselings.length}
+      totalCount={sortedCounselings.length}
+      currentPage={pioPage}
+      totalPages={pioTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (pioPage = p)}
+      isLoading={isLoadingData}
+      emptyText="Belum ada catatan dokumentasi PIO & konseling"
+      emptyIcon={ClipboardCheck}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-blue-50 text-[#1d63d8] flex items-center justify-center font-bold">
+            <ClipboardCheck class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Log Pelayanan Informasi Obat (PIO)</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-[#1d63d8] border border-blue-200/60">
+                {sortedCounselings.length} Catatan PIO
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Dokumentasi konseling apoteker kepada pasien, riwayat alergi, dan catatan cara pakai</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet header()}
-        <th class="py-3 px-4">Waktu</th>
-        <th class="py-3 px-4">Pasien</th>
-        <th class="py-3 px-4">Obat & Signa</th>
-        <th class="py-3 px-4">Alergi</th>
-        <th class="py-3 px-4">Edukasi PIO</th>
-        <th class="py-3 px-4">Apoteker</th>
+        <SortableTh key="date" label="Waktu" dataType="date" sortKey={pioSortKey} sortDirection={pioSortDirection} onsort={handlePioSort} />
+        <SortableTh key="patientName" label="Pasien" sortKey={pioSortKey} sortDirection={pioSortDirection} onsort={handlePioSort} />
+        <SortableTh key="drugSummary" label="Obat & Signa" sortKey={pioSortKey} sortDirection={pioSortDirection} onsort={handlePioSort} />
+        <SortableTh key="allergyNote" label="Alergi" sortKey={pioSortKey} sortDirection={pioSortDirection} onsort={handlePioSort} />
+        <SortableTh key="pioPoints" label="Edukasi PIO" sortKey={pioSortKey} sortDirection={pioSortDirection} onsort={handlePioSort} />
+        <SortableTh key="pharmacistName" label="Apoteker" sortKey={pioSortKey} sortDirection={pioSortDirection} onsort={handlePioSort} />
       {/snippet}
 
       {#snippet rows()}
@@ -1489,7 +1664,7 @@
               Memuat log konseling PIO dari server...
             </td>
           </tr>
-        {:else if filteredCounselings.length === 0}
+        {:else if paginatedCounselings.length === 0}
           <tr>
             <td colspan="6" class="text-center py-12 text-slate-400">
               <ClipboardCheck class="w-10 h-10 mx-auto mb-2 opacity-30" />
@@ -1498,7 +1673,7 @@
             </td>
           </tr>
         {:else}
-          {#each filteredCounselings as c}
+          {#each paginatedCounselings as c}
             <tr class="hover:bg-blue-50/40 transition-colors">
               <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
                 {c.recipeNumber}

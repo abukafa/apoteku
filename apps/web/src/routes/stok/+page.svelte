@@ -30,6 +30,8 @@
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
+  import SortableTh from "$lib/components/ui/SortableTh.svelte";
+  import { compareTableValues, type SortDirection, type SortState } from "$lib/components/ui/DataTable.types";
   import Badge from "$lib/components/ui/Badge.svelte";
   import { authStore } from "$lib/stores/authStore.svelte";
   import { portal } from "$lib/actions/portal";
@@ -263,9 +265,63 @@
     })
   );
 
-  let catalogTotalPages = $derived(Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE)));
+  // Sorting state katalog obat
+  let catalogSortKey = $state<string>("name");
+  let catalogSortDirection = $state<SortDirection>("asc");
+
+  function handleCatalogSort(state: SortState) {
+    catalogSortKey = state.key;
+    catalogSortDirection = state.direction;
+    catalogPage = 1;
+  }
+
+  let sortedProducts = $derived.by(() => {
+    if (!catalogSortKey || !catalogSortDirection) return filteredProducts;
+    const copy = [...filteredProducts];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" = "string";
+
+      switch (catalogSortKey) {
+        case "name":
+          valA = a.name;
+          valB = b.name;
+          break;
+        case "sku":
+          valA = a.sku;
+          valB = b.sku;
+          break;
+        case "drugClass":
+          valA = a.drugClass;
+          valB = b.drugClass;
+          break;
+        case "totalStock":
+          valA = getProductTotalStock(a);
+          valB = getProductTotalStock(b);
+          type = "number";
+          break;
+        case "generalPrice":
+          valA = a.units[0]?.prices.general || 0;
+          valB = b.units[0]?.prices.general || 0;
+          type = "number";
+          break;
+        case "prescriptionPrice":
+          valA = a.units[0]?.prices.prescription || 0;
+          valB = b.units[0]?.prices.prescription || 0;
+          type = "number";
+          break;
+        default:
+          valA = a[catalogSortKey];
+          valB = b[catalogSortKey];
+      }
+      return compareTableValues(valA, valB, catalogSortDirection, type);
+    });
+  });
+
+  let catalogTotalPages = $derived(Math.max(1, Math.ceil(sortedProducts.length / PAGE_SIZE)));
   let paginatedProducts = $derived(
-    filteredProducts.slice((catalogPage - 1) * PAGE_SIZE, catalogPage * PAGE_SIZE)
+    sortedProducts.slice((catalogPage - 1) * PAGE_SIZE, catalogPage * PAGE_SIZE)
   );
 
   // Derived: Filtered Ledger Entries for Selected Product with Dynamic Running Balance
@@ -352,9 +408,73 @@
     })
   );
 
-  let opnameTotalPages = $derived(Math.max(1, Math.ceil(filteredOpnameHistory.length / PAGE_SIZE)));
+  // Sorting state untuk Hasil Stok Opname
+  let opnameSortKey = $state<string>("date");
+  let opnameSortDirection = $state<SortDirection>("desc");
+
+  function handleOpnameSort(state: SortState) {
+    opnameSortKey = state.key;
+    opnameSortDirection = state.direction;
+    opnamePage = 1;
+  }
+
+  let sortedOpnameHistory = $derived.by(() => {
+    if (!opnameSortKey || !opnameSortDirection) return filteredOpnameHistory;
+    const copy = [...filteredOpnameHistory];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (opnameSortKey) {
+        case "docNumber":
+          valA = a.docNumber;
+          valB = b.docNumber;
+          break;
+        case "date":
+          valA = a.date;
+          valB = b.date;
+          type = "date";
+          break;
+        case "productName":
+          valA = a.productName;
+          valB = b.productName;
+          break;
+        case "systemQty":
+          valA = Number(a.systemQty || 0);
+          valB = Number(b.systemQty || 0);
+          type = "number";
+          break;
+        case "actualQty":
+          valA = Number(a.actualQty || 0);
+          valB = Number(b.actualQty || 0);
+          type = "number";
+          break;
+        case "differenceQty":
+          valA = Number(a.differenceQty || 0);
+          valB = Number(b.differenceQty || 0);
+          type = "number";
+          break;
+        case "valueDifference":
+          valA = Number(a.valueDifference || 0);
+          valB = Number(b.valueDifference || 0);
+          type = "number";
+          break;
+        case "operator":
+          valA = a.operator;
+          valB = b.operator;
+          break;
+        default:
+          valA = (a as Record<string, any>)[opnameSortKey];
+          valB = (b as Record<string, any>)[opnameSortKey];
+      }
+      return compareTableValues(valA, valB, opnameSortDirection, type);
+    });
+  });
+
+  let opnameTotalPages = $derived(Math.max(1, Math.ceil(sortedOpnameHistory.length / PAGE_SIZE)));
   let paginatedOpnameHistory = $derived(
-    filteredOpnameHistory.slice((opnamePage - 1) * PAGE_SIZE, opnamePage * PAGE_SIZE)
+    sortedOpnameHistory.slice((opnamePage - 1) * PAGE_SIZE, opnamePage * PAGE_SIZE)
   );
 
   // Summary Stats for Opname Discrepancy
@@ -1467,6 +1587,7 @@
   {#if activeTab === "katalog"}
     <DataTable
       title="Katalog Obat & Stok"
+      subtitle="Monitoring stok fisik, golongan obat, dan harga jual per satuan"
       searchPlaceholder="Cari nama obat, kandungan aktif, SKU, atau scan barcode..."
       bind:searchValue={searchQuery}
       totalCount={filteredProducts.length}
@@ -1474,7 +1595,26 @@
       totalPages={catalogTotalPages}
       pageSize={PAGE_SIZE}
       onPageChange={(p) => (catalogPage = p)}
+      emptyText="Tidak ada obat yang cocok dengan kriteria pencarian / golongan."
+      emptyIcon={Package}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-blue-50 text-[#1d63d8] flex items-center justify-center font-bold">
+            <Package class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Katalog Obat & Stok</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-[#1d63d8] border border-blue-200/60">
+                {filteredProducts.length} Produk
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Monitoring stok fisik, golongan obat, dan harga jual per satuan</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet filters()}
         <Select
           bind:value={selectedCategory}
@@ -1492,15 +1632,13 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Produk</th>
-        <th class="py-3 px-4">SKU</th>
-        <th class="py-3 px-4">Golongan</th>
+        <SortableTh key="name" label="Produk" sortKey={catalogSortKey} sortDirection={catalogSortDirection} onsort={handleCatalogSort} />
+        <SortableTh key="sku" label="SKU / Barcode" sortKey={catalogSortKey} sortDirection={catalogSortDirection} onsort={handleCatalogSort} />
+        <SortableTh key="drugClass" label="Golongan" sortKey={catalogSortKey} sortDirection={catalogSortDirection} onsort={handleCatalogSort} />
         <th class="py-3 px-4 text-center">Satuan</th>
-        <th class="py-3 px-4 text-right" title="Saldo stok tercatat di sistem saat ini (otomatis ter-update setelah penjualan, pembelian, atau stok opname)">
-          Stok
-        </th>
-        <th class="py-3 px-4 text-right">Umum</th>
-        <th class="py-3 px-4 text-right">Resep</th>
+        <SortableTh key="totalStock" label="Stok Fisik" align="right" dataType="number" sortKey={catalogSortKey} sortDirection={catalogSortDirection} onsort={handleCatalogSort} />
+        <SortableTh key="generalPrice" label="Umum (Rp)" align="right" dataType="currency" sortKey={catalogSortKey} sortDirection={catalogSortDirection} onsort={handleCatalogSort} />
+        <SortableTh key="prescriptionPrice" label="Resep (Rp)" align="right" dataType="currency" sortKey={catalogSortKey} sortDirection={catalogSortDirection} onsort={handleCatalogSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
@@ -1902,15 +2040,34 @@
       <!-- Opname Discrepancy Table -->
       <DataTable
         title="Hasil Stok Opname"
+        subtitle="Riwayat audit fisik stok, penyesuaian selisih batch, dan rekonsiliasi nilai inventaris"
         searchPlaceholder="Cari nama obat, No. Dokumen RJK, atau nomor batch..."
         bind:searchValue={opnameSearchQuery}
-        totalCount={filteredOpnameHistory.length}
+        totalCount={sortedOpnameHistory.length}
         currentPage={opnamePage}
         totalPages={opnameTotalPages}
         pageSize={PAGE_SIZE}
         onPageChange={(p) => (opnamePage = p)}
         emptyText="Tidak ada data pemeriksaan stok opname yang sesuai filter."
+        emptyIcon={ClipboardCheck}
       >
+        {#snippet titleContent()}
+          <div class="flex items-center gap-2.5">
+            <div class="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+              <ClipboardCheck class="w-5 h-5" />
+            </div>
+            <div>
+              <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                <span>Hasil Stok Opname</span>
+                <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200/60">
+                  {sortedOpnameHistory.length} Riwayat Opname
+                </span>
+              </h3>
+              <p class="text-[11px] text-slate-500 font-medium">Riwayat audit fisik stok, penyesuaian selisih batch, dan rekonsiliasi nilai inventaris</p>
+            </div>
+          </div>
+        {/snippet}
+
         {#snippet filters()}
           <Select
             bind:value={opnameDiffFilter}
@@ -1928,14 +2085,14 @@
         {/snippet}
 
         {#snippet header()}
-          <th class="py-3 px-4">Dokumen</th>
-          <th class="py-3 px-4">Nama Obat</th>
-          <th class="py-3 px-4 text-right">Sebelum</th>
-          <th class="py-3 px-4 text-right">Sesudah</th>
-          <th class="py-3 px-4 text-center">Selisih</th>
-          <th class="py-3 px-4 text-right">Dampak</th>
+          <SortableTh key="docNumber" label="Dokumen" sortKey={opnameSortKey} sortDirection={opnameSortDirection} onsort={handleOpnameSort} />
+          <SortableTh key="productName" label="Nama Obat" sortKey={opnameSortKey} sortDirection={opnameSortDirection} onsort={handleOpnameSort} />
+          <SortableTh key="systemQty" label="Sebelum" align="right" dataType="number" sortKey={opnameSortKey} sortDirection={opnameSortDirection} onsort={handleOpnameSort} />
+          <SortableTh key="actualQty" label="Sesudah" align="right" dataType="number" sortKey={opnameSortKey} sortDirection={opnameSortDirection} onsort={handleOpnameSort} />
+          <SortableTh key="differenceQty" label="Selisih" align="center" dataType="number" sortKey={opnameSortKey} sortDirection={opnameSortDirection} onsort={handleOpnameSort} />
+          <SortableTh key="valueDifference" label="Dampak" align="right" dataType="currency" sortKey={opnameSortKey} sortDirection={opnameSortDirection} onsort={handleOpnameSort} />
           <th class="py-3 px-4">Catatan</th>
-          <th class="py-3 px-4 text-center">Petugas</th>
+          <SortableTh key="operator" label="Petugas" align="center" sortKey={opnameSortKey} sortDirection={opnameSortDirection} onsort={handleOpnameSort} />
         {/snippet}
 
         {#snippet rows()}

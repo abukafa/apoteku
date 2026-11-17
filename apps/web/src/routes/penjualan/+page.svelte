@@ -26,6 +26,8 @@
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
+  import SortableTh from "$lib/components/ui/SortableTh.svelte";
+  import { compareTableValues, type SortDirection, type SortState } from "$lib/components/ui/DataTable.types";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import ThermalReceiptSheet, {
@@ -119,9 +121,62 @@
     })
   );
 
-  let totalPages = $derived(Math.max(1, Math.ceil(filteredSales.length / pageSize)));
+  // Sorting state
+  let sortKey = $state<string>("createdAt");
+  let sortDirection = $state<SortDirection>("desc");
+
+  function handleSort(state: SortState) {
+    sortKey = state.key;
+    sortDirection = state.direction;
+    currentPage = 1;
+  }
+
+  let sortedSales = $derived.by(() => {
+    if (!sortKey || !sortDirection) return filteredSales;
+    const copy = [...filteredSales];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (sortKey) {
+        case "invoiceNo":
+          valA = a.invoiceNo || a.invoiceNumber;
+          valB = b.invoiceNo || b.invoiceNumber;
+          break;
+        case "createdAt":
+          valA = a.createdAt;
+          valB = b.createdAt;
+          type = "date";
+          break;
+        case "customerName":
+          valA = a.customerName;
+          valB = b.customerName;
+          break;
+        case "transactionType":
+          valA = a.transactionType;
+          valB = b.transactionType;
+          break;
+        case "grandTotal":
+          valA = Number(a.grandTotal || 0);
+          valB = Number(b.grandTotal || 0);
+          type = "number";
+          break;
+        case "paymentStatus":
+          valA = a.paymentStatus;
+          valB = b.paymentStatus;
+          break;
+        default:
+          valA = a[sortKey];
+          valB = b[sortKey];
+      }
+      return compareTableValues(valA, valB, sortDirection, type);
+    });
+  });
+
+  let totalPages = $derived(Math.max(1, Math.ceil(sortedSales.length / pageSize)));
   let paginatedSales = $derived(
-    filteredSales.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+    sortedSales.slice((currentPage - 1) * pageSize, currentPage * pageSize)
   );
 
   function handleTabChange(tab: typeof activeTab) {
@@ -331,6 +386,7 @@
   <!-- DATA TABLE PENJUALAN -->
   <DataTable
     title="Buku Catatan Penjualan"
+    subtitle="Monitoring transaksi kasir POS, resep klinik, dan delivery"
     searchPlaceholder="Cari nomor faktur nota, nama pelanggan/pasien, atau nama kasir..."
     bind:searchValue={searchQuery}
     totalCount={filteredSales.length}
@@ -339,7 +395,27 @@
     pageSize={pageSize}
     onPageChange={(p) => (currentPage = p)}
     onSearchChange={() => (currentPage = 1)}
+    isLoading={isLoading}
+    emptyText="Tidak ada transaksi penjualan yang cocok dengan filter pencarian."
+    emptyIcon={ShoppingCart}
   >
+    {#snippet titleContent()}
+      <div class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-xl bg-blue-50 text-[#1d63d8] flex items-center justify-center font-bold">
+          <ShoppingCart class="w-5 h-5" />
+        </div>
+        <div>
+          <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+            <span>Buku Catatan Penjualan</span>
+            <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-[#1d63d8] border border-blue-200/60">
+              {filteredSales.length} Transaksi
+            </span>
+          </h3>
+          <p class="text-[11px] text-slate-500 font-medium">Monitoring transaksi kasir POS, resep klinik, dan delivery</p>
+        </div>
+      </div>
+    {/snippet}
+
     {#snippet filters()}
       <!-- Filter Pembayaran -->
       <div class="flex items-center gap-1.5 text-xs">
@@ -361,27 +437,17 @@
     {/snippet}
 
     {#snippet header()}
-      <th class="py-3 px-4">Faktur</th>
-      <th class="py-3 px-4">Waktu Sif</th>
-      <th class="py-3 px-4">Pelanggan</th>
-      <th class="py-3 px-4 text-center">Jenis</th>
-      <th class="py-3 px-4 text-right">Total</th>
-      <th class="py-3 px-4 text-center">Status</th>
+      <SortableTh key="invoiceNo" label="Faktur" {sortKey} {sortDirection} onsort={handleSort} />
+      <SortableTh key="createdAt" label="Waktu & Sif" {sortKey} {sortDirection} onsort={handleSort} />
+      <SortableTh key="customerName" label="Pelanggan / Pasien" {sortKey} {sortDirection} onsort={handleSort} />
+      <SortableTh key="transactionType" label="Jenis" align="center" {sortKey} {sortDirection} onsort={handleSort} />
+      <SortableTh key="grandTotal" label="Total" align="right" dataType="currency" {sortKey} {sortDirection} onsort={handleSort} />
+      <SortableTh key="paymentStatus" label="Status" align="center" {sortKey} {sortDirection} onsort={handleSort} />
       <th class="py-3 px-4 text-center">Aksi</th>
     {/snippet}
 
     {#snippet rows()}
-      {#if filteredSales.length === 0}
-        <tr>
-          <td colspan="8" class="py-12 text-center text-xs text-slate-400">
-            <div class="flex flex-col items-center justify-center gap-2">
-              <ShoppingCart class="w-8 h-8 text-slate-300" />
-              <span>Tidak ada transaksi penjualan yang cocok dengan filter pencarian.</span>
-            </div>
-          </td>
-        </tr>
-      {:else}
-        {#each paginatedSales as trx}
+      {#each paginatedSales as trx}
         <tr class="hover:bg-blue-50/40 transition-colors">
           <!-- No Faktur -->
           <td class="py-3.5 px-4 max-w-[120px]">
@@ -470,7 +536,18 @@
           </td>
         </tr>
       {/each}
-    {/if}
+    {/snippet}
+
+    {#snippet footerSummary()}
+      <tr>
+        <td colspan="4" class="py-3 px-4 text-slate-600 uppercase text-[11px] tracking-wider text-right font-semibold">
+          Total Omzet Terfilter:
+        </td>
+        <td class="py-3 px-4 text-right font-black text-brand-blue font-mono text-sm">
+          {formatRupiah(totalFilteredNominal)}
+        </td>
+        <td colspan="2"></td>
+      </tr>
     {/snippet}
   </DataTable>
 </div>

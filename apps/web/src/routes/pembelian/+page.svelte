@@ -23,6 +23,8 @@
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
+  import SortableTh from "$lib/components/ui/SortableTh.svelte";
+  import { compareTableValues, type SortDirection, type SortState } from "$lib/components/ui/DataTable.types";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import SearchableSelect from "$lib/components/ui/SearchableSelect.svelte";
@@ -735,6 +737,270 @@
         s.items.some((it) => it.productName.toLowerCase().includes(q))
       );
     })
+  );
+
+  // Pagination & Sorting State
+  const PAGE_SIZE = 25;
+  let invoicePage = $state(1);
+  let spPage = $state(1);
+  let ksnPage = $state(1);
+  let settlementPage = $state(1);
+
+  // Tab 1 Sorting State: Faktur Pembelian
+  let invoiceSortKey = $state<string>("invoiceDate");
+  let invoiceSortDirection = $state<SortDirection>("desc");
+
+  function handleInvoiceSort(state: SortState) {
+    invoiceSortKey = state.key;
+    invoiceSortDirection = state.direction;
+    invoicePage = 1;
+  }
+
+  let sortedInvoices = $derived.by(() => {
+    if (!invoiceSortKey || !invoiceSortDirection) return filteredInvoices;
+    const copy = [...filteredInvoices];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (invoiceSortKey) {
+        case "invoiceNumber":
+          valA = a.invoiceNumber;
+          valB = b.invoiceNumber;
+          break;
+        case "supplierName":
+          valA = a.supplierName;
+          valB = b.supplierName;
+          break;
+        case "invoiceDate":
+          valA = a.invoiceDate;
+          valB = b.invoiceDate;
+          type = "date";
+          break;
+        case "dueDate":
+          valA = a.dueDate;
+          valB = b.dueDate;
+          type = "date";
+          break;
+        case "status":
+          valA = a.status;
+          valB = b.status;
+          break;
+        case "totalAmount":
+          valA = Number(a.totalAmount || 0);
+          valB = Number(b.totalAmount || 0);
+          type = "number";
+          break;
+        case "remainingDebt":
+          valA = Math.max(0, Number(a.totalAmount || 0) - Number(a.paidAmount || 0));
+          valB = Math.max(0, Number(b.totalAmount || 0) - Number(b.paidAmount || 0));
+          type = "number";
+          break;
+        default:
+          valA = (a as Record<string, any>)[invoiceSortKey];
+          valB = (b as Record<string, any>)[invoiceSortKey];
+      }
+      return compareTableValues(valA, valB, invoiceSortDirection, type);
+    });
+  });
+
+  let invoiceTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedInvoices.length / PAGE_SIZE))
+  );
+  let paginatedInvoices = $derived(
+    sortedInvoices.slice((invoicePage - 1) * PAGE_SIZE, invoicePage * PAGE_SIZE)
+  );
+
+  // Tab 2 Sorting State: Surat Pesanan (SP)
+  let spSortKey = $state<string>("orderDate");
+  let spSortDirection = $state<SortDirection>("desc");
+
+  function handleSpSort(state: SortState) {
+    spSortKey = state.key;
+    spSortDirection = state.direction;
+    spPage = 1;
+  }
+
+  let sortedPurchaseOrders = $derived.by(() => {
+    if (!spSortKey || !spSortDirection) return filteredPurchaseOrders;
+    const copy = [...filteredPurchaseOrders];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (spSortKey) {
+        case "orderNumber":
+          valA = a.orderNumber;
+          valB = b.orderNumber;
+          break;
+        case "orderType":
+          valA = a.orderType;
+          valB = b.orderType;
+          break;
+        case "supplierName":
+          valA = a.supplierName;
+          valB = b.supplierName;
+          break;
+        case "pharmacistName":
+          valA = a.pharmacistName;
+          valB = b.pharmacistName;
+          break;
+        case "totalItems":
+          valA = Number(a.totalItems || (a.items?.length ?? 0));
+          valB = Number(b.totalItems || (b.items?.length ?? 0));
+          type = "number";
+          break;
+        case "estimatedAmount":
+          valA = Number(a.estimatedAmount || 0);
+          valB = Number(b.estimatedAmount || 0);
+          type = "number";
+          break;
+        case "status":
+          valA = a.status;
+          valB = b.status;
+          break;
+        default:
+          valA = (a as Record<string, any>)[spSortKey];
+          valB = (b as Record<string, any>)[spSortKey];
+      }
+      return compareTableValues(valA, valB, spSortDirection, type);
+    });
+  });
+
+  let spTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedPurchaseOrders.length / PAGE_SIZE))
+  );
+  let paginatedPurchaseOrders = $derived(
+    sortedPurchaseOrders.slice((spPage - 1) * PAGE_SIZE, spPage * PAGE_SIZE)
+  );
+
+  // Tab 3 Sorting State: Titipan Konsinyasi
+  let ksnSortKey = $state<string>("date");
+  let ksnSortDirection = $state<SortDirection>("desc");
+
+  function handleKsnSort(state: SortState) {
+    ksnSortKey = state.key;
+    ksnSortDirection = state.direction;
+    ksnPage = 1;
+  }
+
+  let sortedConsignments = $derived.by(() => {
+    if (!ksnSortKey || !ksnSortDirection) return filteredConsignments;
+    const copy = [...filteredConsignments];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (ksnSortKey) {
+        case "receiptNumber":
+          valA = a.receiptNumber;
+          valB = b.receiptNumber;
+          break;
+        case "supplierName":
+          valA = a.supplierName;
+          valB = b.supplierName;
+          break;
+        case "productName":
+          valA = a.productName;
+          valB = b.productName;
+          break;
+        case "receivedQty":
+          valA = Number(a.receivedQty || 0);
+          valB = Number(b.receivedQty || 0);
+          type = "number";
+          break;
+        case "soldQty":
+          valA = Number(a.soldQty || 0);
+          valB = Number(b.soldQty || 0);
+          type = "number";
+          break;
+        case "remainingQty":
+          valA = Number(a.remainingQty || 0);
+          valB = Number(b.remainingQty || 0);
+          type = "number";
+          break;
+        case "unitPrice":
+          valA = Number(a.unitPrice || 0);
+          valB = Number(b.unitPrice || 0);
+          type = "number";
+          break;
+        case "unsettledAmount":
+          valA = Number(a.unsettledAmount || 0);
+          valB = Number(b.unsettledAmount || 0);
+          type = "number";
+          break;
+        case "status":
+          valA = a.status;
+          valB = b.status;
+          break;
+        default:
+          valA = (a as Record<string, any>)[ksnSortKey];
+          valB = (b as Record<string, any>)[ksnSortKey];
+      }
+      return compareTableValues(valA, valB, ksnSortDirection, type);
+    });
+  });
+
+  let ksnTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedConsignments.length / PAGE_SIZE))
+  );
+  let paginatedConsignments = $derived(
+    sortedConsignments.slice((ksnPage - 1) * PAGE_SIZE, ksnPage * PAGE_SIZE)
+  );
+
+  // Tab 4 Sorting State: Setoran & Retur Konsinyasi
+  let settlementSortKey = $state<string>("settlementDate");
+  let settlementSortDirection = $state<SortDirection>("desc");
+
+  function handleSettlementSort(state: SortState) {
+    settlementSortKey = state.key;
+    settlementSortDirection = state.direction;
+    settlementPage = 1;
+  }
+
+  let sortedSettlements = $derived.by(() => {
+    if (!settlementSortKey || !settlementSortDirection) return filteredSettlements;
+    const copy = [...filteredSettlements];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (settlementSortKey) {
+        case "settlementNumber":
+          valA = a.settlementNumber;
+          valB = b.settlementNumber;
+          break;
+        case "supplierName":
+          valA = a.supplierName;
+          valB = b.supplierName;
+          break;
+        case "settlementDate":
+          valA = a.settlementDate;
+          valB = b.settlementDate;
+          type = "date";
+          break;
+        case "totalPaidAmount":
+          valA = Number(a.totalPaidAmount || 0);
+          valB = Number(b.totalPaidAmount || 0);
+          type = "number";
+          break;
+        default:
+          valA = (a as Record<string, any>)[settlementSortKey];
+          valB = (b as Record<string, any>)[settlementSortKey];
+      }
+      return compareTableValues(valA, valB, settlementSortDirection, type);
+    });
+  });
+
+  let settlementTotalPages = $derived(
+    Math.max(1, Math.ceil(sortedSettlements.length / PAGE_SIZE))
+  );
+  let paginatedSettlements = $derived(
+    sortedSettlements.slice((settlementPage - 1) * PAGE_SIZE, settlementPage * PAGE_SIZE)
   );
 
   // Reactive Metrics
@@ -1503,15 +1769,42 @@
   {#if activeTab === "faktur"}
     <DataTable
       title="Daftar Faktur Pembelian Masuk"
+      subtitle="Faktur masuk dari PBF, jatuh tempo hutang, dan verifikasi penerimaan barang"
       searchPlaceholder="Cari nomor faktur atau nama distributor PBF..."
       bind:searchValue={searchQuery}
-      totalCount={filteredInvoices.length}
+      totalCount={sortedInvoices.length}
+      currentPage={invoicePage}
+      totalPages={invoiceTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (invoicePage = p)}
+      emptyText="Tidak ada faktur pembelian yang cocok dengan filter pencarian."
+      emptyIcon={ShoppingBag}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-blue-50 text-[#1d63d8] flex items-center justify-center font-bold">
+            <ShoppingBag class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Daftar Faktur Pembelian Masuk</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-[#1d63d8] border border-blue-200/60">
+                {sortedInvoices.length} Faktur
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Faktur masuk dari PBF, jatuh tempo hutang, dan verifikasi penerimaan barang</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet filters()}
         <div class="w-52 shrink-0">
           <Select
             value={invoiceStatusFilter}
-            onchange={(val) => (invoiceStatusFilter = val as typeof invoiceStatusFilter)}
+            onchange={(val) => {
+              invoiceStatusFilter = val as typeof invoiceStatusFilter;
+              invoicePage = 1;
+            }}
             options={[
               { value: "ALL", label: "Semua Status Tagihan" },
               { value: "DUE_SOON", label: "Segera Jatuh Tempo (H-7)", badge: "Penting" },
@@ -1525,18 +1818,18 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Faktur</th>
-        <th class="py-3 px-4">Distributor</th>
-        <th class="py-3 px-4">Tanggal</th>
-        <th class="py-3 px-4">Tempo</th>
-        <th class="py-3 px-4 text-center">Status</th>
-        <th class="py-3 px-4 text-right">Total</th>
-        <th class="py-3 px-4 text-right">Sisa</th>
+        <SortableTh key="invoiceNumber" label="Faktur" sortKey={invoiceSortKey} sortDirection={invoiceSortDirection} onsort={handleInvoiceSort} />
+        <SortableTh key="supplierName" label="Distributor" sortKey={invoiceSortKey} sortDirection={invoiceSortDirection} onsort={handleInvoiceSort} />
+        <SortableTh key="invoiceDate" label="Tanggal" dataType="date" sortKey={invoiceSortKey} sortDirection={invoiceSortDirection} onsort={handleInvoiceSort} />
+        <SortableTh key="dueDate" label="Tempo" dataType="date" sortKey={invoiceSortKey} sortDirection={invoiceSortDirection} onsort={handleInvoiceSort} />
+        <SortableTh key="status" label="Status" align="center" sortKey={invoiceSortKey} sortDirection={invoiceSortDirection} onsort={handleInvoiceSort} />
+        <SortableTh key="totalAmount" label="Total" dataType="currency" align="right" sortKey={invoiceSortKey} sortDirection={invoiceSortDirection} onsort={handleInvoiceSort} />
+        <SortableTh key="remainingDebt" label="Sisa" dataType="currency" align="right" sortKey={invoiceSortKey} sortDirection={invoiceSortDirection} onsort={handleInvoiceSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredInvoices.length === 0}
+        {#if paginatedInvoices.length === 0}
           <tr>
             <td colspan="8" class="py-12 text-center text-xs text-slate-400">
               <div class="flex flex-col items-center justify-center gap-2">
@@ -1546,7 +1839,7 @@
             </td>
           </tr>
         {:else}
-          {#each filteredInvoices as inv}
+          {#each paginatedInvoices as inv}
           {@const remainingDebt = Math.max(0, inv.totalAmount - inv.paidAmount)}
           {@const isPaid = inv.status === "PAID" || remainingDebt === 0}
           {@const dueInfo = getDueAlert(inv.dueDate, isPaid)}
@@ -1639,25 +1932,49 @@
   {:else if activeTab === "sp"}
     <DataTable
       title="Daftar Surat Pesanan (SP) Resmi Apotek"
+      subtitle="Dokumen legal pemesanan obat reguler, prekursor, dan psikotropika ke PBF"
       searchPlaceholder="Cari nomor SP, jenis SP, atau distributor PBF..."
       bind:searchValue={spSearchQuery}
-      totalCount={filteredPurchaseOrders.length}
+      totalCount={sortedPurchaseOrders.length}
+      currentPage={spPage}
+      totalPages={spTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (spPage = p)}
+      emptyText="Tidak ada Surat Pesanan (SP) yang ditemukan."
+      emptyIcon={FileText}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+            <FileText class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Daftar Surat Pesanan (SP) Resmi Apotek</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200/60">
+                {sortedPurchaseOrders.length} Dokumen SP
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Dokumen legal pemesanan obat reguler, prekursor, dan psikotropika ke PBF</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet header()}
-        <th class="py-3 px-4">Nomor</th>
-        <th class="py-3 px-4">Jenis</th>
-        <th class="py-3 px-4">Distributor</th>
-        <th class="py-3 px-4">Apoteker</th>
-        <th class="py-3 px-4 text-center">Item</th>
-        <th class="py-3 px-4 text-right">Nilai</th>
-        <th class="py-3 px-4 text-center">Status</th>
+        <SortableTh key="orderNumber" label="Nomor" sortKey={spSortKey} sortDirection={spSortDirection} onsort={handleSpSort} />
+        <SortableTh key="orderType" label="Jenis" sortKey={spSortKey} sortDirection={spSortDirection} onsort={handleSpSort} />
+        <SortableTh key="supplierName" label="Distributor" sortKey={spSortKey} sortDirection={spSortDirection} onsort={handleSpSort} />
+        <SortableTh key="pharmacistName" label="Apoteker" sortKey={spSortKey} sortDirection={spSortDirection} onsort={handleSpSort} />
+        <SortableTh key="totalItems" label="Item" align="center" dataType="number" sortKey={spSortKey} sortDirection={spSortDirection} onsort={handleSpSort} />
+        <SortableTh key="estimatedAmount" label="Nilai" align="right" dataType="currency" sortKey={spSortKey} sortDirection={spSortDirection} onsort={handleSpSort} />
+        <SortableTh key="status" label="Status" align="center" sortKey={spSortKey} sortDirection={spSortDirection} onsort={handleSpSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredPurchaseOrders.length === 0}
+        {#if paginatedPurchaseOrders.length === 0}
           <tr>
-            <td colspan="7" class="py-12 text-center text-xs text-slate-400">
+            <td colspan="8" class="py-12 text-center text-xs text-slate-400">
               <div class="flex flex-col items-center justify-center gap-2">
                 <FileText class="w-8 h-8 text-slate-300" />
                 <span>Tidak ada Surat Pesanan (SP) yang ditemukan.</span>
@@ -1665,7 +1982,7 @@
             </td>
           </tr>
         {:else}
-          {#each filteredPurchaseOrders as sp}
+          {#each paginatedPurchaseOrders as sp}
           <tr class="hover:bg-blue-50/40 transition-colors">
             <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
               {sp.orderNumber}
@@ -1769,10 +2086,34 @@
     {#if ksnSubView === "titipan"}
     <DataTable
       title="Manajemen Konsinyasi (Titipan)"
+      subtitle="Pencatatan barang titipan vendor, kalkulasi penjualan POS, dan sisa stok fisik"
       searchPlaceholder="Cari nomor tanda terima, batch, vendor konsinyor, atau produk..."
       bind:searchValue={ksnSearchQuery}
-      totalCount={filteredConsignments.length}
+      totalCount={sortedConsignments.length}
+      currentPage={ksnPage}
+      totalPages={ksnTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (ksnPage = p)}
+      emptyText="Belum ada titipan barang konsinyasi aktif."
+      emptyIcon={Truck}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+            <Truck class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Manajemen Konsinyasi (Titipan)</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200/60">
+                {sortedConsignments.length} Batch Titipan
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Pencatatan barang titipan vendor, kalkulasi penjualan POS, dan sisa stok fisik</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet actions()}
         <button
           type="button"
@@ -1785,20 +2126,20 @@
       {/snippet}
 
       {#snippet header()}
-        <th class="py-3 px-4">Nomor & Batch</th>
-        <th class="py-3 px-4">Vendor</th>
-        <th class="py-3 px-4">Produk</th>
-        <th class="py-3 px-4 text-center">Titip</th>
-        <th class="py-3 px-4 text-center">Laku</th>
-        <th class="py-3 px-4 text-center">Sisa</th>
-        <th class="py-3 px-4 text-right">Setor</th>
-        <th class="py-3 px-4 text-right">Belum</th>
-        <th class="py-3 px-4 text-center">Status</th>
+        <SortableTh key="receiptNumber" label="Nomor & Batch" sortKey={ksnSortKey} sortDirection={ksnSortDirection} onsort={handleKsnSort} />
+        <SortableTh key="supplierName" label="Vendor" sortKey={ksnSortKey} sortDirection={ksnSortDirection} onsort={handleKsnSort} />
+        <SortableTh key="productName" label="Produk" sortKey={ksnSortKey} sortDirection={ksnSortDirection} onsort={handleKsnSort} />
+        <SortableTh key="receivedQty" label="Titip" align="center" dataType="number" sortKey={ksnSortKey} sortDirection={ksnSortDirection} onsort={handleKsnSort} />
+        <SortableTh key="soldQty" label="Laku" align="center" dataType="number" sortKey={ksnSortKey} sortDirection={ksnSortDirection} onsort={handleKsnSort} />
+        <SortableTh key="remainingQty" label="Sisa" align="center" dataType="number" sortKey={ksnSortKey} sortDirection={ksnSortDirection} onsort={handleKsnSort} />
+        <SortableTh key="unitPrice" label="Setor" align="right" dataType="currency" sortKey={ksnSortKey} sortDirection={ksnSortDirection} onsort={handleKsnSort} />
+        <SortableTh key="unsettledAmount" label="Belum" align="right" dataType="currency" sortKey={ksnSortKey} sortDirection={ksnSortDirection} onsort={handleKsnSort} />
+        <SortableTh key="status" label="Status" align="center" sortKey={ksnSortKey} sortDirection={ksnSortDirection} onsort={handleKsnSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredConsignments.length === 0}
+        {#if paginatedConsignments.length === 0}
           <tr>
             <td colspan="10" class="py-12 text-center text-xs text-slate-400">
               <div class="flex flex-col items-center justify-center gap-2">
@@ -1808,7 +2149,7 @@
             </td>
           </tr>
         {:else}
-          {#each filteredConsignments as ksn}
+          {#each paginatedConsignments as ksn}
           {@const canSettle = (ksn.unsettledSoldQty ?? 0) > 0 || ksn.remainingQty > 0}
           {@const canDelete = ksn.soldQty === 0 && (ksn.settledQty ?? 0) === 0 && (ksn.returnedQty ?? 0) === 0}
           <tr class="hover:bg-blue-50/40 transition-colors">
@@ -1899,22 +2240,46 @@
     {:else}
     <DataTable
       title="Riwayat Setoran Bagi Hasil & Retur Konsinyasi"
+      subtitle="Bukti kas keluar pembayaran bagi hasil titipan dan pengembalian barang sisa"
       searchPlaceholder="Cari nomor bukti setor, vendor konsinyor, atau produk..."
       bind:searchValue={ksnSearchQuery}
-      totalCount={filteredSettlements.length}
+      totalCount={sortedSettlements.length}
+      currentPage={settlementPage}
+      totalPages={settlementTotalPages}
+      pageSize={PAGE_SIZE}
+      onPageChange={(p) => (settlementPage = p)}
+      emptyText="Belum ada riwayat setoran bagi hasil maupun retur konsinyasi."
+      emptyIcon={CheckCircle2}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+            <CheckCircle2 class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Riwayat Setoran Bagi Hasil & Retur Konsinyasi</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                {sortedSettlements.length} Bukti Setoran
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Bukti kas keluar pembayaran bagi hasil titipan dan pengembalian barang sisa</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet header()}
-        <th class="py-3 px-4">No. Setoran</th>
-        <th class="py-3 px-4">Vendor Konsinyor</th>
+        <SortableTh key="settlementNumber" label="No. Setoran" sortKey={settlementSortKey} sortDirection={settlementSortDirection} onsort={handleSettlementSort} />
+        <SortableTh key="supplierName" label="Vendor Konsinyor" sortKey={settlementSortKey} sortDirection={settlementSortDirection} onsort={handleSettlementSort} />
         <th class="py-3 px-4">Rincian Item</th>
         <th class="py-3 px-4 text-center">Qty Laku</th>
         <th class="py-3 px-4 text-center">Qty Retur</th>
         <th class="py-3 px-4">Metode / Akun</th>
-        <th class="py-3 px-4 text-right">Total Disetor</th>
+        <SortableTh key="totalPaidAmount" label="Total Disetor" dataType="currency" align="right" sortKey={settlementSortKey} sortDirection={settlementSortDirection} onsort={handleSettlementSort} />
       {/snippet}
 
       {#snippet rows()}
-        {#if filteredSettlements.length === 0}
+        {#if paginatedSettlements.length === 0}
           <tr>
             <td colspan="7" class="py-12 text-center text-xs text-slate-400">
               <div class="flex flex-col items-center justify-center gap-2">
@@ -1924,7 +2289,7 @@
             </td>
           </tr>
         {:else}
-          {#each filteredSettlements as stl}
+          {#each paginatedSettlements as stl}
             {@const totalSold = stl.items.reduce((a, b) => a + b.soldQty, 0)}
             {@const totalRet = stl.items.reduce((a, b) => a + b.returnedQty, 0)}
             <tr class="hover:bg-blue-50/40 transition-colors">

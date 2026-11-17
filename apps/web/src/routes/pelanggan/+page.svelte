@@ -18,6 +18,8 @@
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
+  import SortableTh from "$lib/components/ui/SortableTh.svelte";
+  import { compareTableValues, type SortDirection, type SortState } from "$lib/components/ui/DataTable.types";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Select from "$lib/components/ui/Select.svelte";
   import { portal } from "$lib/actions/portal";
@@ -237,11 +239,63 @@
     )
   );
 
+  // Sorting state untuk Direktori Pelanggan
+  let custSortKey = $state<string>("name");
+  let custSortDirection = $state<SortDirection>("asc");
+
+  function handleCustSort(state: SortState) {
+    custSortKey = state.key;
+    custSortDirection = state.direction;
+    customerPage = 1;
+  }
+
+  let sortedCustomers = $derived.by(() => {
+    if (!custSortKey || !custSortDirection) return filteredCustomers;
+    const copy = [...filteredCustomers];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" = "string";
+
+      switch (custSortKey) {
+        case "code":
+          valA = a.code;
+          valB = b.code;
+          break;
+        case "name":
+          valA = a.name;
+          valB = b.name;
+          break;
+        case "phone":
+          valA = a.phone;
+          valB = b.phone;
+          break;
+        case "address":
+          valA = a.address;
+          valB = b.address;
+          break;
+        case "customerType":
+          valA = a.customerType || a.priceTier;
+          valB = b.customerType || b.priceTier;
+          break;
+        case "pointBalance":
+          valA = Number(a.pointBalance || 0);
+          valB = Number(b.pointBalance || 0);
+          type = "number";
+          break;
+        default:
+          valA = a[custSortKey];
+          valB = b[custSortKey];
+      }
+      return compareTableValues(valA, valB, custSortDirection, type);
+    });
+  });
+
   let customerTotalPages = $derived(
-    Math.max(1, Math.ceil(filteredCustomers.length / PAGE_SIZE))
+    Math.max(1, Math.ceil(sortedCustomers.length / PAGE_SIZE))
   );
   let paginatedCustomers = $derived(
-    filteredCustomers.slice((customerPage - 1) * PAGE_SIZE, customerPage * PAGE_SIZE)
+    sortedCustomers.slice((customerPage - 1) * PAGE_SIZE, customerPage * PAGE_SIZE)
   );
 
   let debtCustomers = $state<
@@ -257,6 +311,16 @@
     }>
   >([]);
 
+  // Sorting state untuk Buku Piutang & Bon
+  let debtSortKey = $state<string>("totalDebt");
+  let debtSortDirection = $state<SortDirection>("desc");
+
+  function handleDebtSort(state: SortState) {
+    debtSortKey = state.key;
+    debtSortDirection = state.direction;
+    debtPage = 1;
+  }
+
   let filteredDebtCustomers = $derived(
     debtCustomers.filter(
       (d) =>
@@ -266,11 +330,54 @@
     )
   );
 
+  let sortedDebtCustomers = $derived.by(() => {
+    if (!debtSortKey || !debtSortDirection) return filteredDebtCustomers;
+    const copy = [...filteredDebtCustomers];
+    return copy.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      let type: "string" | "number" | "date" = "string";
+
+      switch (debtSortKey) {
+        case "invoiceRef":
+          valA = a.invoiceRef;
+          valB = b.invoiceRef;
+          break;
+        case "customerName":
+          valA = a.customerName;
+          valB = b.customerName;
+          break;
+        case "phone":
+          valA = a.phone;
+          valB = b.phone;
+          break;
+        case "dueDate":
+          valA = a.dueDate;
+          valB = b.dueDate;
+          type = "date";
+          break;
+        case "totalDebt":
+          valA = Number(a.totalDebt || 0);
+          valB = Number(b.totalDebt || 0);
+          type = "number";
+          break;
+        case "status":
+          valA = a.status;
+          valB = b.status;
+          break;
+        default:
+          valA = (a as Record<string, any>)[debtSortKey];
+          valB = (b as Record<string, any>)[debtSortKey];
+      }
+      return compareTableValues(valA, valB, debtSortDirection, type);
+    });
+  });
+
   let debtTotalPages = $derived(
-    Math.max(1, Math.ceil(filteredDebtCustomers.length / PAGE_SIZE))
+    Math.max(1, Math.ceil(sortedDebtCustomers.length / PAGE_SIZE))
   );
   let paginatedDebtCustomers = $derived(
-    filteredDebtCustomers.slice((debtPage - 1) * PAGE_SIZE, debtPage * PAGE_SIZE)
+    sortedDebtCustomers.slice((debtPage - 1) * PAGE_SIZE, debtPage * PAGE_SIZE)
   );
 
   let activeMembersCount = $derived(
@@ -380,6 +487,7 @@
   {#if activeTab === "semua"}
     <DataTable
       title="Daftar Pelanggan & Pasien"
+      subtitle="Database pelanggan umum, resep, grosir, dan loyalitas member"
       searchPlaceholder="Cari nama pelanggan, kode member, atau nomor telepon..."
       bind:searchValue={searchQuery}
       totalCount={filteredCustomers.length}
@@ -387,14 +495,33 @@
       totalPages={customerTotalPages}
       pageSize={PAGE_SIZE}
       onPageChange={(p) => (customerPage = p)}
+      emptyText="Tidak ada data pelanggan yang cocok dengan kriteria pencarian."
+      emptyIcon={Users}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-blue-50 text-[#1d63d8] flex items-center justify-center font-bold">
+            <Users class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Daftar Pelanggan & Pasien</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-[#1d63d8] border border-blue-200/60">
+                {filteredCustomers.length} Pelanggan
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Database pelanggan umum, resep, grosir, dan loyalitas member</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet header()}
-        <th class="py-3 px-4">Kode</th>
-        <th class="py-3 px-4">Pelanggan</th>
-        <th class="py-3 px-4">Kontak</th>
-        <th class="py-3 px-4">Alamat</th>
-        <th class="py-3 px-4">Tipe</th>
-        <th class="py-3 px-4 text-center">Loyalitas</th>
+        <SortableTh key="code" label="Kode" sortKey={custSortKey} sortDirection={custSortDirection} onsort={handleCustSort} />
+        <SortableTh key="name" label="Pelanggan" sortKey={custSortKey} sortDirection={custSortDirection} onsort={handleCustSort} />
+        <SortableTh key="phone" label="Kontak" sortKey={custSortKey} sortDirection={custSortDirection} onsort={handleCustSort} />
+        <SortableTh key="address" label="Alamat" sortKey={custSortKey} sortDirection={custSortDirection} onsort={handleCustSort} />
+        <SortableTh key="customerType" label="Tipe" sortKey={custSortKey} sortDirection={custSortDirection} onsort={handleCustSort} />
+        <SortableTh key="pointBalance" label="Loyalitas" align="center" dataType="number" sortKey={custSortKey} sortDirection={custSortDirection} onsort={handleCustSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 
@@ -466,6 +593,7 @@
   {:else if activeTab === "piutang"}
     <DataTable
       title="Buku Piutang & Bon Pelanggan"
+      subtitle="Daftar faktur belum lunas dengan status jatuh tempo dan pelunasan kasir"
       searchPlaceholder="Cari nama debitur atau nomor bon..."
       bind:searchValue={searchQuery}
       totalCount={filteredDebtCustomers.length}
@@ -473,14 +601,33 @@
       totalPages={debtTotalPages}
       pageSize={PAGE_SIZE}
       onPageChange={(p) => (debtPage = p)}
+      emptyText="Tidak ada catatan piutang atau bon berjalan."
+      emptyIcon={CreditCard}
     >
+      {#snippet titleContent()}
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+            <CreditCard class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>Buku Piutang & Bon Pelanggan</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200/60">
+                {filteredDebtCustomers.length} Faktur Tertunda
+              </span>
+            </h3>
+            <p class="text-[11px] text-slate-500 font-medium">Daftar faktur belum lunas dengan status jatuh tempo dan pelunasan kasir</p>
+          </div>
+        </div>
+      {/snippet}
+
       {#snippet header()}
-        <th class="py-3 px-4">Bon</th>
-        <th class="py-3 px-4">Pelanggan</th>
-        <th class="py-3 px-4">Kontak</th>
-        <th class="py-3 px-4">Tempo</th>
-        <th class="py-3 px-4 text-right">Piutang</th>
-        <th class="py-3 px-4 text-center">Status</th>
+        <SortableTh key="invoiceRef" label="Bon" sortKey={debtSortKey} sortDirection={debtSortDirection} onsort={handleDebtSort} />
+        <SortableTh key="customerName" label="Pelanggan" sortKey={debtSortKey} sortDirection={debtSortDirection} onsort={handleDebtSort} />
+        <SortableTh key="phone" label="Kontak" sortKey={debtSortKey} sortDirection={debtSortDirection} onsort={handleDebtSort} />
+        <SortableTh key="dueDate" label="Tempo" dataType="date" sortKey={debtSortKey} sortDirection={debtSortDirection} onsort={handleDebtSort} />
+        <SortableTh key="totalDebt" label="Piutang" dataType="currency" align="right" sortKey={debtSortKey} sortDirection={debtSortDirection} onsort={handleDebtSort} />
+        <SortableTh key="status" label="Status" align="center" sortKey={debtSortKey} sortDirection={debtSortDirection} onsort={handleDebtSort} />
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
 

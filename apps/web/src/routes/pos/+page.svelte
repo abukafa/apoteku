@@ -1595,7 +1595,7 @@
 <!-- 2. MAIN POS SCREEN (HANYA AKTIF DI LAYAR >= LG / >= 1024px) -->
 <div class="pos-main-screen print:!hidden hidden lg:flex h-screen w-screen p-3 sm:p-4 bg-[#f0f4f9] flex-col overflow-hidden space-y-3">
   <!-- POS DEDICATED FULLSCREEN TOPBAR -->
-  <header class="bg-white rounded-2xl px-4 py-2.5 border border-slate-100 shadow-sm flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
+  <header class="bg-white rounded-2xl px-4 py-2 border border-slate-100 shadow-sm flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
     <div class="flex items-center gap-3">
       <!-- Back to Admin / Penjualan Menu -->
       <a
@@ -1604,8 +1604,7 @@
         title="Keluar dari mode kasir layar penuh"
       >
         <ArrowLeft class="w-4 h-4 text-brand-blue" />
-        <span class="hidden sm:inline">Kembali ke Penjualan</span>
-        <span class="sm:hidden">Keluar</span>
+        <span class="hidden sm:inline">Kembali</span>
       </a>
 
       <div class="h-5 w-px bg-slate-200"></div>
@@ -1618,12 +1617,11 @@
           <h1 class="text-xs sm:text-sm font-bold text-slate-900 leading-tight flex items-center gap-2">
             <span>Terminal Kasir POS Farmasi</span>
           </h1>
-          <div class="text-[10px] text-slate-500 font-medium flex items-center gap-1.5 flex-wrap">
-            <span class="text-slate-400">Pintasan:</span>
+          <div class="text-[8px] text-slate-500 font-medium flex items-center gap-1.5 flex-wrap mt-1">
             <button
               type="button"
               onclick={() => focusSearchInput()}
-              class="inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 pl-0.5 pr-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
               title="Fokus kolom pencarian obat (Tekan F2)"
             >
               <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-slate-200">F2</kbd>
@@ -1632,7 +1630,7 @@
             <button
               type="button"
               onclick={openCheckout}
-              class="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded text-[10px] font-medium border border-emerald-200 transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 pl-0.5 pr-1.5 py-0.5 rounded text-[10px] font-medium border border-emerald-200 transition-colors cursor-pointer"
               title="Buka proses pembayaran (Tekan F8)"
             >
               <kbd class="font-mono font-bold bg-emerald-600 text-white px-1 py-0.2 rounded">F8</kbd>
@@ -1641,7 +1639,7 @@
             <button
               type="button"
               onclick={handleCancelCart}
-              class="hidden sm:inline-flex items-center gap-1 bg-slate-100 hover:bg-red-50 text-slate-700 hover:text-red-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
+              class="hidden sm:inline-flex items-center gap-1 bg-slate-100 hover:bg-red-50 text-slate-700 hover:text-red-700 pl-0.5 pr-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
               title="Batal / kosongkan keranjang (Tekan F4)"
             >
               <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-slate-200">F4</kbd>
@@ -1650,7 +1648,7 @@
             <button
               type="button"
               onclick={() => document.getElementById("pos-customer-select")?.click()}
-              class="hidden md:inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
+              class="hidden md:inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 pl-0.5 pr-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
               title="Pilih pelanggan (Tekan F7)"
             >
               <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-slate-200">F7</kbd>
@@ -1659,7 +1657,7 @@
             <button
               type="button"
               onclick={openShiftModal}
-              class="hidden lg:inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
+              class="hidden lg:inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 pl-0.5 pr-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
               title="Buka/tutup shift kasir (Tekan F9)"
             >
               <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-slate-200">F9</kbd>
@@ -1668,7 +1666,7 @@
             <button
               type="button"
               onclick={lockTerminal}
-              class="hidden xl:inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
+              class="hidden xl:inline-flex items-center gap-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 pl-0.5 pr-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 transition-colors cursor-pointer"
               title="Kunci layar terminal kasir (Tekan F10)"
             >
               <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-slate-200">F10</kbd>
@@ -1677,7 +1675,7 @@
             <button
               type="button"
               onclick={() => (showShortcutModal = true)}
-              class="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-[#1d63d8] px-1.5 py-0.5 rounded text-[10px] font-semibold border border-blue-200 transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-[#1d63d8] pl-0.5 pr-1.5 py-0.5 rounded text-[10px] font-semibold border border-blue-200 transition-colors cursor-pointer"
               title="Lihat semua panduan pintasan keyboard (Tekan F1)"
             >
               <kbd class="font-mono font-bold bg-white px-1 py-0.2 rounded border border-blue-200">F1</kbd>

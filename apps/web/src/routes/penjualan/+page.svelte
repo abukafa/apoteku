@@ -21,8 +21,11 @@
     CreditCard,
     QrCode,
     Banknote,
-    Download
+    Download,
+    Ban,
+    RotateCcw
   } from "lucide-svelte";
+  import { goto } from "$app/navigation";
   import PageHeader from "$lib/components/ui/PageHeader.svelte";
   import MetricCard from "$lib/components/ui/MetricCard.svelte";
   import DataTable from "$lib/components/ui/DataTable.svelte";
@@ -39,8 +42,14 @@
   import { onMount, onDestroy } from "svelte";
   import { api } from "$lib/services/api";
   import { alertStore } from "$lib/stores/alertStore.svelte";
+  import { authStore } from "$lib/stores/authStore.svelte";
   import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { formatRupiah } from "@apoteku/core";
+
+  // Master Data & Branch Filter
+  const canSelectBranch = $derived(authStore.canSelectBranch);
+  let branches = $state<any[]>([]);
+  let selectedBranchId = $state(authStore.isAllBranches ? "ALL" : (authStore.user?.branchId || "1"));
 
   // Reactive state
   let sales = $state<any[]>([]);
@@ -63,12 +72,13 @@
   let currentPage = $state(1);
   let pageSize = $state(15);
 
-  onMount(async () => {
+  async function loadSalesData(branchId?: string) {
     isLoading = true;
     try {
+      const targetBranch = branchId ?? selectedBranchId ?? (authStore.isAllBranches ? "ALL" : authStore.user?.branchId);
       const [res, cfRes] = await Promise.all([
-        api.erp.getSales(250),
-        api.finance.getCashflow().catch(() => null)
+        api.erp.getSales(250, targetBranch),
+        api.finance.getCashflow(targetBranch).catch(() => null)
       ]);
       if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
         sales = res.data;
@@ -107,11 +117,48 @@
         summary.totalSalesMonth = totalRev;
         summary.averageBasketSize = sales.length > 0 ? Math.round(totalRev / sales.length) : 0;
         summary.cashInDrawer = realKasLaci;
+      } else {
+        sales = [];
+        summary.totalSalesToday = 0;
+        summary.transactionsToday = 0;
+        summary.totalPrescriptions = 0;
+        summary.unpaidReceivables = 0;
+        summary.totalSalesMonth = 0;
+        summary.averageBasketSize = 0;
+        summary.cashInDrawer =
+          cfRes?.success && cfRes.data?.kasLaci !== undefined
+            ? Number(cfRes.data.kasLaci)
+            : 0;
       }
     } catch (e) {
       console.warn("[Penjualan] Gagal memuat data penjualan dari API:", e);
+      sales = [];
     } finally {
       isLoading = false;
+    }
+  }
+
+  onMount(async () => {
+    try {
+      const branchRes = await api.erp.getBranches().catch(() => null);
+      const bList = branchRes?.data || (Array.isArray(branchRes) ? branchRes : []);
+      if (bList.length > 0) {
+        branches = bList;
+        if (authStore.isAllBranches) {
+          selectedBranchId = "ALL";
+        } else if (!selectedBranchId || selectedBranchId === "ALL") {
+          selectedBranchId = authStore.user?.branchId || bList[0].id;
+        }
+
+        const exists = selectedBranchId === "ALL" || bList.some((b: any) => b.id === selectedBranchId);
+        if (!exists) {
+          selectedBranchId = authStore.isAllBranches ? "ALL" : bList[0].id;
+        }
+      }
+      await loadSalesData(selectedBranchId);
+    } catch (e) {
+      console.error("[Penjualan] Error onMount:", e);
+      await loadSalesData(selectedBranchId);
     }
   });
 
@@ -122,6 +169,10 @@
   // Filtered sales derived
   let filteredSales = $derived(
     sales.filter((item) => {
+      // Branch filter check
+      if (selectedBranchId !== "ALL" && item.branchId && item.branchId !== selectedBranchId) {
+        return false;
+      }
       // Tab filter
       if (activeTab !== "SEMUA" && item.transactionType !== activeTab) {
         return false;
@@ -137,7 +188,8 @@
         const matchesCustomer = (item.customerName || "").toLowerCase().includes(query);
         const matchesPatient = item.patientName?.toLowerCase().includes(query) ?? false;
         const matchesCashier = (item.cashierName || "").toLowerCase().includes(query);
-        return matchesInvoice || matchesCustomer || matchesPatient || matchesCashier;
+        const matchesBranch = (item.branchName || "").toLowerCase().includes(query);
+        return matchesInvoice || matchesCustomer || matchesPatient || matchesCashier || matchesBranch;
       }
       return true;
     })
@@ -232,6 +284,61 @@
       activeReprintReceipt = null;
     });
   }
+
+  // Hak Akses Fitur Khusus Penjualan
+  const canVoidSale = $derived(authStore.can("sales:void"));
+  const canRefund = $derived(authStore.can("sales:refund") || authStore.can("returns:customer:process"));
+
+  // State Modal Void Transaksi
+  let isVoidModalOpen = $state(false);
+  let transactionToVoid = $state<any>(null);
+  let voidReason = $state("");
+  let isSubmittingVoid = $state(false);
+
+  function openVoidModal(trx: any) {
+    transactionToVoid = trx;
+    voidReason = "";
+    isVoidModalOpen = true;
+  }
+
+  async function handleConfirmVoid() {
+    if (!transactionToVoid) return;
+    if (!voidReason.trim()) {
+      alertStore.toast("Alasan pembatalan (void) wajib diisi", "danger");
+      return;
+    }
+
+    isSubmittingVoid = true;
+    try {
+      const res = await api.erp.voidSale(transactionToVoid.id, voidReason);
+      if (res?.success) {
+        alertStore.toast(res.message || "Nota penjualan berhasil dibatalkan (VOID)", "success");
+        isVoidModalOpen = false;
+        if (selectedTransaction?.id === transactionToVoid.id) {
+          selectedTransaction = {
+            ...selectedTransaction,
+            status: "VOID",
+            paymentStatus: "VOID",
+            voidReason,
+            voidedAt: new Date().toISOString()
+          };
+        }
+        await loadSalesData(selectedBranchId);
+      } else {
+        alertStore.toast(res?.error || "Gagal membatalkan nota", "danger");
+      }
+    } catch (e: any) {
+      alertStore.toast(e.message || "Terjadi kesalahan sistem", "danger");
+    } finally {
+      isSubmittingVoid = false;
+    }
+  }
+
+  function handleGoToReturn(trx: any) {
+    if (typeof window !== "undefined") {
+      goto(`/retur?invoice=${encodeURIComponent(trx.invoiceNo || trx.invoiceNumber || "")}`);
+    }
+  }
 </script>
 
 <svelte:head>
@@ -247,6 +354,29 @@
     breadcrumbs={[{ label: "Penjualan" }]}
   >
     {#snippet actions()}
+      <!-- Branch selector (for Multi-branch User) or locked badge (for Single Branch Staff) -->
+      {#if authStore.canSelectBranch}
+        <div class="w-56">
+          <Select
+            value={selectedBranchId}
+            onchange={(val) => {
+              selectedBranchId = val;
+              currentPage = 1;
+              loadSalesData(val);
+            }}
+            options={[
+              { value: "ALL", label: "Semua Cabang Apotek" },
+              ...branches.map((b) => ({ value: b.id, label: b.name }))
+            ]}
+          />
+        </div>
+      {:else}
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs" title="Cabang Penugasan">
+          <Store class="w-3.5 h-3.5 text-brand-blue" />
+          <span>{authStore.user?.branchName || branches.find((b) => b.id === selectedBranchId)?.name || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat")}</span>
+        </div>
+      {/if}
+
       <button
         type="button"
         onclick={() => alertStore.toast("Mengunduh rekapan data penjualan format CSV / Excel...", "info", "Ekspor Data")}
@@ -472,9 +602,15 @@
       {#each paginatedSales as trx}
         <tr class="hover:bg-blue-50/40 transition-colors">
           <!-- No Faktur -->
-          <td class="py-3.5 px-4 max-w-[120px]">
+          <td class="py-3.5 px-4 max-w-[140px]">
             <div class="font-mono font-bold text-slate-900 truncate">{trx.invoiceNo}</div>
             <div class="text-[11px] text-slate-400 font-mono">{trx.itemsCount} Item</div>
+            {#if (selectedBranchId === "ALL" || canSelectBranch) && trx.branchName}
+              <div class="text-[10px] text-brand-blue font-semibold truncate flex items-center gap-1 mt-0.5" title={trx.branchName}>
+                <Store class="w-3 h-3 flex-shrink-0" />
+                <span>{trx.branchName}</span>
+              </div>
+            {/if}
           </td>
 
           <!-- Waktu & Sif -->
@@ -526,7 +662,9 @@
 
           <!-- Status Bayar -->
           <td class="py-3.5 px-4 text-center">
-            {#if trx.paymentStatus === "PAID"}
+            {#if trx.status === "VOID"}
+              <Badge type="DANGER" label="DIBATALKAN (VOID)" />
+            {:else if trx.paymentStatus === "PAID"}
               <Badge type="SUCCESS" label="LUNAS" />
             {:else if trx.paymentStatus === "PARTIAL"}
               <Badge type="WARNING" label="SEBAGIAN" />
@@ -549,11 +687,32 @@
               <button
                 type="button"
                 onclick={() => handleReprintThermal(trx)}
-                class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-emerald-600 transition-colors"
-                title="Cetak Ulang Struk Thermal ESC/POS"
+                disabled={trx.status === "VOID"}
+                class="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-emerald-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title={trx.status === "VOID" ? "Struk dibatalkan" : "Cetak Ulang Struk Thermal ESC/POS"}
               >
                 <Printer class="w-4 h-4" />
               </button>
+              {#if canRefund && trx.status !== "VOID"}
+                <button
+                  type="button"
+                  onclick={() => handleGoToReturn(trx)}
+                  class="p-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors"
+                  title="Ajukan Retur / Refund Pembeli"
+                >
+                  <RotateCcw class="w-4 h-4" />
+                </button>
+              {/if}
+              {#if canVoidSale && trx.status !== "VOID"}
+                <button
+                  type="button"
+                  onclick={() => openVoidModal(trx)}
+                  class="p-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 transition-colors"
+                  title="Batalkan Nota (Void Transaksi)"
+                >
+                  <Ban class="w-4 h-4" />
+                </button>
+              {/if}
             </div>
           </td>
         </tr>
@@ -591,7 +750,14 @@
         <div class="flex items-center gap-2 text-slate-900 font-bold">
           <FileText class="w-5 h-5 text-brand-blue" />
           <div>
-            <div>Rincian Nota Penjualan</div>
+            <div class="flex items-center gap-2">
+              <span>Rincian Nota Penjualan</span>
+              {#if selectedTransaction.branchName}
+                <span class="px-2 py-0.5 rounded-full text-[10px] bg-blue-50 text-brand-blue border border-blue-200 font-semibold">
+                  {selectedTransaction.branchName}
+                </span>
+              {/if}
+            </div>
             <div class="font-mono text-xs text-brand-blue-700">{selectedTransaction.invoiceNo}</div>
           </div>
         </div>
@@ -604,8 +770,25 @@
         </button>
       </div>
 
+      {#if selectedTransaction.status === "VOID"}
+        <div class="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-900 flex items-start gap-2">
+          <Ban class="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+          <div class="leading-relaxed">
+            <div class="font-bold text-red-800">TRANSAKSI INI TELAH DIBATALKAN (VOID)</div>
+            <div class="text-[11px] text-red-700 mt-0.5">
+              Alasan: <strong>{selectedTransaction.voidReason || "Pembatalan transaksi kasir"}</strong><br />
+              Waktu Pembatalan: {selectedTransaction.voidedAt ? new Date(selectedTransaction.voidedAt).toLocaleString("id-ID") : "-"}
+            </div>
+          </div>
+        </div>
+      {/if}
+
       <!-- Detail Info Bar -->
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs">
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs">
+        <div>
+          <span class="text-slate-400 block text-[10px]">Cabang</span>
+          <span class="font-semibold text-slate-800 truncate block" title={selectedTransaction.branchName}>{selectedTransaction.branchName || "Pusat"}</span>
+        </div>
         <div>
           <span class="text-slate-400 block text-[10px]">Waktu Transaksi</span>
           <span class="font-semibold text-slate-800">{selectedTransaction.createdAt}</span>
@@ -711,22 +894,127 @@
       </div>
 
       <!-- Footer Buttons -->
-      <div class="border-t border-slate-100 pt-3 flex items-center justify-between">
+      <div class="border-t border-slate-100 pt-3 flex flex-wrap items-center justify-between gap-2">
         <button
           type="button"
           onclick={() => handleReprintThermal(selectedTransaction)}
-          class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors"
+          disabled={selectedTransaction.status === "VOID"}
+          class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Printer class="w-4 h-4 text-emerald-600" />
-          <span>Cetak Ulang Struk Kasir</span>
+          <span>{selectedTransaction.status === "VOID" ? "Struk Telah Dibatalkan" : "Cetak Ulang Struk Kasir"}</span>
         </button>
 
+        <div class="flex items-center gap-2">
+          {#if canRefund && selectedTransaction.status !== "VOID"}
+            <button
+              type="button"
+              onclick={() => {
+                isDetailModalOpen = false;
+                handleGoToReturn(selectedTransaction);
+              }}
+              class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold transition-colors"
+            >
+              <RotateCcw class="w-4 h-4 text-amber-600" />
+              <span>Refund / Retur</span>
+            </button>
+          {/if}
+
+          {#if canVoidSale && selectedTransaction.status !== "VOID"}
+            <button
+              type="button"
+              onclick={() => {
+                isDetailModalOpen = false;
+                openVoidModal(selectedTransaction);
+              }}
+              class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold transition-colors"
+            >
+              <Ban class="w-4 h-4 text-red-600" />
+              <span>Batalkan Nota (Void)</span>
+            </button>
+          {/if}
+
+          <button
+            type="button"
+            onclick={() => (isDetailModalOpen = false)}
+            class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
+          >
+            Tutup
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL: VOID TRANSAKSI PENJUALAN KASIR -->
+{#if isVoidModalOpen && transactionToVoid}
+  <div
+    use:portal
+    data-modal-overlay
+    class="modal-overlay fixed inset-0 top-0 left-0 right-0 bottom-0 !m-0 !mt-0 !p-4 bg-[#0a192f]/50 backdrop-blur-md z-[110] flex items-center justify-center overflow-y-auto w-screen h-screen"
+    onclick={(e) => {
+      if (e.target === e.currentTarget && !isSubmittingVoid) isVoidModalOpen = false;
+    }}
+    role="presentation"
+  >
+    <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-red-200 overflow-hidden animate-in fade-in zoom-in duration-150">
+      <div class="p-4 bg-red-50 border-b border-red-100 flex items-center justify-between">
+        <div class="flex items-center gap-2 text-red-900 font-bold text-sm">
+          <Ban class="w-5 h-5 text-red-600" />
+          <span>Batalkan Transaksi (Void Nota)</span>
+        </div>
+        <button
+          onclick={() => (isVoidModalOpen = false)}
+          disabled={isSubmittingVoid}
+          class="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+          aria-label="Tutup"
+        >
+          <X class="w-4 h-4" />
+        </button>
+      </div>
+
+      <div class="p-5 space-y-4 text-xs">
+        <div class="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 leading-relaxed">
+          <strong>Perhatian:</strong> Tindakan ini akan membatalkan nota <strong>{transactionToVoid.invoiceNo || transactionToVoid.invoiceNumber}</strong> ({formatRupiah(transactionToVoid.grandTotal)}). Seluruh stok obat pada nota ini akan otomatis <strong>dikembalikan ke batch rak apotek</strong>.
+        </div>
+
+        <div>
+          <label for="void-reason" class="block font-bold text-slate-700 mb-1">
+            Alasan Pembatalan Nota <span class="text-red-500">*</span>
+          </label>
+          <textarea
+            id="void-reason"
+            bind:value={voidReason}
+            rows={3}
+            placeholder="Contoh: Pelanggan salah pilih obat, salah input jumlah, salah metode bayar..."
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 focus:bg-white focus:ring-2 focus:ring-red-500/20 focus:border-red-500 resize-none"
+          ></textarea>
+        </div>
+      </div>
+
+      <div class="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
         <button
           type="button"
-          onclick={() => (isDetailModalOpen = false)}
-          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm"
+          onclick={() => (isVoidModalOpen = false)}
+          disabled={isSubmittingVoid}
+          class="px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 text-xs font-bold"
         >
-          Tutup
+          Batal
+        </button>
+        <button
+          type="button"
+          onclick={handleConfirmVoid}
+          disabled={isSubmittingVoid || !voidReason.trim()}
+          class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-sm"
+        >
+          {#if isSubmittingVoid}
+            <div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            <span>Memproses Void...</span>
+          {:else}
+            <Ban class="w-4 h-4" />
+            <span>Ya, Batalkan Nota</span>
+          {/if}
         </button>
       </div>
     </div>

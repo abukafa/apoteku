@@ -27,6 +27,7 @@
   import { api } from "$lib/services/api";
   import { mockApi } from "$lib/services/mock-api";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { alertStore } from "$lib/stores/alertStore.svelte";
   import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { formatRupiah } from "@apoteku/core";
 
@@ -86,7 +87,12 @@
   let isCheckingShift = $state(false);
 
   // Filter & Tab State
-  let selectedBranchId = $state(authStore.user?.branchId || "ALL");
+  const canSelectBranch = $derived(authStore.canSelectBranch);
+  const canCustomerReturn = $derived(authStore.can("returns:customer:process"));
+  const canSupplierReturn = $derived(authStore.can("returns:supplier:process"));
+  const canProcessAnyReturn = $derived(canCustomerReturn || canSupplierReturn);
+
+  let selectedBranchId = $state(authStore.isAllBranches ? "ALL" : (authStore.user?.branchId || "1"));
   let activeTab = $state<"penjualan" | "pembelian">("penjualan");
   let salesReturnStatusFilter = $state<"ALL" | "PENDING" | "APPROVED">("ALL");
   let purchaseReturnStatusFilter = $state<
@@ -343,16 +349,20 @@
 
   async function loadReturnsData(branchId?: string) {
     try {
-      const targetBranch = branchId && branchId !== "ALL" ? branchId : undefined;
+      const targetBranch = branchId ?? selectedBranchId ?? (authStore.isAllBranches ? "ALL" : authStore.user?.branchId);
       const [custRetRes, suppRetRes] = await Promise.all([
         api.returns.getCustomerReturns({ branchId: targetBranch }),
         api.returns.getSupplierReturns({ branchId: targetBranch })
       ]);
       if (custRetRes?.success && Array.isArray(custRetRes.data)) {
         customerReturns = custRetRes.data;
+      } else {
+        customerReturns = [];
       }
       if (suppRetRes?.success && Array.isArray(suppRetRes.data)) {
         supplierReturns = suppRetRes.data;
+      } else {
+        supplierReturns = [];
       }
     } catch (e) {
       console.warn("Gagal mengambil daftar retur:", e);
@@ -361,6 +371,8 @@
 
   async function handleBranchChange(newBranchId: string) {
     selectedBranchId = newBranchId;
+    salesReturnPage = 1;
+    purchaseReturnPage = 1;
     if (newBranchId !== "ALL") {
       newReturForm.branchId = newBranchId;
       await Promise.all([
@@ -369,8 +381,11 @@
         checkBranchShift(newBranchId)
       ]);
     } else {
+      const fallbackBranch = branches[0]?.id || "";
+      newReturForm.branchId = fallbackBranch;
       await Promise.all([
-        loadReturnsData(undefined),
+        loadReturnsData("ALL"),
+        fallbackBranch ? loadProductsForBranch(fallbackBranch) : Promise.resolve(),
         checkBranchShift("")
       ]);
     }
@@ -386,45 +401,54 @@
         api.erp.getSales(100)
       ]);
 
-      if (Array.isArray(branchList)) {
-        branches = branchList;
-        if (authStore.user?.branchId) {
-          selectedBranchId = authStore.user.branchId;
-          newReturForm.branchId = authStore.user.branchId;
-        } else if (branches.length > 0) {
-          selectedBranchId = branches[0].id;
-          newReturForm.branchId = branches[0].id;
+      const bList = branchList?.data || (Array.isArray(branchList) ? branchList : []);
+      if (bList.length > 0) {
+        branches = bList;
+        if (authStore.isAllBranches) {
+          selectedBranchId = "ALL";
+        } else if (!selectedBranchId || selectedBranchId === "ALL") {
+          selectedBranchId = authStore.user?.branchId || bList[0].id;
         }
+
+        const exists = selectedBranchId === "ALL" || bList.some((b: any) => b.id === selectedBranchId);
+        if (!exists) {
+          selectedBranchId = authStore.isAllBranches ? "ALL" : bList[0].id;
+        }
+        newReturForm.branchId = selectedBranchId === "ALL" ? bList[0].id : selectedBranchId;
       }
 
       if (suppRes?.success && Array.isArray(suppRes.data)) {
         suppliers = suppRes.data;
+      } else if (Array.isArray(suppRes)) {
+        suppliers = suppRes;
       }
 
-      if (Array.isArray(custList)) {
-        customers = custList;
+      const cList = custList?.data || (Array.isArray(custList) ? custList : []);
+      if (cList.length > 0) {
+        customers = cList;
       }
 
       if (purchaseRes?.success && Array.isArray(purchaseRes.data)) {
         purchaseInvoices = purchaseRes.data;
+      } else if (Array.isArray(purchaseRes)) {
+        purchaseInvoices = purchaseRes;
       }
 
       if (salesRes?.success && Array.isArray(salesRes.data)) {
         salesInvoices = salesRes.data;
+      } else if (Array.isArray(salesRes)) {
+        salesInvoices = salesRes;
       }
 
-      const initialBranch = selectedBranchId !== "ALL" ? selectedBranchId : branches[0]?.id;
-      if (initialBranch) {
-        await Promise.all([
-          loadReturnsData(selectedBranchId),
-          loadProductsForBranch(initialBranch),
-          checkBranchShift(initialBranch)
-        ]);
-      } else {
-        await loadReturnsData();
-      }
+      const activeBranch = selectedBranchId !== "ALL" ? selectedBranchId : (branches[0]?.id || "");
+      await Promise.all([
+        loadReturnsData(selectedBranchId),
+        activeBranch ? loadProductsForBranch(activeBranch) : Promise.resolve(),
+        activeBranch && selectedBranchId !== "ALL" ? checkBranchShift(activeBranch) : Promise.resolve()
+      ]);
     } catch (e) {
       console.warn("Retur onMount API error:", e);
+      await loadReturnsData(selectedBranchId);
     }
   });
 
@@ -764,8 +788,23 @@
     }
   }
 
-  async function openAddReturModal(category: "PENJUALAN" | "PEMBELIAN") {
-    newReturForm.returCategory = category;
+  async function openAddReturModal(category?: "PENJUALAN" | "PEMBELIAN") {
+    if (!canProcessAnyReturn) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki hak akses untuk memproses retur barang.");
+      return;
+    }
+
+    let resolvedCategory = category;
+    if (!resolvedCategory) {
+      resolvedCategory = activeTab === "pembelian" ? "PEMBELIAN" : "PENJUALAN";
+    }
+    if (resolvedCategory === "PENJUALAN" && !canCustomerReturn) {
+      resolvedCategory = "PEMBELIAN";
+    } else if (resolvedCategory === "PEMBELIAN" && !canSupplierReturn) {
+      resolvedCategory = "PENJUALAN";
+    }
+
+    newReturForm.returCategory = resolvedCategory;
     const effectiveBranch =
       selectedBranchId !== "ALL"
         ? selectedBranchId
@@ -813,6 +852,14 @@
   }
 
   async function handleSaveNewRetur() {
+    if (newReturForm.returCategory === "PENJUALAN" && !canCustomerReturn) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang memproses retur penjualan (returns:customer:process).");
+      return;
+    }
+    if (newReturForm.returCategory === "PEMBELIAN" && !canSupplierReturn) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang memproses retur ke PBF (returns:supplier:process).");
+      return;
+    }
     if (!newReturForm.productName) {
       alert("Silakan pilih produk obat yang akan diretur.");
       return;
@@ -897,6 +944,10 @@
   }
 
   async function approveCustomerReturn(id: string) {
+    if (!canCustomerReturn) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang menyetujui retur pelanggan (returns:customer:process).");
+      return;
+    }
     try {
       await api.returns.approveCustomerReturn(id);
       customerReturns = customerReturns.map((r) =>
@@ -908,6 +959,10 @@
   }
 
   function openResolveSupplierReturn(r: SupplierReturnRecord) {
+    if (!canSupplierReturn) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang menyelesaikan klaim retur PBF (returns:supplier:process).");
+      return;
+    }
     selectedSupplierReturn = r;
     resolveSettlementType = r.settlementType;
     resolveCreditNoteNo = r.creditNoteNo || "";
@@ -980,8 +1035,8 @@
         </div>
       {/if}
 
-      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
-      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+      <!-- Branch selector (for Multi-branch User) or locked badge (for Single Branch Staff) -->
+      {#if authStore.canSelectBranch}
         <div class="w-56">
           <Select
             value={selectedBranchId}
@@ -999,14 +1054,16 @@
         </div>
       {/if}
 
-      <button
-        type="button"
-        onclick={() => openAddReturModal(activeTab === "pembelian" ? "PEMBELIAN" : "PENJUALAN")}
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
-      >
-        <Plus class="w-4 h-4" />
-        <span>Input Retur Baru</span>
-      </button>
+      {#if canProcessAnyReturn}
+        <button
+          type="button"
+          onclick={() => openAddReturModal(activeTab === "pembelian" ? "PEMBELIAN" : "PENJUALAN")}
+          class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+        >
+          <Plus class="w-4 h-4" />
+          <span>Input Retur Baru</span>
+        </button>
+      {/if}
     {/snippet}
   </PageHeader>
 
@@ -1152,7 +1209,12 @@
             <tr class="hover:bg-blue-50/40 transition-colors">
               <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
                 {r.date}
-                <div class="text-[10px] text-slate-400 font-normal">{r.branchName}</div>
+                {#if (selectedBranchId === "ALL" || canSelectBranch) && r.branchName}
+                  <div class="text-[10px] text-brand-blue font-semibold truncate flex items-center gap-1 mt-0.5" title={r.branchName}>
+                    <Store class="w-3 h-3 flex-shrink-0" />
+                    <span>{r.branchName}</span>
+                  </div>
+                {/if}
               </td>
               <td class="py-3.5 px-4">
                 <div class="font-bold text-slate-800">{r.productName} ({r.qty} {r.unit})</div>
@@ -1184,7 +1246,7 @@
               </td>
               <td class="py-3.5 px-4 text-center">
                 <div class="flex items-center justify-center gap-1.5">
-                  {#if r.status === "PENDING"}
+                  {#if r.status === "PENDING" && canCustomerReturn}
                     <button
                       type="button"
                       onclick={() => approveCustomerReturn(r.id)}
@@ -1291,6 +1353,12 @@
               <td class="py-3.5 px-4 font-mono font-bold text-slate-900">
                 {r.returnNumber}
                 <div class="text-[10px] text-slate-400 font-normal">{r.date}</div>
+                {#if (selectedBranchId === "ALL" || canSelectBranch) && r.branchName}
+                  <div class="text-[10px] text-brand-blue font-semibold truncate flex items-center gap-1 mt-0.5" title={r.branchName}>
+                    <Store class="w-3 h-3 flex-shrink-0" />
+                    <span>{r.branchName}</span>
+                  </div>
+                {/if}
               </td>
               <td class="py-3.5 px-4 font-mono text-brand-blue font-semibold">
                 {r.invoiceRef}
@@ -1321,7 +1389,7 @@
               </td>
               <td class="py-3.5 px-4 text-center">
                 <div class="flex items-center justify-center gap-1.5">
-                  {#if r.status !== "RESOLVED"}
+                  {#if r.status !== "RESOLVED" && canSupplierReturn}
                     <button
                       type="button"
                       onclick={() => openResolveSupplierReturn(r)}
@@ -1410,14 +1478,14 @@
               }
             }}
             options={[
-              { value: "PENJUALAN", label: "Retur Penjualan (Dari Pelanggan)" },
-              { value: "PEMBELIAN", label: "Retur Pembelian (Ke PBF)" }
+              ...(canCustomerReturn ? [{ value: "PENJUALAN", label: "Retur Penjualan (Dari Pelanggan)" }] : []),
+              ...(canSupplierReturn ? [{ value: "PEMBELIAN", label: "Retur Pembelian (Ke PBF)" }] : [])
             ]}
           />
         </div>
 
         <div>
-          {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+          {#if authStore.canSelectBranch}
             <label for="ret-branch" class="font-bold text-slate-700 block mb-1">Cabang Apotek</label>
             <Select
               id="ret-branch"

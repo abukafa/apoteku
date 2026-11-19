@@ -27,6 +27,14 @@ function getStoredAuthHeaders(): Record<string, string> {
       if (parsed?.branchId) authHeaders["x-branch-id"] = String(parsed.branchId);
       if (parsed?.id) authHeaders["x-user-id"] = String(parsed.id);
       if (parsed?.role) authHeaders["x-user-role"] = String(parsed.role);
+      const perms = Array.isArray(parsed?.customPermissions) && parsed.customPermissions.length > 0
+        ? parsed.customPermissions
+        : Array.isArray(parsed?.permissions) && parsed.permissions.length > 0
+          ? parsed.permissions
+          : [];
+      if (perms.length > 0) {
+        authHeaders["x-custom-permissions"] = JSON.stringify(perms);
+      }
     }
   } catch {
     // Ignore storage read errors
@@ -145,8 +153,26 @@ export const api = {
     async getCustomers() {
       return await apiFetch<any>("/api/customers");
     },
-    async getSales(limit = 100) {
-      return await apiFetch<any>(`/api/sales?limit=${limit}`);
+    async getSales(paramsOrLimit: number | { limit?: number; branchId?: string } = 100, branchId?: string) {
+      let limit = 100;
+      let targetBranch = branchId;
+      if (typeof paramsOrLimit === "number") {
+        limit = paramsOrLimit;
+      } else if (paramsOrLimit && typeof paramsOrLimit === "object") {
+        limit = paramsOrLimit.limit ?? 100;
+        targetBranch = paramsOrLimit.branchId ?? branchId;
+      }
+      const sp = new URLSearchParams();
+      if (limit) sp.append("limit", String(limit));
+      if (targetBranch) sp.append("branch_id", targetBranch);
+      const qs = sp.toString() ? `?${sp.toString()}` : "";
+      return await apiFetch<any>(`/api/sales${qs}`);
+    },
+    async voidSale(id: string, reason?: string) {
+      return await apiFetch<any>(`/api/sales/${id}/void`, {
+        method: "POST",
+        body: JSON.stringify({ reason })
+      });
     },
     async getPurchases(limit = 100) {
       return await apiFetch<any>(`/api/purchases?limit=${limit}`);
@@ -356,6 +382,9 @@ export const api = {
     },
     async getStatus() {
       return await apiFetch<any>("/api/auth/status");
+    },
+    async me() {
+      return await apiFetch<{ success: boolean; data?: { user: any }; error?: string }>("/api/auth/me");
     },
     async getGoogleConfig() {
       return await apiFetch<{ success: boolean; data: { clientId: string; isConfigured: boolean } }>(
@@ -652,7 +681,7 @@ export const api = {
       });
     },
     async getCashflow(branchId?: string) {
-      const q = branchId && branchId !== "ALL" ? `?branch_id=${encodeURIComponent(branchId)}` : "";
+      const q = branchId ? `?branch_id=${encodeURIComponent(branchId)}` : "";
       return await apiFetch<any>(`/api/finance/cashflow${q}`);
     },
     async recordCashMutation(payload: {

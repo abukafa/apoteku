@@ -37,7 +37,8 @@ export const app = new Elysia()
         "x-tenant-id",
         "x-branch-id",
         "x-user-id",
-        "x-user-role"
+        "x-user-role",
+        "x-custom-permissions"
       ]
     })
   )

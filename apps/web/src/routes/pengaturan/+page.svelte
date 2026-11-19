@@ -39,6 +39,7 @@
   import {
     PERMISSION_DEFINITIONS,
     ROLE_PERMISSIONS,
+    resolveEffectivePermissions,
     type PermissionKey,
     type UserRole as CoreUserRole
   } from "@apoteku/core";
@@ -65,10 +66,21 @@
     authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"
   );
 
-  // Guard: Tab "cabang" (Master Tenant, Branch, Inventory Location) & "pengguna" (Master Users) hanya untuk SUPERADMIN & OWNER
+  let canEditTenant = $derived(authStore.can("settings:tenant:edit"));
+  let canManageUsers = $derived(authStore.can("settings:users:manage"));
+  let canManageDevices = $derived(authStore.can("settings:devices:manage"));
+
+  // Guard: Tab "cabang" (Master Tenant, Branch, Inventory Location) hanya untuk settings:tenant:edit,
+  // "pengguna" (Master Users) untuk settings:users:manage, dan "printer" untuk settings:devices:manage
   $effect(() => {
-    if (authStore.user && !isSuperOrOwner && (activeTab === "cabang" || activeTab === "pengguna")) {
-      activeTab = "profil";
+    if (authStore.user) {
+      if (activeTab === "cabang" && !canEditTenant) {
+        activeTab = "profil";
+      } else if (activeTab === "pengguna" && !canManageUsers) {
+        activeTab = "profil";
+      } else if (activeTab === "printer" && !canManageDevices) {
+        activeTab = "profil";
+      }
     }
   });
 
@@ -377,22 +389,47 @@
 
   async function handleSavePermissions() {
     if (!selectedUserForPermissions) return;
+    if (!canManageUsers) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mengubah hak akses staf (settings:users:manage).");
+      return;
+    }
     isSavingPermissions = true;
     try {
       const res = await api.users.update(selectedUserForPermissions.id, {
         customPermissions: selectedPermissions
       });
       if (res.success) {
+        const combinedPerms = resolveEffectivePermissions(
+          selectedUserForPermissions.role,
+          selectedPermissions
+        );
+
         users = users.map((u) =>
           u.id === selectedUserForPermissions.id
-            ? { ...u, customPermissions: selectedPermissions }
+            ? { ...u, customPermissions: selectedPermissions, permissions: combinedPerms }
             : u
         );
-        // Jika user yang diedit adalah akun yang sedang login, update sesi authStore
+
+        // Sinkronisasi local storage savedAccounts agar switch akun langsung memiliki wewenang terbaru
+        try {
+          const raw = localStorage.getItem("apoteku_saved_accounts");
+          if (raw) {
+            const list = JSON.parse(raw);
+            const updatedList = list.map((a: any) =>
+              a.id === selectedUserForPermissions.id
+                ? { ...a, customPermissions: selectedPermissions, permissions: combinedPerms }
+                : a
+            );
+            localStorage.setItem("apoteku_saved_accounts", JSON.stringify(updatedList));
+          }
+        } catch (_) {}
+
+        // Jika user yang diedit adalah akun yang sedang login, update sesi authStore secara langsung
         if (authStore.user && authStore.user.id === selectedUserForPermissions.id) {
           authStore.setUserSession({
             ...authStore.user,
-            permissions: selectedPermissions
+            customPermissions: selectedPermissions,
+            permissions: combinedPerms
           });
         }
         alertStore.toast(`Hak akses khusus untuk ${selectedUserForPermissions.fullName} berhasil disimpan!`, "success");
@@ -444,10 +481,14 @@
     phone: "",
     role: "CASHIER",
     pin: "123456",
-    branchId: ""
+    branchId: "ALL"
   });
 
   async function handleUpdateUserRole(userId: string, newRole: string) {
+    if (!canManageUsers) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mengubah peran pengguna (settings:users:manage).");
+      return;
+    }
     try {
       const res = await api.users.update(userId, { role: newRole });
       if (res.success) {
@@ -461,12 +502,26 @@
   }
 
   async function handleUpdateUserBranch(userId: string, newBranchId: string) {
+    if (!canManageUsers) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang memindahkan cabang staf (settings:users:manage).");
+      return;
+    }
     try {
-      const res = await api.users.update(userId, { branchId: newBranchId });
+      const branchIdToSend = newBranchId === "ALL" ? null : newBranchId;
+      const res = await api.users.update(userId, { branchId: branchIdToSend as any });
       if (res.success) {
         const br = branches.find((b) => b.id === newBranchId);
-        users = users.map((u) => (u.id === userId ? { ...u, branchId: newBranchId, branchName: br?.name || u.branchName } : u));
-        alertStore.toast("Cabang penugasan berhasil diubah", "success");
+        const branchName = newBranchId === "ALL" ? "Semua Cabang" : (br?.name || "Cabang Apotek");
+        users = users.map((u) => (u.id === userId ? { ...u, branchId: newBranchId, branchName } : u));
+        if (authStore.user?.id === userId) {
+          authStore.setUserSession({
+            ...authStore.user,
+            branchId: newBranchId,
+            assignedBranchId: newBranchId,
+            branchName
+          });
+        }
+        alertStore.toast(`Cabang penugasan berhasil diubah ke ${branchName}`, "success");
       }
     } catch (e: any) {
       alertStore.danger("Gagal Mengubah Cabang", e.message || "Terjadi kesalahan sistem saat memindahkan cabang.");
@@ -474,6 +529,10 @@
   }
 
   async function handleDeleteUser(userId: string, fullName: string) {
+    if (!canManageUsers) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang menghapus akun staf (settings:users:manage).");
+      return;
+    }
     const isConfirmed = await alertStore.confirm({
       type: "danger",
       title: "Hapus Akses Pengguna",
@@ -495,6 +554,10 @@
   }
 
   function openPinModal(u: any) {
+    if (!canManageUsers) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mengubah PIN kasir staf (settings:users:manage).");
+      return;
+    }
     selectedUserForPin = u;
     newPinValue = "";
     userModalError = "";
@@ -503,6 +566,10 @@
 
   async function handleSaveNewPin() {
     if (!selectedUserForPin) return;
+    if (!canManageUsers) {
+      userModalError = "Akses Ditolak: Anda tidak memiliki wewenang mengubah PIN staf lain (settings:users:manage).";
+      return;
+    }
     if (newPinValue.trim().length < 4) {
       userModalError = "PIN minimal 4 digit angka.";
       return;
@@ -522,12 +589,16 @@
 
   async function handleCreateUserSubmit() {
     userModalError = "";
+    if (!canManageUsers) {
+      userModalError = "Akses Ditolak: Anda tidak memiliki wewenang menambah staf baru (settings:users:manage).";
+      return;
+    }
     if (!newUserForm.fullName.trim() || !newUserForm.username.trim() || !newUserForm.pin.trim()) {
       userModalError = "Nama lengkap, username, dan PIN wajib diisi.";
       return;
     }
     try {
-      const targetBranch = newUserForm.branchId || branches[0]?.id;
+      const targetBranch = (!newUserForm.branchId || newUserForm.branchId === "ALL") ? undefined : newUserForm.branchId;
       const res = await api.users.create({
         fullName: newUserForm.fullName.trim(),
         username: newUserForm.username.trim().toLowerCase(),
@@ -538,12 +609,14 @@
         branchId: targetBranch
       });
       if (res.success) {
-        const branchObj = branches.find((b) => b.id === targetBranch);
+        const branchObj = targetBranch ? branches.find((b) => b.id === targetBranch) : null;
         users = [
           ...users,
           {
             ...res.data,
-            branchName: branchObj?.name || "Cabang Pusat"
+            branchId: targetBranch || "ALL",
+            assignedBranchId: targetBranch || "ALL",
+            branchName: branchObj?.name || "Semua Cabang"
           }
         ];
         isAddUserModalOpen = false;
@@ -554,7 +627,7 @@
           phone: "",
           role: "CASHIER",
           pin: "123456",
-          branchId: ""
+          branchId: "ALL"
         };
         saveSuccessMessage = "Pengguna baru berhasil ditambahkan";
         setTimeout(() => (saveSuccessMessage = ""), 3000);
@@ -637,7 +710,7 @@
       const [tenantData, branchRes, userRes] = await Promise.all([
         tenantStore.fetchTenant(true).catch(() => null),
         api.branches.list().catch(() => null),
-        api.users.list().catch(() => null)
+        canManageUsers ? api.users.list().catch(() => null) : Promise.resolve(null)
       ]);
       if (tenantStore.current) {
         tenantForm = {
@@ -680,8 +753,9 @@
 
   async function handleSaveTenant() {
     tenantError = "";
-    if (!isSuperOrOwner) {
-      tenantError = "Hanya Superadmin dan Owner yang dapat mengubah data organisasi/tenant.";
+    if (!canEditTenant) {
+      tenantError = "Akses Ditolak: Anda tidak memiliki hak akses mengubah profil dan legalitas apotek (settings:tenant:edit).";
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki hak akses mengubah profil dan legalitas apotek (settings:tenant:edit).");
       return;
     }
     if (!tenantForm.name.trim() || !tenantForm.code.trim()) {
@@ -744,6 +818,10 @@
 
   async function handleSaveBranch() {
     branchModalError = "";
+    if (!canEditTenant) {
+      branchModalError = "Akses Ditolak: Anda tidak memiliki wewenang mengelola cabang apotek (settings:tenant:edit).";
+      return;
+    }
     if (!branchForm.code.trim() || !branchForm.name.trim()) {
       branchModalError = "Kode cabang dan nama cabang wajib diisi.";
       return;
@@ -826,6 +904,10 @@
 
   async function handleSaveLocation() {
     locationModalError = "";
+    if (!canEditTenant) {
+      locationModalError = "Akses Ditolak: Anda tidak memiliki wewenang mengelola lokasi inventori (settings:tenant:edit).";
+      return;
+    }
     if (!locationForm.branchId || !locationForm.code.trim() || !locationForm.name.trim()) {
       locationModalError = "Cabang, kode lokasi, dan nama lokasi wajib diisi.";
       return;
@@ -873,8 +955,16 @@
   }
 
   async function handleSaveSettings() {
-    if (activeTab === "cabang" && isSuperOrOwner) {
+    if (activeTab === "cabang") {
+      if (!canEditTenant) {
+        alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mengubah data organisasi/cabang (settings:tenant:edit).");
+        return;
+      }
       await handleSaveTenant();
+      return;
+    }
+    if (activeTab === "printer" && !canManageDevices) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mengatur konfigurasi printer POS (settings:devices:manage).");
       return;
     }
     saveSuccessMessage = "Pengaturan berhasil disimpan ke database PostgreSQL!";
@@ -940,7 +1030,7 @@
       {/if}
     </button>
 
-    {#if isSuperOrOwner}
+    {#if canEditTenant}
       <button
         type="button"
         onclick={() => (activeTab = "cabang")}
@@ -954,7 +1044,9 @@
           <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
         {/if}
       </button>
+    {/if}
 
+    {#if canManageUsers}
       <button
         type="button"
         onclick={() => (activeTab = "pengguna")}
@@ -970,7 +1062,7 @@
       </button>
     {/if}
 
-    {#if authStore.user?.role !== "GUEST"}
+    {#if canManageDevices}
       <button
         type="button"
         onclick={() => (activeTab = "printer")}
@@ -984,7 +1076,9 @@
           <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
         {/if}
       </button>
+    {/if}
 
+    {#if authStore.user?.role !== "GUEST"}
       <button
         type="button"
         onclick={() => (activeTab = "diagnostik")}
@@ -2119,7 +2213,7 @@
         <SortableTh key="fullName" label="Nama Lengkap" sortKey={userSortKey} sortDirection={userSortDirection} onsort={handleUserSort} />
         <SortableTh key="username" label="Username / Email" sortKey={userSortKey} sortDirection={userSortDirection} onsort={handleUserSort} />
         <SortableTh key="role" label="Peran (Role)" sortKey={userSortKey} sortDirection={userSortDirection} onsort={handleUserSort} />
-        <SortableTh key="branchName" label="Penugasan Cabang" sortKey={userSortKey} sortDirection={userSortDirection} onsort={handleUserSort} />
+        <SortableTh key="branchName" label="Cabang" sortKey={userSortKey} sortDirection={userSortDirection} onsort={handleUserSort} />
         <th class="py-3 px-4 text-center">Status</th>
         <th class="py-3 px-4 text-center">Aksi</th>
       {/snippet}
@@ -2148,14 +2242,14 @@
                 <div class="font-bold text-slate-700">{u.username}</div>
                 <div class="text-[10px]">{u.email}</div>
               </td>
-              <td class="py-3.5 px-4 max-w-[160px]">
+              <td class="py-3.5 px-4 max-w-[180px]">
                 {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
                   <select
                     value={u.role}
                     onchange={(e) => handleUpdateUserRole(u.id, e.currentTarget.value)}
-                    class="max-w-[120px] bg-slate-50 border border-slate-200 text-slate-800 text-[11px] font-bold rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer"
+                    class="max-w-[120px] border border-slate-200 text-[11px] font-bold rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer {u.role === 'INVENTORY' ? 'bg-blue-100 text-blue-800' : u.role === 'FINANCE' ? 'bg-pink-100 text-pink-800' : u.role === 'GUEST' ? 'bg-amber-100 text-amber-900 border border-amber-300' : u.role === 'PHARMACIST' ? 'bg-purple-100 text-purple-800' : u.role === 'CASHIER' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}"
                   >
-                    <option value="GUEST">GUEST (Tamu - Belum Diberi Akses)</option>
+                    <option value="GUEST">GUEST (Belum Diberi Akses)</option>
                     <option value="CASHIER">CASHIER (Kasir Penjualan POS)</option>
                     <option value="PHARMACIST">PHARMACIST (Apoteker APA)</option>
                     <option value="INVENTORY">INVENTORY (Gudang & Logistik)</option>
@@ -2164,24 +2258,25 @@
                     <option value="SUPERADMIN">SUPERADMIN (Programmer)</option>
                   </select>
                 {:else}
-                  <span class="px-2 py-0.5 rounded text-[10px] font-bold {u.role === 'SUPERADMIN' ? 'bg-blue-100 text-blue-800' : u.role === 'GUEST' ? 'bg-amber-100 text-amber-900 border border-amber-300' : u.role === 'PHARMACIST' ? 'bg-purple-100 text-purple-800' : u.role === 'CASHIER' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold {u.role === 'INVENTORY' ? 'bg-blue-100 text-blue-800' : u.role === 'FINANCE' ? 'bg-pink-100 text-pink-800' : u.role === 'GUEST' ? 'bg-amber-100 text-amber-900 border border-amber-300' : u.role === 'PHARMACIST' ? 'bg-purple-100 text-purple-800' : u.role === 'CASHIER' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}">
                     {u.role}
                   </span>
                 {/if}
               </td>
               <td class="py-3.5 px-4 text-slate-600 font-semibold max-w-[180px]">
-                {#if (authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER") && branches.length > 0}
+                {#if canManageUsers && branches.length > 0}
                   <select
-                    value={u.branchId || branches[0]?.id}
+                    value={u.branchId || "ALL"}
                     onchange={(e) => handleUpdateUserBranch(u.id, e.currentTarget.value)}
-                    class="max-w-[140px] bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-medium rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer max-w-[180px]"
+                    class="max-w-[150px] bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-medium rounded-lg px-2 py-1 focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue cursor-pointer"
                   >
+                    <option value="ALL">🌐 ALL (Semua Cabang)</option>
                     {#each branches as b}
-                      <option value={b.id}>{b.name}</option>
+                      <option value={b.id}>{b.code} - {b.name}</option>
                     {/each}
                   </select>
                 {:else}
-                  <span>{branches.find((b) => b.id === u.branchId)?.name || u.branchName || "Cabang Pusat"}</span>
+                  <span class="text-xs">{!u.branchId || u.branchId === "ALL" ? "🌐 Semua Cabang" : (branches.find((b) => b.id === u.branchId)?.name || u.branchName || "Cabang Pusat")}</span>
                 {/if}
               </td>
               <td class="py-3.5 px-4 text-center">
@@ -2282,8 +2377,15 @@
       <div class="border-t border-slate-100 pt-4 flex items-center justify-start gap-3">
         <button
           type="button"
-          onclick={() => alertStore.toast("Mengirim sinyal uji cetak ESC/POS dan pembukaan laci RJ11...", "info", "Uji Printer & Laci")}
-          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white font-bold text-xs shadow-sm flex items-center gap-2"
+          disabled={!canManageDevices}
+          onclick={() => {
+            if (!canManageDevices) {
+              alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang menguji perangkat printer (settings:devices:manage).");
+              return;
+            }
+            alertStore.toast("Mengirim sinyal uji cetak ESC/POS dan pembukaan laci RJ11...", "info", "Uji Printer & Laci");
+          }}
+          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 disabled:opacity-50 text-white font-bold text-xs shadow-sm flex items-center gap-2"
         >
           <Printer class="w-4 h-4" />
           <span>Uji Cetak Struk & Tes Buka Laci</span>
@@ -2710,8 +2812,9 @@
               bind:value={newUserForm.branchId}
               class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-medium cursor-pointer"
             >
+              <option value="ALL">🌐 ALL (Semua Cabang)</option>
               {#each branches as b}
-                <option value={b.id}>{b.name}</option>
+                <option value={b.id}>{b.code} - {b.name}</option>
               {/each}
             </select>
           </div>

@@ -12,9 +12,11 @@ export const tenantMiddleware = new Elysia({ name: "tenant-context" }).derive(
     const tenantId =
       (headers["x-tenant-id"] as string) ||
       "01931818-8000-7000-8000-000000000001";
+    const rawBranchId = headers["x-branch-id"] as string;
     const branchId =
-      (headers["x-branch-id"] as string) ||
-      "01931818-8000-7000-8000-000000000002";
+      rawBranchId && rawBranchId !== "ALL"
+        ? rawBranchId
+        : "01931818-8000-7000-8000-000000000002";
     const userId =
       (headers["x-user-id"] as string) ||
       "01931818-8000-7000-8000-000000000003";

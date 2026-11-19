@@ -1,7 +1,8 @@
 import { Elysia, t } from "elysia";
 import { db, schema } from "@apoteku/db";
 import { eq, or, and, sql } from "drizzle-orm";
-import { ROLE_PERMISSIONS, type UserRole } from "@apoteku/core";
+import { ROLE_PERMISSIONS, resolveEffectivePermissions, type UserRole } from "@apoteku/core";
+import { invalidateUserPermsCache } from "../../middleware/rbac.guard.js";
 
 export const authRoutes = new Elysia({ prefix: "/api" })
   // 1. AUTH LOGIN
@@ -57,12 +58,13 @@ export const authRoutes = new Elysia({ prefix: "/api" })
           return { success: false, error: "PIN yang dimasukkan salah" };
         }
 
-        // Resolve active branch (gunakan branchId pilihan saat login jika valid, atau default user/cabang pertama)
-        let activeBranchId = user.branchId;
-        let activeBranchName = user.branchName || "Apotek Hafidz Farma";
-        let activeBranchCode = user.branchCode || "PUSAT";
+        // Resolve active branch (gunakan branchId pilihan saat login jika valid, atau default user/cabang penugasan)
+        const isAllAssigned = !user.branchId || user.branchId === "ALL";
+        let activeBranchId = isAllAssigned ? "ALL" : user.branchId;
+        let activeBranchName = isAllAssigned ? "Semua Cabang" : (user.branchName || "Apotek Hafidz Farma");
+        let activeBranchCode = isAllAssigned ? "ALL" : (user.branchCode || "PUSAT");
 
-        if (body.branchId && body.branchId !== "1" && body.branchId !== user.branchId) {
+        if (body.branchId && body.branchId !== "1" && body.branchId !== "ALL") {
           const [selectedBranch] = await db
             .select({
               id: schema.branches.id,
@@ -77,26 +79,11 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             activeBranchName = selectedBranch.name;
             activeBranchCode = selectedBranch.code;
           }
-        } else if (!activeBranchId) {
-          const [firstBranch] = await db
-            .select({
-              id: schema.branches.id,
-              name: schema.branches.name,
-              code: schema.branches.code
-            })
-            .from(schema.branches)
-            .limit(1);
-          if (firstBranch) {
-            activeBranchId = firstBranch.id;
-            activeBranchName = firstBranch.name;
-            activeBranchCode = firstBranch.code;
-          }
         }
 
         // Determine permissions based on role matrix + custom user permissions
-        const roleDefaultPerms = (ROLE_PERMISSIONS[user.role as UserRole] || []) as string[];
         const customUserPerms = ((user.customPermissions as string[]) || []);
-        const permissions = Array.from(new Set([...roleDefaultPerms, ...customUserPerms]));
+        const permissions = resolveEffectivePermissions(user.role as UserRole, customUserPerms);
 
         return {
           success: true,
@@ -106,6 +93,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
               id: user.id,
               tenantId: user.tenantId,
               branchId: activeBranchId,
+              assignedBranchId: isAllAssigned ? "ALL" : user.branchId,
               branchName: activeBranchName,
               branchCode: activeBranchCode,
               username: user.username,
@@ -129,7 +117,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
       body: t.Object({
         identifier: t.String(),
         pin: t.String(),
-        branchId: t.Optional(t.String())
+        branchId: t.Optional(t.Nullable(t.String()))
       }),
       detail: {
         tags: ["Auth & Users"],
@@ -138,7 +126,75 @@ export const authRoutes = new Elysia({ prefix: "/api" })
     }
   )
 
-  // 1b. AUTH STATUS (Check whether system is initialized with at least 1 user)
+  // 1b. AUTH ME (Get current user profile & live permissions from DB)
+  .get(
+    "/auth/me",
+    async ({ headers, set }) => {
+      try {
+        const userId = headers["x-user-id"];
+        if (!userId) {
+          set.status = 401;
+          return { success: false, error: "Tidak terautentikasi: header x-user-id tidak ditemukan" };
+        }
+
+        const [user] = await db
+          .select({
+            id: schema.users.id,
+            tenantId: schema.users.tenantId,
+            branchId: schema.users.branchId,
+            username: schema.users.username,
+            fullName: schema.users.fullName,
+            email: schema.users.email,
+            phone: schema.users.phone,
+            role: schema.users.role,
+            customPermissions: schema.users.customPermissions,
+            avatarUrl: schema.users.avatarUrl,
+            isActive: schema.users.isActive,
+            branchName: schema.branches.name,
+            branchCode: schema.branches.code
+          })
+          .from(schema.users)
+          .leftJoin(schema.branches, eq(schema.users.branchId, schema.branches.id))
+          .where(eq(schema.users.id, userId))
+          .limit(1);
+
+        if (!user || !user.isActive) {
+          set.status = 401;
+          return { success: false, error: "Pengguna tidak ditemukan atau berstatus nonaktif" };
+        }
+
+        const role = user.role as UserRole;
+        const customUserPerms = ((user.customPermissions as string[]) || []);
+        const permissions = resolveEffectivePermissions(role, customUserPerms);
+        const isAllAssigned = !user.branchId || user.branchId === "ALL";
+
+        return {
+          success: true,
+          data: {
+            user: {
+              ...user,
+              branchId: isAllAssigned ? "ALL" : user.branchId,
+              assignedBranchId: isAllAssigned ? "ALL" : user.branchId,
+              branchName: isAllAssigned ? "Semua Cabang" : (user.branchName || "Apotek Hafidz Farma Pusat"),
+              customPermissions: customUserPerms,
+              permissions
+            }
+          }
+        };
+      } catch (err: any) {
+        set.status = 500;
+        return { success: false, error: err.message };
+      }
+    },
+    {
+      detail: {
+        tags: ["Auth & Users"],
+        summary: "Ambil Profil & Hak Akses Pengguna Aktif Terkini"
+      }
+    }
+  )
+
+  // 1c. AUTH STATUS (Check whether system is initialized with at least 1 user)
   .get(
     "/auth/status",
     async () => {
@@ -218,11 +274,13 @@ export const authRoutes = new Elysia({ prefix: "/api" })
         const isFirstUser = totalUsers === 0;
         const assignedRole = isFirstUser ? "SUPERADMIN" : (body.role || "GUEST");
 
-        // Determine branch (use provided or fallback to first branch)
-        let targetBranchId = body.branchId;
-        if (!targetBranchId) {
+        // Determine branch (first user or explicit ALL gets null / ALL)
+        let targetBranchId: string | null = null;
+        if (!isFirstUser && body.branchId && body.branchId !== "ALL") {
+          targetBranchId = body.branchId;
+        } else if (!isFirstUser && !body.branchId) {
           const [firstBranch] = await db.select({ id: schema.branches.id }).from(schema.branches).limit(1);
-          targetBranchId = firstBranch?.id;
+          targetBranchId = firstBranch?.id ?? null;
         }
 
         const [createdUser] = await db
@@ -256,11 +314,8 @@ export const authRoutes = new Elysia({ prefix: "/api" })
           }
         }
 
-        const permissions = assignedRole === "SUPERADMIN" || assignedRole === "OWNER"
-          ? ["*"]
-          : assignedRole === "GUEST"
-            ? []
-            : ["pos:read", "pos:write", "stok:read"];
+        const permissions = resolveEffectivePermissions(assignedRole as UserRole, []);
+        const isAllAssigned = !createdUser.branchId || createdUser.branchId === "ALL";
 
         return {
           success: true,
@@ -272,9 +327,10 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             user: {
               id: createdUser.id,
               tenantId: createdUser.tenantId,
-              branchId: createdUser.branchId,
-              branchName,
-              branchCode,
+              branchId: isAllAssigned ? "ALL" : createdUser.branchId,
+              assignedBranchId: isAllAssigned ? "ALL" : createdUser.branchId,
+              branchName: isAllAssigned ? "Semua Cabang" : branchName,
+              branchCode: isAllAssigned ? "ALL" : branchCode,
               username: createdUser.username,
               fullName: createdUser.fullName,
               email: createdUser.email,
@@ -298,7 +354,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
         email: t.Optional(t.String()),
         phone: t.Optional(t.String()),
         password: t.Optional(t.String()),
-        branchId: t.Optional(t.String()),
+        branchId: t.Optional(t.Nullable(t.String())),
         role: t.Optional(t.String())
       }),
       detail: {
@@ -320,7 +376,14 @@ export const authRoutes = new Elysia({ prefix: "/api" })
 
       const host = (headers["x-forwarded-host"] as string) || (headers["host"] as string);
       const proto = (headers["x-forwarded-proto"] as string) || "http";
-      const dynamicOrigin = host && !host.includes("3001") ? `${proto}://${host}` : undefined;
+      let dynamicOrigin = host && !host.includes("3001") ? `${proto}://${host}` : undefined;
+      if (dynamicOrigin && (dynamicOrigin.startsWith("https://") || dynamicOrigin.includes("ngrok") || dynamicOrigin.includes("trycloudflare"))) {
+        try {
+          const parsedOrigin = new URL(dynamicOrigin);
+          parsedOrigin.port = "";
+          dynamicOrigin = parsedOrigin.origin;
+        } catch {}
+      }
 
       const redirectUri =
         process.env.GOOGLE_REDIRECT_URI ||
@@ -446,19 +509,10 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             existingUser.avatarUrl = avatarUrl;
           }
 
-          let permissions = ["pos:read", "pos:write", "stok:read"];
-          if (existingUser.role === "SUPERADMIN" || existingUser.role === "OWNER") {
-            permissions = ["*"];
-          } else if (existingUser.role === "PHARMACIST") {
-            permissions = ["pos:read", "pos:write", "stok:read", "stok:write", "pelayanan:write", "laporan:read"];
-          } else if (existingUser.role === "INVENTORY") {
-            permissions = ["stok:read", "stok:write", "pembelian:read", "pembelian:write", "pengiriman:write"];
-          } else if (existingUser.role === "FINANCE") {
-            permissions = ["keuangan:read", "keuangan:write", "laporan:read", "pembelian:read"];
-          } else if (existingUser.role === "GUEST") {
-            permissions = [];
-          }
+          const customUserPerms = ((existingUser.customPermissions as string[]) || []);
+          const permissions = resolveEffectivePermissions(existingUser.role as UserRole, customUserPerms);
 
+          const isAllAssigned = !existingUser.branchId || existingUser.branchId === "ALL";
           return {
             success: true,
             isNewUser: false,
@@ -467,9 +521,10 @@ export const authRoutes = new Elysia({ prefix: "/api" })
               user: {
                 id: existingUser.id,
                 tenantId: existingUser.tenantId,
-                branchId: existingUser.branchId,
-                branchName: existingUser.branchName || "Apotek Hafidz Farma Pusat",
-                branchCode: existingUser.branchCode || "PUSAT",
+                branchId: isAllAssigned ? "ALL" : existingUser.branchId,
+                assignedBranchId: isAllAssigned ? "ALL" : existingUser.branchId,
+                branchName: isAllAssigned ? "Semua Cabang" : (existingUser.branchName || "Apotek Hafidz Farma Pusat"),
+                branchCode: isAllAssigned ? "ALL" : (existingUser.branchCode || "PUSAT"),
                 username: existingUser.username,
                 fullName: existingUser.fullName,
                 email: existingUser.email,
@@ -477,6 +532,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
                 role: existingUser.role,
                 pin: existingUser.pin || "123456",
                 avatarUrl: existingUser.avatarUrl || avatarUrl,
+                customPermissions: customUserPerms,
                 permissions
               },
               token: `google-token-${existingUser.id}-${Date.now()}`
@@ -507,22 +563,23 @@ export const authRoutes = new Elysia({ prefix: "/api" })
           baseUsername = `${baseUsername}_${Math.floor(100 + Math.random() * 900)}`;
         }
 
-        // Target Branch
-        let targetBranchId = body.branchId;
-        let branchName = "Apotek Hafidz Farma Pusat";
-        let branchCode = "PUSAT";
+        // Target Branch (first user or ALL gets null / ALL)
+        let targetBranchId: string | null = null;
+        let branchName = "Semua Cabang";
+        let branchCode = "ALL";
 
-        if (targetBranchId) {
+        if (!isFirstUser && body.branchId && body.branchId !== "ALL") {
           const [br] = await db
             .select({ id: schema.branches.id, name: schema.branches.name, code: schema.branches.code })
             .from(schema.branches)
-            .where(eq(schema.branches.id, targetBranchId))
+            .where(eq(schema.branches.id, body.branchId))
             .limit(1);
           if (br) {
+            targetBranchId = br.id;
             branchName = br.name;
             branchCode = br.code;
           }
-        } else {
+        } else if (!isFirstUser && !body.branchId) {
           const [firstBranch] = await db
             .select({ id: schema.branches.id, name: schema.branches.name, code: schema.branches.code })
             .from(schema.branches)
@@ -552,7 +609,8 @@ export const authRoutes = new Elysia({ prefix: "/api" })
           })
           .returning();
 
-        const permissions = assignedRole === "SUPERADMIN" ? ["*"] : [];
+        const permissions = resolveEffectivePermissions(assignedRole as UserRole, []);
+        const isAllAssignedNew = !createdUser.branchId || createdUser.branchId === "ALL";
 
         return {
           success: true,
@@ -565,9 +623,10 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             user: {
               id: createdUser.id,
               tenantId: createdUser.tenantId,
-              branchId: createdUser.branchId,
-              branchName,
-              branchCode,
+              branchId: isAllAssignedNew ? "ALL" : createdUser.branchId,
+              assignedBranchId: isAllAssignedNew ? "ALL" : createdUser.branchId,
+              branchName: isAllAssignedNew ? "Semua Cabang" : branchName,
+              branchCode: isAllAssignedNew ? "ALL" : branchCode,
               username: createdUser.username,
               fullName: createdUser.fullName,
               email: createdUser.email,
@@ -575,6 +634,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
               role: createdUser.role,
               pin: createdUser.pin || defaultPin,
               avatarUrl: createdUser.avatarUrl,
+              customPermissions: [],
               permissions
             },
             token: `google-token-${createdUser.id}-${Date.now()}`
@@ -590,7 +650,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
         credential: t.Optional(t.String()),
         idToken: t.Optional(t.String()),
         accessToken: t.Optional(t.String()),
-        branchId: t.Optional(t.String())
+        branchId: t.Optional(t.Nullable(t.String()))
       }),
       detail: {
         tags: ["Auth & Users"],
@@ -613,6 +673,9 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             parsedState.hostname === "localhost" ||
             parsedState.hostname === "127.0.0.1" ||
             parsedState.hostname.endsWith(".nip.io") ||
+            parsedState.hostname.includes("ngrok") ||
+            parsedState.hostname.includes("trycloudflare") ||
+            parsedState.hostname.endsWith(".vercel.app") ||
             /^192\.168\.\d+\.\d+$/.test(parsedState.hostname) ||
             /^10\.\d+\.\d+\.\d+$/.test(parsedState.hostname) ||
             /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(parsedState.hostname)
@@ -748,18 +811,8 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             existingUser.avatarUrl = avatarUrl;
           }
 
-          let permissions = ["pos:read", "pos:write", "stok:read"];
-          if (existingUser.role === "SUPERADMIN" || existingUser.role === "OWNER") {
-            permissions = ["*"];
-          } else if (existingUser.role === "PHARMACIST") {
-            permissions = ["pos:read", "pos:write", "stok:read", "stok:write", "pelayanan:write", "laporan:read"];
-          } else if (existingUser.role === "INVENTORY") {
-            permissions = ["stok:read", "stok:write", "pembelian:read", "pembelian:write", "pengiriman:write"];
-          } else if (existingUser.role === "FINANCE") {
-            permissions = ["keuangan:read", "keuangan:write", "laporan:read", "pembelian:read"];
-          } else if (existingUser.role === "GUEST") {
-            permissions = [];
-          }
+          const customUserPerms = ((existingUser.customPermissions as string[]) || []);
+          const permissions = resolveEffectivePermissions(existingUser.role as UserRole, customUserPerms);
 
           activeUserPayload = {
             id: existingUser.id,
@@ -774,6 +827,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             role: existingUser.role,
             pin: existingUser.pin || "123456",
             avatarUrl: existingUser.avatarUrl || avatarUrl,
+            customPermissions: customUserPerms,
             permissions,
             isFirstUser: false
           };
@@ -822,7 +876,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             })
             .returning();
 
-          const permissions = assignedRole === "SUPERADMIN" ? ["*"] : [];
+          const permissions = resolveEffectivePermissions(assignedRole as UserRole, []);
 
           activeUserPayload = {
             id: newUser.id,
@@ -837,6 +891,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
             role: newUser.role,
             pin: newUser.pin || defaultPin,
             avatarUrl: newUser.avatarUrl,
+            customPermissions: [],
             permissions,
             isFirstUser
           };
@@ -894,21 +949,28 @@ export const authRoutes = new Elysia({ prefix: "/api" })
 
         return {
           success: true,
-          data: usersList.map((u) => ({
-            id: u.id,
-            tenantId: u.tenantId,
-            username: u.username,
-            fullName: u.fullName,
-            email: u.email || `${u.username}@hafidzfarma.com`,
-            phone: u.phone || "081234567890",
-            role: u.role,
-            customPermissions: (u.customPermissions as string[]) || [],
-            branchId: u.branchId,
-            branchName: u.branchName || "Apotek Hafidz Farma Pusat",
-            hasPin: Boolean(u.pin),
-            avatarUrl: u.avatarUrl || undefined,
-            isActive: u.isActive
-          }))
+          data: usersList.map((u) => {
+            const customUserPerms = (u.customPermissions as string[]) || [];
+            const permissions = resolveEffectivePermissions(u.role as UserRole, customUserPerms);
+            const isAllAssigned = !u.branchId || u.branchId === "ALL";
+            return {
+              id: u.id,
+              tenantId: u.tenantId,
+              username: u.username,
+              fullName: u.fullName,
+              email: u.email || `${u.username}@hafidzfarma.com`,
+              phone: u.phone || "081234567890",
+              role: u.role,
+              customPermissions: customUserPerms,
+              permissions,
+              branchId: isAllAssigned ? "ALL" : u.branchId,
+              assignedBranchId: isAllAssigned ? "ALL" : u.branchId,
+              branchName: isAllAssigned ? "Semua Cabang" : (u.branchName || "Apotek Hafidz Farma Pusat"),
+              hasPin: Boolean(u.pin),
+              avatarUrl: u.avatarUrl || undefined,
+              isActive: u.isActive
+            };
+          })
         };
       } catch (err: any) {
         return { success: false, error: err.message };
@@ -930,11 +992,13 @@ export const authRoutes = new Elysia({ prefix: "/api" })
         const [tenant] = await db.select({ id: schema.tenants.id }).from(schema.tenants).limit(1);
         if (!tenant) throw new Error("Tenant not found");
 
+        const targetBranchId = (!body.branchId || body.branchId === "ALL") ? null : body.branchId;
+
         const [created] = await db
           .insert(schema.users)
           .values({
             tenantId: tenant.id,
-            branchId: body.branchId,
+            branchId: targetBranchId,
             username: body.username.trim().toLowerCase(),
             fullName: body.fullName.trim(),
             email: body.email,
@@ -949,7 +1013,12 @@ export const authRoutes = new Elysia({ prefix: "/api" })
         return {
           success: true,
           message: `Pengguna ${created.fullName} berhasil ditambahkan`,
-          data: created
+          data: {
+            ...created,
+            branchId: targetBranchId ? created.branchId : "ALL",
+            assignedBranchId: targetBranchId ? created.branchId : "ALL",
+            branchName: targetBranchId ? "Cabang Apotek" : "Semua Cabang"
+          }
         };
       } catch (err: any) {
         set.status = 400;
@@ -964,7 +1033,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
         phone: t.Optional(t.String()),
         role: t.String(),
         pin: t.Optional(t.String()),
-        branchId: t.Optional(t.String()),
+        branchId: t.Optional(t.Nullable(t.String())),
         avatarUrl: t.Optional(t.String())
       }),
       detail: {
@@ -990,7 +1059,9 @@ export const authRoutes = new Elysia({ prefix: "/api" })
 
         const updateData: Record<string, any> = {};
         if (body.role !== undefined) updateData.role = body.role;
-        if (body.branchId !== undefined) updateData.branchId = body.branchId;
+        if (body.branchId !== undefined) {
+          updateData.branchId = (!body.branchId || body.branchId === "ALL") ? null : body.branchId;
+        }
         if (body.fullName !== undefined) updateData.fullName = body.fullName.trim();
         if (body.email !== undefined) updateData.email = body.email.trim();
         if (body.phone !== undefined) updateData.phone = body.phone.trim();
@@ -1009,10 +1080,23 @@ export const authRoutes = new Elysia({ prefix: "/api" })
           return { success: false, error: "Pengguna tidak ditemukan" };
         }
 
+        invalidateUserPermsCache(params.id);
+
+        const customUserPerms = (updated.customPermissions as string[]) || [];
+        const permissions = resolveEffectivePermissions(updated.role as UserRole, customUserPerms);
+        const isAllAssigned = !updated.branchId || updated.branchId === "ALL";
+
         return {
           success: true,
           message: `Hak akses / data pengguna ${updated.fullName} berhasil diperbarui`,
-          data: updated
+          data: {
+            ...updated,
+            branchId: isAllAssigned ? "ALL" : updated.branchId,
+            assignedBranchId: isAllAssigned ? "ALL" : updated.branchId,
+            branchName: isAllAssigned ? "Semua Cabang" : (updated.branchId ? "Cabang Apotek" : "Semua Cabang"),
+            customPermissions: customUserPerms,
+            permissions
+          }
         };
       } catch (err: any) {
         set.status = 400;
@@ -1023,7 +1107,7 @@ export const authRoutes = new Elysia({ prefix: "/api" })
       params: t.Object({ id: t.String() }),
       body: t.Object({
         role: t.Optional(t.String()),
-        branchId: t.Optional(t.String()),
+        branchId: t.Optional(t.Nullable(t.String())),
         fullName: t.Optional(t.String()),
         email: t.Optional(t.String()),
         phone: t.Optional(t.String()),

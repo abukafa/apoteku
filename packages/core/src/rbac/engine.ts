@@ -53,6 +53,22 @@ export function hasAnyPermission(
 }
 
 /**
+ * Menggabungkan hak akses default bawaan peran dengan izin kustom pengguna (customPermissions).
+ */
+export function resolveEffectivePermissions(
+  role: UserRole,
+  customPermissions?: string[] | null
+): string[] {
+  if (role === "SUPERADMIN") return ["*"];
+  const roleDefaultPerms = (ROLE_PERMISSIONS[role] || []) as string[];
+  const customUserPerms = (customPermissions || []) as string[];
+  if (roleDefaultPerms.includes("*") || customUserPerms.includes("*")) {
+    return ["*"];
+  }
+  return Array.from(new Set([...roleDefaultPerms, ...customUserPerms]));
+}
+
+/**
  * Mengecek hak akses ke rute URL halaman web.
  */
 export function canAccessRoute(
@@ -111,9 +127,15 @@ export function canAccessApi(
 ): ApiAccessResult {
   if (role === "SUPERADMIN") return { allowed: true };
 
+  const normPath = pathname.startsWith("/api") ? pathname.slice(4) || "/" : pathname;
+
   // 1. Cek endpoint publik yang di-whitelist
   const isPublic = PUBLIC_API_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(prefix + "/")
+    (prefix) =>
+      pathname === prefix ||
+      pathname.startsWith(prefix + "/") ||
+      normPath === prefix ||
+      normPath.startsWith(prefix + "/")
   );
   if (isPublic) return { allowed: true };
 
@@ -121,7 +143,11 @@ export function canAccessApi(
 
   // 2. Cari aturan API yang cocok (paling spesifik path & kecocokan method)
   const candidateRules = API_ACCESS_RULES.filter((rule) => {
-    const pathMatch = pathname === rule.pathPrefix || pathname.startsWith(rule.pathPrefix + "/");
+    const pathMatch =
+      pathname === rule.pathPrefix ||
+      pathname.startsWith(rule.pathPrefix + "/") ||
+      normPath === rule.pathPrefix ||
+      normPath.startsWith(rule.pathPrefix + "/");
     if (!pathMatch) return false;
     if (rule.method && rule.method.toUpperCase() !== normMethod) return false;
     return true;

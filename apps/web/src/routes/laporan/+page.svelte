@@ -22,6 +22,7 @@
   import { portal } from "$lib/actions/portal";
   import { api } from "$lib/services/api";
   import { authStore } from "$lib/stores/authStore.svelte";
+  import { alertStore } from "$lib/stores/alertStore.svelte";
   import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { formatRupiah, calculateGrossMarginPercent } from "@apoteku/core";
 
@@ -92,9 +93,29 @@
 
   // Master Data & Filters
   let branches = $state<any[]>([]);
-  let selectedBranchId = $state(authStore.user?.branchId || "ALL");
+  let selectedBranchId = $state(authStore.isAllBranches ? "ALL" : (authStore.user?.branchId || "ALL"));
   let selectedPeriod = $state(periodOptions[0].value);
   let activeTab = $state<"penjualan" | "sipnap" | "pareto">("penjualan");
+
+  // RBAC Permission Derivations
+  let canSalesReport = $derived(authStore.can("reports:sales:view"));
+  let canInventoryReport = $derived(authStore.can("reports:inventory:view"));
+  let canFinancialReport = $derived(authStore.can("reports:financial:view"));
+  let canSipnapExport = $derived(authStore.can("reports:sipnap:export"));
+
+  // Sifat fallback otomatis tab yang aktif jika pengguna tidak memiliki izin ke tab tertentu
+  $effect(() => {
+    if (activeTab === "penjualan" && !canSalesReport) {
+      if (canSipnapExport) activeTab = "sipnap";
+      else if (canInventoryReport) activeTab = "pareto";
+    } else if (activeTab === "sipnap" && !canSipnapExport) {
+      if (canSalesReport) activeTab = "penjualan";
+      else if (canInventoryReport) activeTab = "pareto";
+    } else if (activeTab === "pareto" && !canInventoryReport) {
+      if (canSalesReport) activeTab = "penjualan";
+      else if (canSipnapExport) activeTab = "sipnap";
+    }
+  });
 
   // Table Filters (placed in top-right corner of DataTable)
   let salesChannelFilter = $state<"ALL" | "CASH" | "NON_CASH" | "RESEP">("ALL");
@@ -119,20 +140,34 @@
   async function loadReports() {
     isLoading = true;
     try {
-      const [salesRes, sipRes, parRes] = await Promise.all([
-        api.reports.getSalesShifts({ branchId: selectedBranchId, period: selectedPeriod }),
-        api.reports.getSipnap({ branchId: selectedBranchId, period: selectedPeriod }),
-        api.reports.getPareto({ branchId: selectedBranchId, period: selectedPeriod })
-      ]);
+      const promises: Promise<any>[] = [
+        canSalesReport
+          ? api.reports.getSalesShifts({ branchId: selectedBranchId, period: selectedPeriod }).catch(() => null)
+          : Promise.resolve(null),
+        canSipnapExport
+          ? api.reports.getSipnap({ branchId: selectedBranchId, period: selectedPeriod }).catch(() => null)
+          : Promise.resolve(null),
+        canInventoryReport
+          ? api.reports.getPareto({ branchId: selectedBranchId, period: selectedPeriod }).catch(() => null)
+          : Promise.resolve(null)
+      ];
+
+      const [salesRes, sipRes, parRes] = await Promise.all(promises);
 
       if (salesRes?.success && Array.isArray(salesRes.data)) {
         salesShiftRecords = salesRes.data;
+      } else if (!canSalesReport) {
+        salesShiftRecords = [];
       }
       if (sipRes?.success && Array.isArray(sipRes.data)) {
         sipnapRecords = sipRes.data;
+      } else if (!canSipnapExport) {
+        sipnapRecords = [];
       }
       if (parRes?.success && Array.isArray(parRes.data)) {
         paretoRecords = parRes.data;
+      } else if (!canInventoryReport) {
+        paretoRecords = [];
       }
     } catch (err) {
       console.error("Load reports error:", err);
@@ -469,16 +504,33 @@
   );
 
   function exportActiveReportCsv() {
+    if (activeTab === "penjualan" && !canSalesReport) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mengekspor laporan omzet penjualan (reports:sales:view).");
+      return;
+    }
+    if (activeTab === "sipnap" && !canSipnapExport) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mengekspor laporan resmi SIPNAP (reports:sipnap:export).");
+      return;
+    }
+    if (activeTab === "pareto" && !canInventoryReport) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mengekspor laporan analitik persediaan (reports:inventory:view).");
+      return;
+    }
+
     let csvContent = "";
     let filename = `laporan-${activeTab}-${selectedPeriod}.csv`;
 
     if (activeTab === "penjualan") {
+      const header = canFinancialReport
+        ? "Tanggal,Cabang,Shift,Kasir,Kanal,Jml Transaksi,Omzet Bruto,HPP,Laba Kotor\n"
+        : "Tanggal,Cabang,Shift,Kasir,Kanal,Jml Transaksi,Omzet Bruto\n";
       csvContent =
-        "Tanggal,Cabang,Shift,Kasir,Kanal,Jml Transaksi,Omzet Bruto,HPP,Laba Kotor\n" +
+        header +
         filteredSalesRecords
-          .map(
-            (r) =>
-              `${r.date},"${r.branchName}","${r.shiftName}","${r.cashierName}",${r.paymentChannel},${r.trxCount},${r.grossSales},${r.cogsHpp},${r.grossProfit}`
+          .map((r) =>
+            canFinancialReport
+              ? `${r.date},"${r.branchName}","${r.shiftName}","${r.cashierName}",${r.paymentChannel},${r.trxCount},${r.grossSales},${r.cogsHpp},${r.grossProfit}`
+              : `${r.date},"${r.branchName}","${r.shiftName}","${r.cashierName}",${r.paymentChannel},${r.trxCount},${r.grossSales}`
           )
           .join("\n");
     } else if (activeTab === "sipnap") {
@@ -558,7 +610,21 @@
 
           <button
             type="button"
-            onclick={() => (isPrintModalOpen = true)}
+            onclick={() => {
+              if (activeTab === "penjualan" && !canSalesReport) {
+                alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mencetak laporan omzet penjualan (reports:sales:view).");
+                return;
+              }
+              if (activeTab === "sipnap" && !canSipnapExport) {
+                alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mencetak laporan audit SIPNAP (reports:sipnap:export).");
+                return;
+              }
+              if (activeTab === "pareto" && !canInventoryReport) {
+                alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mencetak analitik persediaan (reports:inventory:view).");
+                return;
+              }
+              isPrintModalOpen = true;
+            }}
             class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
           >
             <Printer class="w-4 h-4" />
@@ -566,8 +632,8 @@
           </button>
         </div>
         
-        <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
-        {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+        <!-- Branch selector (for Multi-branch User) or locked badge (for Single Branch Staff) -->
+        {#if authStore.canSelectBranch}
           <div class="w-52">
             <Select
               value={selectedBranchId}
@@ -592,29 +658,29 @@
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
     <MetricCard
       title="Omzet Terpilih"
-      value={formatRupiah(totalGrossSales, false)}
-      subtext="Laba Kotor: {formatRupiah(totalGrossProfit)}"
+      value={canSalesReport ? formatRupiah(totalGrossSales, false) : "—"}
+      subtext={canFinancialReport ? `Laba Kotor: ${formatRupiah(totalGrossProfit)}` : "Omzet Bruto Periode"}
       icon={BarChart3}
       variant="brand"
     />
     <MetricCard
       title="Kepatuhan SIPNAP"
-      value="{branchSipnapRecords.length} Obat Klop"
-      subtext="Saldo buku = fisik narkotika"
+      value={canSipnapExport ? `${branchSipnapRecords.length} Obat Klop` : "Terkunci"}
+      subtext={canSipnapExport ? "Saldo buku = fisik narkotika" : "Wewenang khusus Apoteker"}
       icon={ShieldAlert}
       variant="success"
     />
     <MetricCard
       title="Produk Kategori A"
-      value="{classAItems.length} Item ({classAShareSum}%)"
-      subtext="Penyumbang utama omzet"
+      value={canInventoryReport ? `${classAItems.length} Item (${classAShareSum}%)` : "—"}
+      subtext={canInventoryReport ? "Penyumbang utama omzet" : "Analisis Pareto ABC"}
       icon={PieChart}
       variant="default"
     />
     <MetricCard
       title="Margin Rata-rata"
-      value="{averageMarginPercent}%"
-      subtext="Rasio laba kotor terhadap HPP"
+      value={canFinancialReport ? `${averageMarginPercent}%` : "—"}
+      subtext={canFinancialReport ? "Rasio laba kotor terhadap HPP" : "Privat Keuangan & Owner"}
       icon={TrendingUp}
       variant="warning"
     />
@@ -622,44 +688,50 @@
 
   <!-- TAB NAVIGATION -->
   <div class="flex items-center gap-2 border-b border-slate-200 text-xs font-bold overflow-x-auto no-scrollbar">
-    <button
-      type="button"
-      onclick={() => (activeTab = "penjualan")}
-      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'penjualan' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
-    >
-      <span>Laporan Omzet & Shift Kasir ({branchSalesRecords.length})</span>
-      {#if activeTab === "penjualan"}
-        <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
-      {/if}
-    </button>
+    {#if canSalesReport}
+      <button
+        type="button"
+        onclick={() => (activeTab = "penjualan")}
+        class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'penjualan' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      >
+        <span>Laporan Omzet & Shift Kasir ({branchSalesRecords.length})</span>
+        {#if activeTab === "penjualan"}
+          <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
+        {/if}
+      </button>
+    {/if}
 
-    <button
-      type="button"
-      onclick={() => (activeTab = "sipnap")}
-      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'sipnap' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
-    >
-      <div class="flex items-center gap-1.5">
-        <ShieldAlert class="w-4 h-4 text-rose-600" />
-        <span>Laporan SIPNAP Kemenkes ({branchSipnapRecords.length})</span>
-      </div>
-      {#if activeTab === "sipnap"}
-        <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
-      {/if}
-    </button>
+    {#if canSipnapExport}
+      <button
+        type="button"
+        onclick={() => (activeTab = "sipnap")}
+        class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'sipnap' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      >
+        <div class="flex items-center gap-1.5">
+          <ShieldAlert class="w-4 h-4 text-rose-600" />
+          <span>Laporan SIPNAP Kemenkes ({branchSipnapRecords.length})</span>
+        </div>
+        {#if activeTab === "sipnap"}
+          <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
+        {/if}
+      </button>
+    {/if}
 
-    <button
-      type="button"
-      onclick={() => (activeTab = "pareto")}
-      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'pareto' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
-    >
-      <div class="flex items-center gap-1.5">
-        <PieChart class="w-4 h-4 text-amber-500" />
-        <span>Analisis Pareto ABC ({branchParetoRecords.length})</span>
-      </div>
-      {#if activeTab === "pareto"}
-        <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
-      {/if}
-    </button>
+    {#if canInventoryReport}
+      <button
+        type="button"
+        onclick={() => (activeTab = "pareto")}
+        class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'pareto' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      >
+        <div class="flex items-center gap-1.5">
+          <PieChart class="w-4 h-4 text-amber-500" />
+          <span>Analisis Pareto ABC ({branchParetoRecords.length})</span>
+        </div>
+        {#if activeTab === "pareto"}
+          <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
+        {/if}
+      </button>
+    {/if}
   </div>
 
   <!-- TAB 1: PENJUALAN & SHIFT KASIR -->
@@ -737,15 +809,17 @@
         <SortableTh key="paymentChannel" label="Kanal" align="center" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
         <SortableTh key="trxCount" label="Trx" align="center" dataType="number" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
         <SortableTh key="grossSales" label="Omzet Bruto" align="right" dataType="currency" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
-        <SortableTh key="cogsHpp" label="Modal (HPP)" align="right" dataType="currency" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
-        <SortableTh key="grossProfit" label="Laba Kotor" align="right" dataType="currency" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
+        {#if canFinancialReport}
+          <SortableTh key="cogsHpp" label="Modal (HPP)" align="right" dataType="currency" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
+          <SortableTh key="grossProfit" label="Laba Kotor" align="right" dataType="currency" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
+        {/if}
         <SortableTh key="cashVariance" label="Selisih Kas" align="center" dataType="currency" sortKey={salesSortKey} sortDirection={salesSortDirection} onsort={handleSalesSort} />
       {/snippet}
 
       {#snippet rows()}
         {#if paginatedSalesRecords.length === 0}
           <tr>
-            <td colspan="8" class="text-center py-10 text-slate-400 text-xs">
+            <td colspan={canFinancialReport ? 8 : 6} class="text-center py-10 text-slate-400 text-xs">
               {#if isLoading}
                 Sedang memuat data penjualan...
               {:else}
@@ -774,13 +848,15 @@
               <td class="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
                 {formatRupiah(r.grossSales)}
               </td>
-              <td class="py-3.5 px-4 text-right font-mono text-slate-600">
-                {formatRupiah(r.cogsHpp)}
-              </td>
-              <td class="py-3.5 px-4 text-right font-mono font-black text-emerald-600">
-                {formatRupiah(r.grossProfit)}
-                <div class="text-[10px] font-normal text-slate-400">Margin {marginPct}%</div>
-              </td>
+              {#if canFinancialReport}
+                <td class="py-3.5 px-4 text-right font-mono text-slate-600">
+                  {formatRupiah(r.cogsHpp)}
+                </td>
+                <td class="py-3.5 px-4 text-right font-mono font-black text-emerald-600">
+                  {formatRupiah(r.grossProfit)}
+                  <div class="text-[10px] font-normal text-slate-400">Margin {marginPct}%</div>
+                </td>
+              {/if}
               <td class="py-3.5 px-4 text-center font-mono">
                 {#if r.cashVariance === 0}
                   <Badge type="SUCCESS" label="KLOP" />
@@ -1154,14 +1230,25 @@
           <span class="text-slate-500 block text-[10px]">Total Omzet Bruto</span>
           <strong class="font-mono text-slate-900 text-xs">{formatRupiah(totalGrossSales)}</strong>
         </div>
-        <div>
-          <span class="text-slate-500 block text-[10px]">Total HPP / Modal</span>
-          <strong class="font-mono text-slate-700 text-xs">{formatRupiah(totalGrossSales - totalGrossProfit)}</strong>
-        </div>
-        <div>
-          <span class="text-slate-500 block text-[10px]">Laba Kotor (Margin)</span>
-          <strong class="font-mono text-emerald-700 text-xs">{formatRupiah(totalGrossProfit)} ({averageMarginPercent}%)</strong>
-        </div>
+        {#if canFinancialReport}
+          <div>
+            <span class="text-slate-500 block text-[10px]">Total HPP / Modal</span>
+            <strong class="font-mono text-slate-700 text-xs">{formatRupiah(totalGrossSales - totalGrossProfit)}</strong>
+          </div>
+          <div>
+            <span class="text-slate-500 block text-[10px]">Laba Kotor (Margin)</span>
+            <strong class="font-mono text-emerald-700 text-xs">{formatRupiah(totalGrossProfit)} ({averageMarginPercent}%)</strong>
+          </div>
+        {:else}
+          <div>
+            <span class="text-slate-500 block text-[10px]">Modal & Laba Kotor</span>
+            <strong class="font-mono text-slate-400 text-xs">Akses Terbatas</strong>
+          </div>
+          <div>
+            <span class="text-slate-500 block text-[10px]">Margin Finansial</span>
+            <strong class="font-mono text-slate-400 text-xs">Khusus Owner/Finance</strong>
+          </div>
+        {/if}
         <div>
           <span class="text-slate-500 block text-[10px]">Total Data Terfilter</span>
           <strong class="font-mono text-slate-900 text-xs">
@@ -1188,15 +1275,17 @@
                 <th class="py-2 px-2.5 text-center">Metode</th>
                 <th class="py-2 px-2.5 text-center">Trx</th>
                 <th class="py-2 px-2.5 text-right">Omzet Bruto</th>
-                <th class="py-2 px-2.5 text-right">HPP (Modal)</th>
-                <th class="py-2 px-2.5 text-right">Laba Kotor</th>
+                {#if canFinancialReport}
+                  <th class="py-2 px-2.5 text-right">HPP (Modal)</th>
+                  <th class="py-2 px-2.5 text-right">Laba Kotor</th>
+                {/if}
                 <th class="py-2 px-2.5 text-center">Selisih Kas</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
               {#if filteredSalesRecords.length === 0}
                 <tr>
-                  <td colspan="9" class="text-center py-6 text-slate-400">Tidak ada data shift kasir untuk filter ini.</td>
+                  <td colspan={canFinancialReport ? 9 : 7} class="text-center py-6 text-slate-400">Tidak ada data shift kasir untuk filter ini.</td>
                 </tr>
               {:else}
                 {#each filteredSalesRecords as r, idx}
@@ -1218,11 +1307,13 @@
                     </td>
                     <td class="py-1.5 px-2.5 text-center font-mono font-bold">{r.trxCount}</td>
                     <td class="py-1.5 px-2.5 text-right font-mono font-bold text-slate-900">{formatRupiah(r.grossSales)}</td>
-                    <td class="py-1.5 px-2.5 text-right font-mono text-slate-600">{formatRupiah(r.cogsHpp)}</td>
-                    <td class="py-1.5 px-2.5 text-right font-mono font-bold text-emerald-700">
-                      {formatRupiah(r.grossProfit)}
-                      <span class="text-[9px] font-normal text-slate-400 block">({marginPct}%)</span>
-                    </td>
+                    {#if canFinancialReport}
+                      <td class="py-1.5 px-2.5 text-right font-mono text-slate-600">{formatRupiah(r.cogsHpp)}</td>
+                      <td class="py-1.5 px-2.5 text-right font-mono font-bold text-emerald-700">
+                        {formatRupiah(r.grossProfit)}
+                        <span class="text-[9px] font-normal text-slate-400 block">({marginPct}%)</span>
+                      </td>
+                    {/if}
                     <td class="py-1.5 px-2.5 text-center font-mono">
                       {#if r.cashVariance === 0}
                         <span class="text-emerald-600 font-bold text-[10px]">KLOP</span>
@@ -1239,8 +1330,10 @@
                 <td colspan="4" class="py-2 px-2.5 text-right">TOTAL KESELURUHAN:</td>
                 <td class="py-2 px-2.5 text-center font-mono">{filteredSalesRecords.reduce((a, b) => a + b.trxCount, 0)}</td>
                 <td class="py-2 px-2.5 text-right font-mono">{formatRupiah(totalGrossSales)}</td>
-                <td class="py-2 px-2.5 text-right font-mono text-slate-700">{formatRupiah(totalGrossSales - totalGrossProfit)}</td>
-                <td class="py-2 px-2.5 text-right font-mono text-emerald-700">{formatRupiah(totalGrossProfit)}</td>
+                {#if canFinancialReport}
+                  <td class="py-2 px-2.5 text-right font-mono text-slate-700">{formatRupiah(totalGrossSales - totalGrossProfit)}</td>
+                  <td class="py-2 px-2.5 text-right font-mono text-emerald-700">{formatRupiah(totalGrossProfit)}</td>
+                {/if}
                 <td class="py-2 px-2.5 text-center font-mono text-[10px] text-slate-600">Audit Klop</td>
               </tr>
             </tfoot>

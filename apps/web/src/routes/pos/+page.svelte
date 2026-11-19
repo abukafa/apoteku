@@ -149,11 +149,11 @@
 
   // Shift Register State
   const SHIFT_TEMPLATES = [
-    { value: "1", label: "Shift 1 - Pagi", sublabel: "07:00 - 15:00 WIB", shiftNumber: 1, name: "Pagi (07:00 - 15:00)" },
-    { value: "2", label: "Shift 2 - Siang", sublabel: "14:00 - 22:00 WIB", shiftNumber: 2, name: "Siang (14:00 - 22:00)" },
-    { value: "3", label: "Shift 3 - Malam", sublabel: "21:00 - 07:00 WIB", shiftNumber: 3, name: "Malam (21:00 - 07:00)" },
-    { value: "4", label: "Shift 4 - Lembur / Ekstra", sublabel: "Jam fleksibel di luar shift normal", shiftNumber: 4, name: "Lembur / Ekstra" },
-    { value: "custom", label: "Kustom / Shift Tambahan", sublabel: "Tentukan jam & nama shift sendiri", shiftNumber: 5, name: "Kustom" }
+    { value: "1", label: "Shift 1 - Pagi", shiftNumber: 1, name: "Pagi" },
+    { value: "2", label: "Shift 2 - Siang", shiftNumber: 2, name: "Siang" },
+    { value: "3", label: "Shift 3 - Malam", shiftNumber: 3, name: "Malam" },
+    { value: "4", label: "Shift 4 - Lembur / Ekstra", shiftNumber: 4, name: "Lembur / Ekstra" },
+    { value: "custom", label: "Kustom / Shift Tambahan", shiftNumber: 5, name: "Kustom" }
   ];
 
   let isShiftModalOpen = $state(false);
@@ -181,7 +181,20 @@
   let shiftNotes = $state("");
   let shiftClosureSuccess = $state("");
 
+  // Hak Akses Kasir & Shift Sentralisasi @apoteku/core
+  const canCheckout = $derived(authStore.can("pos:checkout"));
+  const canOpenShift = $derived(authStore.can("pos:shift:open"));
+  const canCloseShift = $derived(authStore.can("pos:shift:close"));
+
   async function openShiftModal() {
+    if (!activeShift && !canOpenShift) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang untuk membuka shift kasir.");
+      return;
+    }
+    if (activeShift && !canCloseShift) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang untuk menutup shift / rekonsiliasi kasir.");
+      return;
+    }
     isShiftModalOpen = true;
 
     // Rekomendasikan shift sesuai jam saat ini jika belum ada activeShift
@@ -230,7 +243,7 @@
       const shiftTag =
         selectedTemplate?.value === "custom" && customShiftLabel.trim()
           ? customShiftLabel.trim()
-          : selectedTemplate?.label + (selectedTemplate?.sublabel ? ` (${selectedTemplate.sublabel})` : "");
+          : selectedTemplate?.label || `Shift ${shiftNumber}`;
       const combinedNotes = shiftNotes.trim() ? `[${shiftTag}] ${shiftNotes.trim()}` : `[${shiftTag}]`;
 
       if (networkStore.effectiveOnline) {
@@ -1266,6 +1279,14 @@
   }
 
   function openCheckout() {
+    if (!canCheckout) {
+      alertStore.danger(
+        "Akses Ditolak",
+        "Anda tidak memiliki wewenang untuk memproses pembayaran kasir (pos:checkout)."
+      );
+      return;
+    }
+
     // 1. VALIDASI KETAT: SHIFT KASIR WAJIB AKTIF
     if (!activeShift) {
       alertStore.danger(
@@ -1334,6 +1355,14 @@
   }
 
   async function handleCheckoutSubmit() {
+    if (!canCheckout) {
+      alertStore.danger(
+        "Akses Ditolak",
+        "Anda tidak memiliki wewenang untuk memproses transaksi kasir (pos:checkout)."
+      );
+      return;
+    }
+
     if (!activeShift) {
       alertStore.danger(
         "Shift Kasir Belum Dibuka",
@@ -1688,8 +1717,8 @@
 
     <!-- Controls: Branch Indicator, Shift info, Offline/Online Sync, Lock Terminal -->
     <div class="flex items-center gap-2 text-xs">
-      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Cashier/Staff) -->
-      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+      <!-- Branch selector (for Multi-branch User) or locked badge (for Cashier/Staff) -->
+      {#if authStore.canSelectBranch}
         <Select
           bind:value={selectedBranchId}
           icon={Store}
@@ -2161,13 +2190,13 @@
 
         <!-- Checkout Action Button -->
         <button
-          disabled={cart.length === 0}
+          disabled={cart.length === 0 || !canCheckout}
           onclick={openCheckout}
           class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-sm shadow-card flex items-center justify-center gap-2 transition-all mt-2 cursor-pointer"
-          title="Bayar transaksi (Tekan F8)"
+          title={!canCheckout ? "Anda tidak memiliki wewenang checkout kasir" : "Bayar transaksi (Tekan F8)"}
         >
           <CreditCard class="w-4 h-4" />
-          <span>Proses Pembayaran</span>
+          <span>{canCheckout ? "Proses Pembayaran" : "Checkout Terkunci"}</span>
           <kbd class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-black bg-emerald-800 text-emerald-100 border border-emerald-500/40">F8</kbd>
         </button>
       </div>
@@ -2629,17 +2658,16 @@
               </p>
             </div>
 
-            <!-- Dropdown Pilihan Shift & Jam Kerja -->
+            <!-- Dropdown Pilihan Shift -->
             <div>
               <label for="shift-template-select" class="font-bold text-slate-700 block mb-1">
-                Pilihan Jadwal / Jam Shift
+                Pilihan Shift
               </label>
               <Select
                 id="shift-template-select"
                 options={SHIFT_TEMPLATES.map((t) => ({
                   value: t.value,
-                  label: t.label,
-                  sublabel: t.sublabel
+                  label: t.label
                 }))}
                 value={selectedShiftValue}
                 onchange={(val) => (selectedShiftValue = String(val))}
@@ -2650,13 +2678,13 @@
             {#if selectedShiftValue === "custom"}
               <div>
                 <label for="shift-custom-label" class="font-bold text-slate-700 block mb-1">
-                  Keterangan Jam / Nama Shift Kustom
+                  Nama Shift Kustom
                 </label>
                 <input
                   id="shift-custom-label"
                   type="text"
                   bind:value={customShiftLabel}
-                  placeholder="Contoh: Shift Sore 12:00 - 18:00 / Lembur Event"
+                  placeholder="Contoh: Shift Sore / Lembur Event"
                   class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800"
                 />
               </div>
@@ -2718,7 +2746,7 @@
               </div>
               <div class="flex justify-between text-slate-600">
                 <span>Waktu Buka Shift:</span>
-                <span class="font-mono">{activeShift.startTime ? new Date(activeShift.startTime).toLocaleTimeString("id-ID", { hour: '2-digit', minute: '2-digit' }) : "07:00"} WIB</span>
+                <span class="font-mono">{activeShift.startTime ? new Date(activeShift.startTime).toLocaleTimeString("id-ID", { hour: '2-digit', minute: '2-digit' }) + " WIB" : "-"}</span>
               </div>
             </div>
 

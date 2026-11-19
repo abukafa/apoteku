@@ -192,7 +192,10 @@
   let branches = $state<any[]>([]);
 
   // Navigation & Filters
-  let selectedBranchId = $state(authStore.user?.branchId || "1");
+  let selectedBranchId = $state(authStore.isAllBranches ? "ALL" : (authStore.user?.branchId || "1"));
+  const canCreatePO = $derived(authStore.can("purchase:order:create"));
+  const canReceiveInvoice = $derived(authStore.can("purchase:invoice:receive"));
+  const canPayDebt = $derived(authStore.can("finance:debt:pay"));
   let activeTab = $state<"faktur" | "sp" | "konsinyasi">("faktur");
   let invoiceStatusFilter = $state<"ALL" | "UNPAID" | "PARTIAL" | "OVERDUE" | "DUE_SOON" | "PAID">("ALL");
   let searchQuery = $state("");
@@ -1020,6 +1023,10 @@
   let isSavingInvoice = $state(false);
 
   async function handleSaveNewInvoice() {
+    if (!canReceiveInvoice) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mencatat faktur pembelian (purchase:invoice:receive).");
+      return;
+    }
     if (!newInvoiceNumber.trim()) {
       alertStore.warning("Validasi Faktur", "Nomor faktur dari supplier/PBF wajib diisi.");
       return;
@@ -1111,6 +1118,10 @@
   }
 
   async function handleDeleteInvoice(inv: PurchaseInvoiceRecord) {
+    if (!canReceiveInvoice) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang membatalkan faktur (purchase:invoice:receive).");
+      return;
+    }
     if (inv.paidAmount > 0) {
       alertStore.warning("Tidak Dapat Dihapus", "Faktur yang sudah memiliki riwayat pembayaran tidak dapat dihapus.");
       return;
@@ -1265,12 +1276,20 @@
   }
 
   function openDebtPayment(inv: PurchaseInvoiceRecord) {
+    if (!canPayDebt) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki hak akses pelunasan hutang (finance:debt:pay).");
+      return;
+    }
     selectedInvoiceForPayment = inv;
     paymentAmount = inv.totalAmount - inv.paidAmount;
     isPayDebtModalOpen = true;
   }
 
   async function handleSavePayment() {
+    if (!canPayDebt) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki hak akses pelunasan hutang (finance:debt:pay).");
+      return;
+    }
     if (!selectedInvoiceForPayment || paymentAmount <= 0) return;
 
     const rlNumber = `RLH-${String(Date.now()).slice(-6)}`;
@@ -1325,6 +1344,10 @@
   }
 
   async function handleCreateSp() {
+    if (!canCreatePO) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang membuat Surat Pesanan (purchase:order:create).");
+      return;
+    }
     if (newSpForm.items.length === 0) {
       alertStore.warning("Item SP Kosong", "Tambahkan minimal 1 item obat pada Surat Pesanan.");
       return;
@@ -1534,6 +1557,10 @@
   }
 
   async function handleCreateConsignment() {
+    if (!canReceiveInvoice) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mencatat titipan konsinyasi (purchase:invoice:receive).");
+      return;
+    }
     const validItems = newKsnForm.items.filter((it) => Number(it.receivedQty) > 0);
     if (validItems.length === 0) {
       alertStore.warning("Item Kosong", "Minimal 1 produk konsinyasi dengan Qty > 0 wajib diisi.");
@@ -1633,8 +1660,8 @@
     breadcrumbs={[{ label: "Pembelian" }]}
   >
     {#snippet actions()}
-      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
-      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+      <!-- Branch selector (for Multi-branch User) or locked badge (for Single Branch Staff) -->
+      {#if authStore.canSelectBranch}
         <div class="w-56">
           <Select
             value={selectedBranchId}
@@ -1652,27 +1679,31 @@
         </div>
       {/if}
 
-      <button
-        type="button"
-        onclick={() => (isAddSpModalOpen = true)}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs"
-      >
-        <FileText class="w-4 h-4 text-brand-blue" />
-        <span>Buat Pesanan (SP)</span>
-      </button>
+      {#if canCreatePO}
+        <button
+          type="button"
+          onclick={() => (isAddSpModalOpen = true)}
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs"
+        >
+          <FileText class="w-4 h-4 text-brand-blue" />
+          <span>Buat Pesanan (SP)</span>
+        </button>
+      {/if}
 
-      <button
-        type="button"
-        onclick={() => {
-          newInvoiceNumber = `FP-${new Date().toISOString().slice(2, 7).replace("-", "")}-${Math.floor(1000 + Math.random() * 9000)}`;
-          updateDueDateFromSupplier(newInvoiceSupplier, newInvoiceDate);
-          isAddInvoiceModalOpen = true;
-        }}
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
-      >
-        <Plus class="w-4 h-4" />
-        <span>Faktur Masuk PBF</span>
-      </button>
+      {#if canReceiveInvoice}
+        <button
+          type="button"
+          onclick={() => {
+            newInvoiceNumber = `FP-${new Date().toISOString().slice(2, 7).replace("-", "")}-${Math.floor(1000 + Math.random() * 9000)}`;
+            updateDueDateFromSupplier(newInvoiceSupplier, newInvoiceDate);
+            isAddInvoiceModalOpen = true;
+          }}
+          class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+        >
+          <Plus class="w-4 h-4" />
+          <span>Faktur Masuk PBF</span>
+        </button>
+      {/if}
     {/snippet}
   </PageHeader>
 
@@ -1884,14 +1915,18 @@
             <td class="py-3.5 px-4 text-center">
               <div class="flex items-center justify-center gap-1.5">
                 {#if remainingDebt > 0}
-                  <button
-                    type="button"
-                    onclick={() => openDebtPayment(inv)}
-                    class="px-2.5 py-1 rounded-lg bg-brand-blue-50 hover:bg-brand-blue-100 text-brand-blue-700 text-[11px] font-bold transition-colors inline-flex items-center gap-1"
-                  >
-                    <CreditCard class="w-3 h-3" />
-                    <span>Bayar</span>
-                  </button>
+                  {#if canPayDebt}
+                    <button
+                      type="button"
+                      onclick={() => openDebtPayment(inv)}
+                      class="px-2.5 py-1 rounded-lg bg-brand-blue-50 hover:bg-brand-blue-100 text-brand-blue-700 text-[11px] font-bold transition-colors inline-flex items-center gap-1"
+                    >
+                      <CreditCard class="w-3 h-3" />
+                      <span>Bayar</span>
+                    </button>
+                  {:else}
+                    <span class="text-amber-600 font-bold text-[11px]">Belum Lunas</span>
+                  {/if}
                 {:else}
                   <span class="text-emerald-600 font-bold text-[11px] flex items-center justify-center gap-1">
                     <CheckCircle2 class="w-3.5 h-3.5" /> Lunas
@@ -1907,7 +1942,7 @@
                   <Eye class="w-3.5 h-3.5" />
                 </button>
 
-                {#if inv.paidAmount === 0}
+                {#if inv.paidAmount === 0 && canReceiveInvoice}
                   <button
                     type="button"
                     onclick={() => handleDeleteInvoice(inv)}
@@ -2006,7 +2041,7 @@
             </td>
             <td class="py-3.5 px-4 text-center">
               <div class="flex items-center justify-center gap-1.5">
-                {#if sp.status !== "RECEIVED"}
+                {#if sp.status !== "RECEIVED" && canReceiveInvoice}
                   {#if sp.orderType === "KONSINYASI"}
                     <button
                       type="button"
@@ -2112,14 +2147,16 @@
       {/snippet}
 
       {#snippet actions()}
-        <button
-          type="button"
-          onclick={() => openAddKsnModal()}
-          class="px-3 py-1.5 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-xs shrink-0"
-        >
-          <Plus class="w-3.5 h-3.5" />
-          <span>Terima Titipan Baru</span>
-        </button>
+        {#if canReceiveInvoice}
+          <button
+            type="button"
+            onclick={() => openAddKsnModal()}
+            class="px-3 py-1.5 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-xs shrink-0"
+          >
+            <Plus class="w-3.5 h-3.5" />
+            <span>Terima Titipan Baru</span>
+          </button>
+        {/if}
       {/snippet}
 
       {#snippet header()}
@@ -2210,7 +2247,7 @@
                     onclick={() => openKsnSettleModal(ksn)}
                     class="px-2.5 py-1 rounded-lg font-bold text-[11px] transition-colors {ksn.unsettledAmount > 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'}"
                   >
-                    {ksn.unsettledAmount > 0 ? "Setor" : "Retur / Tutup"}
+                    {ksn.unsettledAmount > 0 ? "Setor" : "Retur"}
                   </button>
                 {:else}
                   <span class="text-emerald-600 font-bold text-[11px] inline-flex items-center gap-1">
@@ -2459,7 +2496,7 @@
             />
           </div>
           <div>
-            {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+            {#if authStore.canSelectBranch}
               <label for="inv-branch" class="font-bold text-slate-700 block mb-1">Cabang Penerima</label>
               <Select
                 id="inv-branch"
@@ -3122,7 +3159,7 @@
           />
         </div>
         <div>
-          {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+          {#if authStore.canSelectBranch}
             <label for="sp-branch" class="font-bold text-slate-700 block mb-1">Cabang Pemesan</label>
             <Select
               id="sp-branch"
@@ -3691,7 +3728,7 @@
               class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 font-mono"
             />
           </div>
-          {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+          {#if authStore.canSelectBranch}
             <div class="sm:col-span-2">
               <label for="ksn-branch" class="font-bold text-slate-700 block mb-1">Cabang Penerima</label>
               <Select

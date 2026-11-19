@@ -25,7 +25,10 @@
   import { onMount } from "svelte";
   import { api } from "$lib/services/api";
   import { alertStore } from "$lib/stores/alertStore.svelte";
+  import { authStore } from "$lib/stores/authStore.svelte";
   import { formatRupiah, calculateDebtSettlement } from "@apoteku/core";
+
+  const canManageSupplier = $derived(authStore.can("supplier:manage"));
 
   let suppliers = $state<any[]>([]);
   let activeTab = $state<"semua" | "hutang" | "riwayat">("semua");
@@ -83,6 +86,10 @@
   });
 
   function openAddSupplierModal() {
+    if (!canManageSupplier) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki hak akses untuk menambah distributor PBF (supplier:manage).");
+      return;
+    }
     editingSupplierId = null;
     supplierForm = {
       code: `PBF-${Date.now().toString().slice(-4)}`,
@@ -99,6 +106,10 @@
   }
 
   function openEditSupplierModal(s: any) {
+    if (!canManageSupplier) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki hak akses untuk mengedit distributor PBF (supplier:manage).");
+      return;
+    }
     editingSupplierId = s.id;
     supplierForm = {
       code: s.code || "",
@@ -115,6 +126,10 @@
   }
 
   async function handleSaveSupplier() {
+    if (!canManageSupplier) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki hak akses untuk menyimpan distributor PBF (supplier:manage).");
+      return;
+    }
     if (!supplierForm.name.trim()) {
       alertStore.warning("Validasi Distributor", "Nama distributor / PBF wajib diisi.");
       return;
@@ -150,6 +165,10 @@
   }
 
   async function handleDeleteSupplier(s: any) {
+    if (!canManageSupplier) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki hak akses untuk menghapus distributor PBF (supplier:manage).");
+      return;
+    }
     const isConfirmed = await alertStore.confirm({
       type: "danger",
       title: "Hapus / Nonaktifkan Distributor",
@@ -580,14 +599,16 @@
     breadcrumbs={[{ label: "Supplier / PBF" }]}
   >
     {#snippet actions()}
-      <button
-        type="button"
-        onclick={openAddSupplierModal}
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
-      >
-        <Plus class="w-4 h-4" />
-        <span>Tambah PBF Baru</span>
-      </button>
+      {#if canManageSupplier}
+        <button
+          type="button"
+          onclick={openAddSupplierModal}
+          class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+        >
+          <Plus class="w-4 h-4" />
+          <span>Tambah PBF Baru</span>
+        </button>
+      {/if}
     {/snippet}
   </PageHeader>
 
@@ -752,26 +773,30 @@
                 {/if}
               </td>
               <td class="py-3.5 px-4 text-center">
-                <div class="flex items-center justify-center gap-1.5">
-                  <button
-                    type="button"
-                    onclick={() => openEditSupplierModal(s)}
-                    class="p-1 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-500 hover:text-brand-blue transition-colors"
-                    title="Edit Data PBF"
-                    aria-label="Edit {s.name}"
-                  >
-                    <Edit3 class="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onclick={() => handleDeleteSupplier(s)}
-                    class="p-1 rounded-lg border border-slate-200 hover:border-rose-300 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
-                    title="Hapus / Nonaktifkan PBF"
-                    aria-label="Hapus {s.name}"
-                  >
-                    <Trash2 class="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                {#if canManageSupplier}
+                  <div class="flex items-center justify-center gap-1.5">
+                    <button
+                      type="button"
+                      onclick={() => openEditSupplierModal(s)}
+                      class="p-1 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-500 hover:text-brand-blue transition-colors"
+                      title="Edit Data PBF"
+                      aria-label="Edit {s.name}"
+                    >
+                      <Edit3 class="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onclick={() => handleDeleteSupplier(s)}
+                      class="p-1 rounded-lg border border-slate-200 hover:border-rose-300 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
+                      title="Hapus / Nonaktifkan PBF"
+                      aria-label="Hapus {s.name}"
+                    >
+                      <Trash2 class="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                {:else}
+                  <span class="text-[11px] text-slate-400 font-medium">Hanya Lihat</span>
+                {/if}
               </td>
             </tr>
           {/each}

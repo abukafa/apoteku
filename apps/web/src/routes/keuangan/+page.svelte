@@ -68,8 +68,10 @@
   }
 
   // Master Data & Filters
+  const canSelectBranch = $derived(authStore.canSelectBranch);
+  const canManageCashflow = $derived(authStore.can("finance:cashflow:manage"));
   let branches = $state<any[]>([]);
-  let selectedBranchId = $state(authStore.user?.branchId || "1");
+  let selectedBranchId = $state(authStore.isAllBranches ? "ALL" : (authStore.user?.branchId || "1"));
   let activeTab = $state<"buku_kas" | "rekonsiliasi_shift">("buku_kas");
 
   let ledgerTypeFilter = $state<"ALL" | "IN" | "OUT">("ALL");
@@ -131,7 +133,7 @@
   async function loadFinanceData(branchId?: string) {
     isLoading = true;
     try {
-      const targetBranch = branchId === "ALL" ? undefined : branchId;
+      const targetBranch = branchId ?? selectedBranchId ?? (authStore.isAllBranches ? "ALL" : authStore.user?.branchId);
       const [shiftRes, cfRes] = await Promise.all([
         api.shift.list({ branchId: targetBranch }),
         api.finance.getCashflow(targetBranch)
@@ -170,13 +172,17 @@
       const bList = bRes?.data || (Array.isArray(bRes) ? bRes : []);
       if (bList.length > 0) {
         branches = bList;
-        const exists = bList.some((b: any) => b.id === selectedBranchId);
-        if (!exists) {
-          selectedBranchId = bList[0].id;
-          expenseForm.branchId = bList[0].id;
-        } else {
-          expenseForm.branchId = selectedBranchId;
+        if (authStore.isAllBranches) {
+          selectedBranchId = "ALL";
+        } else if (!selectedBranchId || selectedBranchId === "ALL") {
+          selectedBranchId = authStore.user?.branchId || bList[0].id;
         }
+
+        const exists = selectedBranchId === "ALL" || bList.some((b: any) => b.id === selectedBranchId);
+        if (!exists) {
+          selectedBranchId = authStore.isAllBranches ? "ALL" : bList[0].id;
+        }
+        expenseForm.branchId = selectedBranchId === "ALL" ? bList[0].id : selectedBranchId;
       }
       await loadFinanceData(selectedBranchId);
     } catch (err) {
@@ -382,6 +388,10 @@
   );
 
   async function handleSaveExpense() {
+    if (!canManageCashflow) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mengelola arus kas (finance:cashflow:manage).");
+      return;
+    }
     if (!expenseForm.amount || expenseForm.amount <= 0) return;
     isSubmittingExpense = true;
     try {
@@ -413,6 +423,10 @@
   }
 
   async function handlePayoutSubmit() {
+    if (!canManageCashflow) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang mengelola arus kas (finance:cashflow:manage).");
+      return;
+    }
     if (payoutAmount <= 0) return;
     isSubmittingPayout = true;
     try {
@@ -539,8 +553,8 @@
     breadcrumbs={[{ label: "Keuangan" }]}
   >
     {#snippet actions()}
-      <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
-      {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+      <!-- Branch selector (for Multi-branch User) or locked badge (for Single Branch Staff) -->
+      {#if authStore.canSelectBranch}
         <div class="w-56">
           <Select
             value={selectedBranchId}
@@ -561,14 +575,16 @@
         </div>
       {/if}
 
-      <button
-        type="button"
-        onclick={() => (isAddExpenseModalOpen = true)}
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
-      >
-        <Plus class="w-4 h-4" />
-        <span>Catat Mutasi Kas Kecil</span>
-      </button>
+      {#if canManageCashflow}
+        <button
+          type="button"
+          onclick={() => (isAddExpenseModalOpen = true)}
+          class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+        >
+          <Plus class="w-4 h-4" />
+          <span>Catat Mutasi Kas Kecil</span>
+        </button>
+      {/if}
     {/snippet}
   </PageHeader>
 
@@ -755,7 +771,7 @@
             </td>
             <td class="py-3.5 px-4 text-center text-slate-600 font-semibold">{entry.operator}</td>
             <td class="py-3.5 px-4 text-center">
-              {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+              {#if canManageCashflow}
                 <button
                   type="button"
                   onclick={() => handleDeleteEntry(entry)}
@@ -997,7 +1013,7 @@
         </div>
 
         <div>
-          {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+          {#if authStore.canSelectBranch}
             <label for="exp-branch" class="font-bold text-slate-700 block mb-1">Cabang Apotek</label>
             <Select
               id="exp-branch"

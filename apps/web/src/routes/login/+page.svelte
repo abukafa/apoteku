@@ -17,6 +17,7 @@
   import { authStore, type ActiveUser } from "$lib/stores/authStore.svelte";
   import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { api } from "$lib/services/api";
+  import { resolveEffectivePermissions, type UserRole } from "@apoteku/core";
 
   interface SavedAccount {
     id: string;
@@ -27,11 +28,13 @@
     branchId: string;
     branchName: string;
     avatarUrl?: string;
-    lastLoginAt: number;
+    lastLoginAt?: number;
     token?: string;
     tenantId?: string;
+    customPermissions?: string[];
     permissions?: string[];
     pin?: string;
+    isSaved?: boolean;
   }
 
   // Svelte 5 Runes
@@ -41,6 +44,7 @@
 
   // Auth Mode: "GOOGLE" (Default) | "PIN" (Kasir Cepat/Offline)
   let activeTab = $state<"GOOGLE" | "PIN">("GOOGLE");
+  let authStatus = $state<{ userCount: number; isInitialized: boolean } | null>(null);
 
   // Google Form State
   let googleConfig = $state<{ clientId: string; redirectUri?: string; isConfigured: boolean }>({
@@ -60,18 +64,7 @@
 
   // Daftar akun yang tersedia untuk opsi pilihan akun di tab PIN
   let availableAccounts = $derived.by(() => {
-    const list: {
-      id: string;
-      fullName: string;
-      username: string;
-      email?: string;
-      role: string;
-      branchId: string;
-      branchName: string;
-      avatarUrl?: string;
-      pin?: string;
-      isSaved?: boolean;
-    }[] = [];
+    const list: SavedAccount[] = [];
     const seen = new Set<string>();
 
     // 1. Akun yang tersimpan di perangkat ini (prioritas teratas)
@@ -88,6 +81,8 @@
           branchName: acc.branchName,
           avatarUrl: acc.avatarUrl,
           pin: acc.pin,
+          customPermissions: acc.customPermissions,
+          permissions: acc.permissions,
           isSaved: true
         });
       }
@@ -107,6 +102,8 @@
           branchName: u.branchName,
           avatarUrl: u.avatarUrl,
           pin: u.pin,
+          customPermissions: u.customPermissions,
+          permissions: u.permissions,
           isSaved: false
         });
       }
@@ -156,6 +153,7 @@
         lastLoginAt: Date.now(),
         token: token || user.token || existing?.token,
         tenantId: user.tenantId || existing?.tenantId || "tenant-hafidz-farma",
+        customPermissions: user.customPermissions || existing?.customPermissions || [],
         permissions: user.permissions || existing?.permissions,
         pin: user.pin || existing?.pin
       });
@@ -179,7 +177,9 @@
         (acc.username && u.username && u.username.toLowerCase() === acc.username.toLowerCase())
     );
 
-    const activeRole = (dbUser?.role || acc.role || "GUEST") as any;
+    const activeRole = (dbUser?.role || acc.role || "GUEST") as UserRole;
+    const customPerms = (dbUser?.customPermissions || acc.customPermissions || []) as string[];
+    const effectivePermissions = resolveEffectivePermissions(activeRole, customPerms);
 
     const activeUser: ActiveUser = {
       id: dbUser?.id || acc.id,
@@ -193,12 +193,8 @@
       pin: dbUser?.pin || acc.pin || "",
       avatarUrl: dbUser?.avatarUrl || acc.avatarUrl,
       isActive: true,
-      permissions:
-        activeRole === "SUPERADMIN" || activeRole === "OWNER"
-          ? ["*"]
-          : activeRole === "GUEST"
-            ? []
-            : (dbUser?.permissions || acc.permissions || ["pos:read", "pos:write", "stok:read"])
+      customPermissions: customPerms,
+      permissions: effectivePermissions
     };
 
     const token =
@@ -317,10 +313,11 @@
     savedAccounts = loadSavedAccounts();
 
     try {
-      const [userRes, branchRes, gCfgRes] = await Promise.all([
+      const [userRes, branchRes, gCfgRes, statusRes] = await Promise.all([
         api.users.list().catch(() => null),
         api.branches.list().catch(() => null),
-        api.auth.getGoogleConfig().catch(() => null)
+        api.auth.getGoogleConfig().catch(() => null),
+        api.auth.getStatus().catch(() => null)
       ]);
       if (userRes?.success && Array.isArray(userRes.data)) {
         users = userRes.data;
@@ -331,6 +328,9 @@
       }
       if (gCfgRes?.success && gCfgRes.data) {
         googleConfig = gCfgRes.data;
+      }
+      if (statusRes?.success && statusRes.data) {
+        authStatus = statusRes.data;
       }
     } catch (e) {
       console.warn("Failed to fetch initial login data:", e);
@@ -353,8 +353,17 @@
       return;
     }
 
-    // Tentukan origin dan redirect URI secara dinamis berdasarkan URL browser saat ini (mendukung localhost dan Wi-Fi/LAN nip.io sekaligus)
-    const currentOrigin = typeof window !== "undefined" ? window.location.origin : "http://localhost:5173";
+    // Tentukan origin dan redirect URI secara dinamis berdasarkan URL browser saat ini (mendukung localhost, Wi-Fi/LAN nip.io, dan Tunnel publik)
+    let currentOrigin = typeof window !== "undefined" ? window.location.origin : "http://localhost:5173";
+    try {
+      const parsedUrl = new URL(currentOrigin);
+      if (parsedUrl.protocol === "https:" || parsedUrl.hostname.includes("ngrok") || parsedUrl.hostname.includes("trycloudflare")) {
+        parsedUrl.port = "";
+        currentOrigin = parsedUrl.origin;
+      }
+    } catch {
+      // fallback
+    }
     const redirectUri = `${currentOrigin}/api/auth/google/callback`;
 
     let loginUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(
@@ -421,6 +430,8 @@
         branchName: currentAcc.branchName || tenantStore.current.name || "Apotek Hafidz Farma",
         avatarUrl: currentAcc.avatarUrl,
         pin: inputPin.trim(),
+        customPermissions: currentAcc.customPermissions,
+        permissions: currentAcc.permissions,
         lastLoginAt: Date.now()
       };
 
@@ -663,7 +674,7 @@
           </button>
         {/if}
 
-        {#if users.length === 0}
+        {#if authStatus && !authStatus.isInitialized}
           <div class="p-3.5 bg-blue-50/90 rounded-2xl border border-blue-200/80 flex items-start gap-2.5 text-xs text-blue-950">
             <Crown class="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
             <div class="space-y-0.5">

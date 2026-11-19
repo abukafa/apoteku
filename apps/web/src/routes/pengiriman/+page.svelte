@@ -145,10 +145,11 @@
   } | null>(null);
 
   let isAdminRole = $derived(
-    !authStore.user ||
-      authStore.user.role === "SUPERADMIN" ||
-      authStore.user.role === "OWNER"
+    !authStore.user || authStore.canSelectBranch
   );
+
+  const canTransfer = $derived(authStore.can("inventory:transfer"));
+  const canFefo = $derived(authStore.can("inventory:fefo"));
 
   let userResolvedBranchId = $derived(
     resolveBranchId(authStore.user?.branchId, branches) || branches[0]?.id || ""
@@ -564,6 +565,11 @@
   }
 
   async function openAddTransferModal() {
+    if (!canTransfer) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang untuk membuat surat jalan mutasi (inventory:transfer).");
+      return;
+    }
+
     if (branches.length < 2) {
       alertStore.warning(
         "Cabang Tidak Cukup",
@@ -966,11 +972,13 @@
   }
 
   function canReceiveTransfer(trf: TransferDoc): boolean {
+    if (!canTransfer) return false;
     if (isAdminRole) return true;
     return trf.toBranchId === userResolvedBranchId;
   }
 
   function canDispatchTransfer(trf: TransferDoc): boolean {
+    if (!canTransfer) return false;
     if (isAdminRole) return true;
     return trf.fromBranchId === userResolvedBranchId;
   }
@@ -1031,14 +1039,16 @@
         </div>
       {/if}
 
-      <button
-        type="button"
-        onclick={openAddTransferModal}
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
-      >
-        <Plus class="w-4 h-4" />
-        <span>Kirim Barang Baru</span>
-      </button>
+      {#if canTransfer}
+        <button
+          type="button"
+          onclick={openAddTransferModal}
+          class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+        >
+          <Plus class="w-4 h-4" />
+          <span>Kirim Barang Baru</span>
+        </button>
+      {/if}
     {/snippet}
   </PageHeader>
 

@@ -5,12 +5,18 @@ import {
   hasPermission,
   hasAnyPermission,
   canAccessRoute,
+  resolveEffectivePermissions,
   ROLE_DEFAULT_ROUTES,
   type UserRole as CoreUserRole,
   type PermissionKey
 } from "@apoteku/core";
 
 export type UserRole = CoreUserRole | "INVENTORY_STAFF";
+
+export function toCoreRole(role?: string | null): CoreUserRole {
+  if (role === "INVENTORY_STAFF") return "INVENTORY";
+  return (role || "GUEST") as CoreUserRole;
+}
 
 export interface ActiveUser {
   id: string;
@@ -20,10 +26,12 @@ export interface ActiveUser {
   role: UserRole;
   tenantId: string;
   branchId: string;
+  assignedBranchId?: string;
   branchName: string;
   pin: string;
   avatarUrl?: string;
   isActive: boolean;
+  customPermissions?: string[];
   permissions?: string[];
 }
 
@@ -38,8 +46,9 @@ const DEFAULT_SUPERADMIN: ActiveUser = {
   email: "admin@hafidzfarma.com",
   role: "SUPERADMIN",
   tenantId: "tenant-hafidz-farma",
-  branchId: "1",
-  branchName: "Apotek Hafidz Farma Pusat",
+  branchId: "ALL",
+  assignedBranchId: "ALL",
+  branchName: "Semua Cabang",
   pin: "123456",
   avatarUrl: undefined,
   isActive: true,
@@ -53,6 +62,16 @@ export class AuthState {
   isLockedOffline = $state<boolean>(false);
 
   isAuthenticated = $derived(this.user !== null);
+  isAllBranches = $derived(
+    !this.user?.assignedBranchId && !this.user?.branchId
+      ? true
+      : (this.user?.assignedBranchId ?? this.user?.branchId) === "ALL"
+  );
+  canSelectBranch = $derived(
+    !this.user?.assignedBranchId && !this.user?.branchId
+      ? true
+      : (this.user?.assignedBranchId ?? this.user?.branchId) === "ALL"
+  );
 
   constructor() {
     if (browser) {
@@ -102,12 +121,48 @@ export class AuthState {
     }
   }
 
+  // Sinkronisasi data sesi & wewenang hak akses terbaru dari database
+  async syncUserSession(): Promise<void> {
+    if (!browser || !this.user?.id) return;
+    try {
+      const res = await api.auth.me();
+      if (res?.success && res.data?.user) {
+        const u = res.data.user;
+        const customUserPerms = (u.customPermissions || []) as string[];
+        const effectivePerms = u.permissions || resolveEffectivePermissions(toCoreRole(u.role), customUserPerms);
+        const isAll = !u.branchId || u.branchId === "ALL" || u.assignedBranchId === "ALL";
+        const assignedBranch = u.assignedBranchId || (isAll ? "ALL" : u.branchId);
+        const activeUser: ActiveUser = {
+          ...this.user,
+          fullName: u.fullName || this.user.fullName,
+          role: (u.role || this.user.role) as UserRole,
+          branchId: u.branchId || this.user.branchId,
+          assignedBranchId: assignedBranch,
+          branchName: u.branchName || this.user.branchName,
+          avatarUrl: u.avatarUrl || this.user.avatarUrl,
+          customPermissions: customUserPerms,
+          permissions: effectivePerms
+        };
+        this.setUserSession(activeUser, {
+          access: this.accessToken || `token-${u.id}`,
+          refresh: this.refreshToken || `refresh-${u.id}`
+        });
+      }
+    } catch (_) {
+      // Abaikan jika offline / server belum aktif
+    }
+  }
+
   // Live Database Login via API
   async loginWithApi(identifier: string, pin: string, branchId?: string): Promise<{ success: boolean; error?: string }> {
     try {
       const res = await api.auth.login({ identifier, pin, branchId });
       if (res?.success && res.data?.user) {
         const u = res.data.user;
+        const customPerms = (u.customPermissions || []) as string[];
+        const effectivePerms = u.permissions || resolveEffectivePermissions(toCoreRole(u.role), customPerms);
+        const isAll = !u.branchId || u.branchId === "ALL" || u.assignedBranchId === "ALL";
+        const assignedBranch = u.assignedBranchId || (isAll ? "ALL" : u.branchId);
         const activeUser: ActiveUser = {
           id: u.id,
           username: u.username,
@@ -115,12 +170,14 @@ export class AuthState {
           email: u.email || `${u.username}@hafidzfarma.com`,
           role: u.role as UserRole,
           tenantId: u.tenantId || "tenant-hafidz-farma",
-          branchId: u.branchId || branchId || "1",
-          branchName: u.branchName || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat"),
+          branchId: u.branchId || branchId || (isAll ? "ALL" : "1"),
+          assignedBranchId: assignedBranch,
+          branchName: u.branchName || (isAll ? "Semua Cabang" : "Apotek Hafidz Farma Pusat"),
           pin,
           avatarUrl: u.avatarUrl,
           isActive: true,
-          permissions: u.permissions
+          customPermissions: customPerms,
+          permissions: effectivePerms
         };
 
         this.setUserSession(activeUser, {
@@ -172,6 +229,8 @@ export class AuthState {
       const res = await api.auth.register(payload);
       if (res?.success && res.data?.user) {
         const u = res.data.user;
+        const isAll = !u.branchId || u.branchId === "ALL" || u.assignedBranchId === "ALL";
+        const assignedBranch = u.assignedBranchId || (isAll ? "ALL" : u.branchId);
         const activeUser: ActiveUser = {
           id: u.id,
           username: u.username,
@@ -179,11 +238,13 @@ export class AuthState {
           email: u.email || `${u.username}@apoteku.local`,
           role: u.role as UserRole,
           tenantId: u.tenantId || "tenant-hafidz-farma",
-          branchId: u.branchId || "1",
-          branchName: u.branchName || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat"),
+          branchId: u.branchId || (isAll ? "ALL" : "1"),
+          assignedBranchId: assignedBranch,
+          branchName: u.branchName || (isAll ? "Semua Cabang" : (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat")),
           pin: payload.pin,
           isActive: true,
-          permissions: u.permissions || (u.role === "SUPERADMIN" ? ["*"] : ["pos:read", "pos:write", "stok:read"])
+          customPermissions: u.customPermissions || [],
+          permissions: u.permissions || resolveEffectivePermissions(toCoreRole(u.role), u.customPermissions)
         };
 
         this.setUserSession(activeUser, {
@@ -217,6 +278,8 @@ export class AuthState {
       const res = await api.auth.google(body);
       if (res?.success && res.data?.user) {
         const u = res.data.user;
+        const isAll = !u.branchId || u.branchId === "ALL" || u.assignedBranchId === "ALL";
+        const assignedBranch = u.assignedBranchId || (isAll ? "ALL" : u.branchId);
         const activeUser: ActiveUser = {
           id: u.id,
           username: u.username,
@@ -224,12 +287,14 @@ export class AuthState {
           email: u.email,
           role: u.role as UserRole,
           tenantId: u.tenantId || "tenant-hafidz-farma",
-          branchId: u.branchId || "1",
-          branchName: u.branchName || (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat"),
+          branchId: u.branchId || (isAll ? "ALL" : "1"),
+          assignedBranchId: assignedBranch,
+          branchName: u.branchName || (isAll ? "Semua Cabang" : (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat")),
           pin: u.pin || "123456",
           avatarUrl: u.avatarUrl,
           isActive: true,
-          permissions: u.permissions || (u.role === "SUPERADMIN" ? ["*"] : ["pos:read", "pos:write", "stok:read"])
+          customPermissions: u.customPermissions || [],
+          permissions: u.permissions || resolveEffectivePermissions(toCoreRole(u.role), u.customPermissions)
         };
 
         this.setUserSession(activeUser, {
@@ -270,6 +335,7 @@ export class AuthState {
 
     if (rolePinMap[p]) {
       const match = rolePinMap[p];
+      const isSuperOrOwner = match.role === "SUPERADMIN" || match.role === "OWNER";
       this.setUserSession({
         id: `usr-${match.username}`,
         username: match.username,
@@ -277,11 +343,15 @@ export class AuthState {
         email: `${match.username}@hafidzfarma.com`,
         role: match.role,
         tenantId: "tenant-hafidz-farma",
-        branchId: branchId || "1",
-        branchName: tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat",
+        branchId: branchId || (isSuperOrOwner ? "ALL" : "1"),
+        assignedBranchId: isSuperOrOwner ? "ALL" : (branchId || "1"),
+        branchName: isSuperOrOwner && (!branchId || branchId === "ALL")
+          ? "Semua Cabang"
+          : (tenantStore.current.name ? `${tenantStore.current.name} Pusat` : "Apotek Hafidz Farma Pusat"),
         pin: p,
         isActive: true,
-        permissions: ["*"]
+        customPermissions: [],
+        permissions: resolveEffectivePermissions(toCoreRole(match.role), [])
       });
       return true;
     }

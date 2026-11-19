@@ -17,11 +17,21 @@
   onMount(() => {
     tenantStore.fetchTenant();
     if (authStore.user) {
+      authStore.syncUserSession();
       notificationStore.fetchNotifications();
       notificationStore.startPolling(60000);
     }
+
+    const onFocus = () => {
+      if (authStore.user) {
+        authStore.syncUserSession();
+      }
+    };
+    window.addEventListener("focus", onFocus);
+
     return () => {
       notificationStore.stopPolling();
+      window.removeEventListener("focus", onFocus);
     };
   });
 

@@ -6,14 +6,16 @@ export const financeRoutes = new Elysia({ prefix: "/api/finance" })
     const tenantId = (headers["x-tenant-id"] as string) || undefined;
     const branchId = (headers["x-branch-id"] as string) || undefined;
     const userId = (headers["x-user-id"] as string) || undefined;
-    return { tenantId, branchId, userId };
+    const userRole = (headers["x-user-role"] as string) || undefined;
+    return { tenantId, branchId, userId, userRole };
   })
   // 1. GET DEBT PAYMENTS HISTORY
   .get(
     "/debt-payments",
-    async ({ query, branchId }) => {
+    async ({ query, branchId, userRole }) => {
       try {
-        const targetBranch = query.branch_id || branchId;
+        const isMultiBranchUser = userRole === "OWNER" || userRole === "SUPERADMIN" || !branchId || branchId === "ALL";
+        const targetBranch = isMultiBranchUser ? (query.branch_id || "ALL") : branchId;
         const limit = query.limit ? Number(query.limit) : 50;
         const data = await financeService.getDebtPayments({
           branchId: targetBranch,
@@ -41,9 +43,10 @@ export const financeRoutes = new Elysia({ prefix: "/api/finance" })
   // 2. GET DEBT SUMMARY (HUTANG JATUH TEMPO)
   .get(
     "/debt-summary",
-    async ({ query, branchId }) => {
+    async ({ query, branchId, userRole }) => {
       try {
-        const targetBranch = query.branch_id || branchId;
+        const isMultiBranchUser = userRole === "OWNER" || userRole === "SUPERADMIN" || !branchId || branchId === "ALL";
+        const targetBranch = isMultiBranchUser ? (query.branch_id || "ALL") : branchId;
         const data = await financeService.getDebtSummary(targetBranch);
         return { success: true, data };
       } catch (err: any) {
@@ -64,9 +67,10 @@ export const financeRoutes = new Elysia({ prefix: "/api/finance" })
   // 2B. GET CASHFLOW & BANK BALANCE
   .get(
     "/cashflow",
-    async ({ query, branchId }) => {
+    async ({ query, branchId, userRole }) => {
       try {
-        const targetBranch = query.branch_id || branchId;
+        const isMultiBranchUser = userRole === "OWNER" || userRole === "SUPERADMIN" || !branchId || branchId === "ALL";
+        const targetBranch = isMultiBranchUser ? (query.branch_id || "ALL") : branchId;
         const data = await financeService.getCashflow(targetBranch);
         return { success: true, data };
       } catch (err: any) {

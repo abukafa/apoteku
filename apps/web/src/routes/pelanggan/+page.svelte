@@ -26,8 +26,12 @@
   import { onMount } from "svelte";
   import { api } from "$lib/services/api";
   import { alertStore } from "$lib/stores/alertStore.svelte";
+  import { authStore } from "$lib/stores/authStore.svelte";
   import { tenantStore } from "$lib/stores/tenantStore.svelte";
   import { formatRupiah, calculateDebtSettlement } from "@apoteku/core";
+
+  const canManageCustomer = $derived(authStore.can("customer:manage"));
+  const canCollectReceivable = $derived(authStore.can("finance:receivable:collect"));
 
   let customers = $state<any[]>([]);
   let activeTab = $state<"semua" | "piutang">("semua");
@@ -80,6 +84,10 @@
   });
 
   function openAddCustomerModal() {
+    if (!canManageCustomer) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang untuk menambah pelanggan (customer:manage).");
+      return;
+    }
     editingCustomerId = null;
     customerModalError = "";
     customerForm = {
@@ -95,6 +103,10 @@
   }
 
   function openEditCustomerModal(c: any) {
+    if (!canManageCustomer) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang untuk mengedit pelanggan (customer:manage).");
+      return;
+    }
     editingCustomerId = c.id;
     customerModalError = "";
     const rawType = String(c.customerType || c.priceTier || "UMUM").toUpperCase();
@@ -116,6 +128,10 @@
   }
 
   async function handleSaveCustomerSubmit() {
+    if (!canManageCustomer) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang menyimpan data pelanggan (customer:manage).");
+      return;
+    }
     customerModalError = "";
     if (!customerForm.name.trim()) {
       customerModalError = "Nama pelanggan wajib diisi.";
@@ -169,6 +185,10 @@
   }
 
   async function handleDeleteCustomer(c: any) {
+    if (!canManageCustomer) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang menghapus pelanggan (customer:manage).");
+      return;
+    }
     const isConfirmed = await alertStore.confirm({
       type: "danger",
       title: "Hapus Data Pelanggan",
@@ -198,12 +218,20 @@
   let debtPaymentMethod = $state("KAS_TUNAI");
 
   function openDebtPayment(debt: any) {
+    if (!canCollectReceivable) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang menerima pembayaran piutang (finance:receivable:collect).");
+      return;
+    }
     selectedDebtCustomer = debt;
     debtPaymentAmount = debt.totalDebt;
     isReceiveDebtPaymentOpen = true;
   }
 
   async function handleSaveDebtPayment() {
+    if (!canCollectReceivable) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang menerima pembayaran piutang (finance:receivable:collect).");
+      return;
+    }
     if (!selectedDebtCustomer || debtPaymentAmount <= 0) return;
     try {
       const res = await api.customers.payReceivable({
@@ -408,14 +436,16 @@
     breadcrumbs={[{ label: "Pelanggan" }]}
   >
     {#snippet actions()}
-      <button
-        type="button"
-        onclick={openAddCustomerModal}
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm cursor-pointer"
-      >
-        <Plus class="w-4 h-4" />
-        <span>Tambah Pelanggan Baru</span>
-      </button>
+      {#if canManageCustomer}
+        <button
+          type="button"
+          onclick={openAddCustomerModal}
+          class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm cursor-pointer"
+        >
+          <Plus class="w-4 h-4" />
+          <span>Tambah Pelanggan Baru</span>
+        </button>
+      {/if}
     {/snippet}
   </PageHeader>
 
@@ -564,24 +594,28 @@
                 {c.pointBalance ?? c.loyaltyPoints ?? 0} Poin
               </td>
               <td class="py-3.5 px-4 text-center">
-                <div class="inline-flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onclick={() => openEditCustomerModal(c)}
-                    class="p-1.5 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-600 hover:text-brand-blue text-[11px] font-bold transition-all cursor-pointer"
-                    title="Edit Data Pelanggan"
-                  >
-                    <Edit3 class="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onclick={() => handleDeleteCustomer(c)}
-                    class="p-1.5 rounded-lg border border-slate-200 hover:border-red-400 hover:bg-red-50 text-slate-400 hover:text-red-600 text-[11px] font-bold transition-all cursor-pointer"
-                    title="Hapus Pelanggan"
-                  >
-                    <Trash2 class="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                {#if canManageCustomer}
+                  <div class="inline-flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onclick={() => openEditCustomerModal(c)}
+                      class="p-1.5 rounded-lg border border-slate-200 hover:border-brand-blue hover:bg-blue-50 text-slate-600 hover:text-brand-blue text-[11px] font-bold transition-all cursor-pointer"
+                      title="Edit Data Pelanggan"
+                    >
+                      <Edit3 class="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onclick={() => handleDeleteCustomer(c)}
+                      class="p-1.5 rounded-lg border border-slate-200 hover:border-red-400 hover:bg-red-50 text-slate-400 hover:text-red-600 text-[11px] font-bold transition-all cursor-pointer"
+                      title="Hapus Pelanggan"
+                    >
+                      <Trash2 class="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                {:else}
+                  <span class="text-[11px] text-slate-400 font-medium">Hanya Lihat</span>
+                {/if}
               </td>
             </tr>
           {/each}
@@ -663,13 +697,17 @@
               </td>
               <td class="py-3.5 px-4 text-center">
                 {#if d.totalDebt > 0}
-                  <button
-                    type="button"
-                    onclick={() => openDebtPayment(d)}
-                    class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
-                  >
-                    Terima Bayar
-                  </button>
+                  {#if canCollectReceivable}
+                    <button
+                      type="button"
+                      onclick={() => openDebtPayment(d)}
+                      class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
+                    >
+                      Terima Bayar
+                    </button>
+                  {:else}
+                    <span class="text-amber-600 font-bold text-[11px]">Belum Lunas</span>
+                  {/if}
                 {:else}
                   <span class="text-emerald-600 font-bold text-[11px] flex items-center justify-center gap-1">
                     <CheckCircle2 class="w-3.5 h-3.5" /> Lunas

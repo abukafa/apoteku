@@ -71,6 +71,10 @@ export const salesTransactions = pgTable(
     grandTotal: numeric("grand_total", { precision: 24, scale: 8 }).notNull(),
     paidAmount: numeric("paid_amount", { precision: 24, scale: 8 }).notNull(),
     changeAmount: numeric("change_amount", { precision: 24, scale: 8 }).notNull(),
+    status: varchar("status", { length: 50 }).default("COMPLETED").notNull(),
+    voidReason: text("void_reason"),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedBy: uuid("voided_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull()
   },

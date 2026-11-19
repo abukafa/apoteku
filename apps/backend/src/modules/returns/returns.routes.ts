@@ -6,14 +6,17 @@ export const returnsRoutes = new Elysia({ prefix: "/api/returns" })
     const tenantId = (headers["x-tenant-id"] as string) || undefined;
     const branchId = (headers["x-branch-id"] as string) || undefined;
     const userId = (headers["x-user-id"] as string) || undefined;
-    return { tenantId, branchId, userId };
+    const userRole = (headers["x-user-role"] as string) || undefined;
+    return { tenantId, branchId, userId, userRole };
   })
   // 1. GET CUSTOMER RETURNS
   .get(
     "/customer",
-    async ({ query, branchId }) => {
+    async ({ query, branchId, userRole }) => {
       try {
-        const targetBranch = query.branch_id || branchId;
+        const isMultiBranchUser = userRole === "OWNER" || userRole === "SUPERADMIN" || !branchId || branchId === "ALL";
+        const rawBranch = query.branch_id || (query as any).branchId;
+        const targetBranch = isMultiBranchUser ? (rawBranch || "ALL") : branchId;
         const limit = query.limit ? Number(query.limit) : 50;
         const data = await returnsService.getCustomerReturns(targetBranch, limit);
         return { success: true, data };
@@ -98,9 +101,11 @@ export const returnsRoutes = new Elysia({ prefix: "/api/returns" })
   // 3. GET SUPPLIER RETURNS
   .get(
     "/supplier",
-    async ({ query, branchId }) => {
+    async ({ query, branchId, userRole }) => {
       try {
-        const targetBranch = query.branch_id || branchId;
+        const isMultiBranchUser = userRole === "OWNER" || userRole === "SUPERADMIN" || !branchId || branchId === "ALL";
+        const rawBranch = query.branch_id || (query as any).branchId;
+        const targetBranch = isMultiBranchUser ? (rawBranch || "ALL") : branchId;
         const limit = query.limit ? Number(query.limit) : 50;
         const data = await returnsService.getSupplierReturns(targetBranch, limit);
         return { success: true, data };

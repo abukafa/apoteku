@@ -49,7 +49,12 @@ export function calculateCashierShiftReconciliation(
 export function resolveShiftName(shiftNumber: number, notes?: string | null): string {
   if (notes && notes.startsWith("[")) {
     const match = notes.match(/^\[(.*?)\]/);
-    if (match && match[1]) return match[1];
+    if (match && match[1]) {
+      const cleaned = match[1]
+        .replace(/\s*\(\d{1,2}[:.]\d{2}\s*[-–]\s*\d{1,2}[:.]\d{2}(?:\s*WIB)?\)/gi, "")
+        .trim();
+      return cleaned || match[1];
+    }
   }
   if (shiftNumber === 1) return "Pagi";
   if (shiftNumber === 2) return "Siang";

@@ -125,9 +125,11 @@
     return Number(val || 0).toLocaleString("id-ID", { maximumFractionDigits: 4 });
   }
 
-  const isPrivilegedBranchSwitcher = $derived(
-    authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"
-  );
+  const isPrivilegedBranchSwitcher = $derived(authStore.canSelectBranch);
+
+  const canCreatePrescription = $derived(authStore.can("prescription:create"));
+  const canVerifyPrescription = $derived(authStore.can("prescription:verify"));
+  const canCompound = $derived(authStore.can("prescription:compound"));
 
   // Master Data State (100% dari Database API)
   let doctors = $state<DoctorRecord[]>([]);
@@ -144,7 +146,7 @@
 
   // Filter & Navigation State
   let selectedBranchId = $state(
-    authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"
+    authStore.isAllBranches
       ? "ALL"
       : authStore.user?.branchId || "ALL"
   );
@@ -433,6 +435,11 @@
   }
 
   async function resetNewResepModal() {
+    if (!canCreatePrescription) {
+      alertStore.warning("Akses Ditolak", "Anda tidak memiliki wewenang untuk membuat resep baru.");
+      return;
+    }
+
     const fallbackBranchId =
       selectedBranchId !== "ALL"
         ? selectedBranchId
@@ -866,6 +873,21 @@
   }
 
   async function submitNewPrescription(initialStatus: "DRAFT" | "VERIFIED" = "VERIFIED") {
+    if (!canCreatePrescription) {
+      alertStore.warning("Akses Ditolak", "Anda tidak memiliki wewenang untuk membuat resep baru.");
+      return;
+    }
+
+    if (newResepForm.type === "RACIKAN" && !canCompound) {
+      alertStore.warning("Akses Ditolak", "Anda tidak memiliki izin meracik obat (prescription:compound).");
+      return;
+    }
+
+    if (initialStatus === "VERIFIED" && !canVerifyPrescription) {
+      alertStore.warning("Akses Terbatas", "Anda tidak memiliki izin verifikasi skrining resep (prescription:verify). Resep akan disimpan sebagai Draft.");
+      initialStatus = "DRAFT";
+    }
+
     const resolvedPatient = resolvePatientName();
     const resolvedDoctor = resolveDoctorName();
 
@@ -948,6 +970,11 @@
   }
 
   async function verifyPrescription(r: PrescriptionRecord) {
+    if (!canVerifyPrescription) {
+      alertStore.warning("Akses Ditolak", "Anda tidak memiliki wewenang verifikasi resep (prescription:verify).");
+      return;
+    }
+
     verifyingPrescriptionId = r.id;
     try {
       const res = await api.prescription.verify(r.id, {
@@ -1177,14 +1204,16 @@
             <span>Etiket Manual</span>
           </button>
 
-          <button
-            type="button"
-            onclick={resetNewResepModal}
-            class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
-          >
-            <Plus class="w-4 h-4" />
-            <span>Input Resep Dokter</span>
-          </button>
+          {#if canCreatePrescription}
+            <button
+              type="button"
+              onclick={resetNewResepModal}
+              class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-red-600 to-brand-blue-700 hover:from-brand-red-700 hover:to-brand-blue-800 text-white text-xs font-bold transition-all shadow-sm"
+            >
+              <Plus class="w-4 h-4" />
+              <span>Input Resep Dokter</span>
+            </button>
+          {/if}
         </div>
 
         <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
@@ -1386,7 +1415,7 @@
               </td>
               <td class="py-3.5 px-4 text-center">
                 <div class="flex items-center justify-center gap-1.5">
-                  {#if r.status === "DRAFT"}
+                  {#if r.status === "DRAFT" && canVerifyPrescription}
                     <button
                       type="button"
                       disabled={verifyingPrescriptionId === r.id}
@@ -1876,7 +1905,7 @@
             onchange={(val) => (newResepForm.type = val as "RACIKAN" | "NON_RACIKAN")}
             options={[
               { value: "NON_RACIKAN", label: "Non-Racikan (Obat Jadi)" },
-              { value: "RACIKAN", label: "Racikan (Puyer / Kapsul / Salep)" }
+              ...(canCompound ? [{ value: "RACIKAN", label: "Racikan (Puyer / Kapsul / Salep)" }] : [])
             ]}
           />
         </div>
@@ -2210,14 +2239,16 @@
         >
           Simpan Draft Skrining
         </button>
-        <button
-          type="button"
-          disabled={isSubmittingResep}
-          onclick={() => submitNewPrescription("VERIFIED")}
-          class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
-        >
-          {isSubmittingResep ? "Menyimpan..." : "Verifikasi & Simpan Resep"}
-        </button>
+        {#if canVerifyPrescription}
+          <button
+            type="button"
+            disabled={isSubmittingResep}
+            onclick={() => submitNewPrescription("VERIFIED")}
+            class="px-4 py-2 rounded-xl bg-brand-blue-700 hover:bg-brand-blue-800 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
+          >
+            {isSubmittingResep ? "Menyimpan..." : "Verifikasi & Simpan Resep"}
+          </button>
+        {/if}
       </div>
     </div>
   </div>

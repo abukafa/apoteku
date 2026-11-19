@@ -4,6 +4,7 @@ import {
   hasAnyPermission,
   canAccessRoute,
   canAccessApi,
+  resolveEffectivePermissions,
   filterNavigationGroups,
   type UserRole,
   type PermissionKey
@@ -91,6 +92,22 @@ describe("RBAC Engine - Core Permission Checks", () => {
 
     // Cashier with special override
     expect(hasPermission("CASHIER", "inventory:adjust", ["inventory:adjust"])).toBe(true);
+
+    // Cashier granted prescription:read
+    expect(hasPermission("CASHIER", "prescription:read", ["prescription:read"])).toBe(true);
+    expect(canAccessRoute("CASHIER", "/pelayanan", ["prescription:read"]).allowed).toBe(true);
+    expect(canAccessApi("CASHIER", "/api/prescriptions", "GET", ["prescription:read"]).allowed).toBe(true);
+  });
+
+  it("resolves effective permissions by combining role defaults with custom permissions", () => {
+    const cashierPerms = resolveEffectivePermissions("CASHIER", ["prescription:read", "prescription:verify"]);
+    expect(cashierPerms).toContain("pos:access");
+    expect(cashierPerms).toContain("sales:read");
+    expect(cashierPerms).toContain("prescription:read");
+    expect(cashierPerms).toContain("prescription:verify");
+
+    const superPerms = resolveEffectivePermissions("SUPERADMIN", []);
+    expect(superPerms).toEqual(["*"]);
   });
 });
 
@@ -179,6 +196,90 @@ describe("RBAC Engine - API Access Control", () => {
     expect(canAccessApi("FINANCE", "/finance/debt/pay", "POST").allowed).toBe(true);
     expect(canAccessApi("FINANCE", "/finance/cashflow", "POST").allowed).toBe(true);
     expect(canAccessApi("FINANCE", "/shifts/open", "POST").allowed).toBe(false);
+  });
+
+  it("handles custom delegation for stock and opname accurately", () => {
+    // CASHIER dengan custom izin inventory:read saja
+    const cashierRead = canAccessRoute("CASHIER", "/stok", ["inventory:read"]);
+    expect(cashierRead.allowed).toBe(true);
+
+    // CASHIER dengan custom izin inventory:read saja TIDAK BISA submit opname
+    const opnameBlocked = canAccessApi("CASHIER", "/inventory/opname", "POST", ["inventory:read"]);
+    expect(opnameBlocked.allowed).toBe(false);
+    expect(opnameBlocked.requiredPermission).toBe("inventory:opname");
+
+    // CASHIER dengan tambahan custom izin inventory:opname BISA submit opname
+    const opnameAllowed = canAccessApi("CASHIER", "/inventory/opname", "POST", [
+      "inventory:read",
+      "inventory:opname"
+    ]);
+    expect(opnameAllowed.allowed).toBe(true);
+
+    // Saat izin inventory:opname dicabut (uncheck), akses opname kembali ditolak
+    const opnameRevoked = canAccessApi("CASHIER", "/inventory/opname", "POST", ["inventory:read"]);
+    expect(opnameRevoked.allowed).toBe(false);
+    expect(opnameRevoked.requiredPermission).toBe("inventory:opname");
+  });
+
+  it("enforces granular report permissions (reports:sales, reports:inventory, reports:financial, reports:sipnap)", () => {
+    // Financial report: blocked for Pharmacist & Cashier, allowed for Finance & Owner
+    const pharmFin = canAccessApi("PHARMACIST", "/reports/financial", "GET");
+    expect(pharmFin.allowed).toBe(false);
+    expect(pharmFin.requiredPermission).toBe("reports:financial:view");
+
+    const cashFin = canAccessApi("CASHIER", "/reports/financial", "GET");
+    expect(cashFin.allowed).toBe(false);
+
+    const finFin = canAccessApi("FINANCE", "/reports/financial", "GET");
+    expect(finFin.allowed).toBe(true);
+
+    const ownerFin = canAccessApi("OWNER", "/reports/financial", "GET");
+    expect(ownerFin.allowed).toBe(true);
+
+    // Sales shift report: allowed for Pharmacist & Finance, blocked for Cashier & Inventory
+    expect(canAccessApi("PHARMACIST", "/reports/sales-shifts", "GET").allowed).toBe(true);
+    expect(canAccessApi("FINANCE", "/reports/sales-shifts", "GET").allowed).toBe(true);
+    expect(canAccessApi("CASHIER", "/reports/sales-shifts", "GET").allowed).toBe(false);
+    expect(canAccessApi("INVENTORY", "/reports/sales-shifts", "GET").allowed).toBe(false);
+
+    // Pareto inventory analysis: allowed for Inventory, Pharmacist & Owner, blocked for Cashier
+    expect(canAccessApi("INVENTORY", "/reports/pareto", "GET").allowed).toBe(true);
+    expect(canAccessApi("PHARMACIST", "/reports/pareto", "GET").allowed).toBe(true);
+    expect(canAccessApi("CASHIER", "/reports/pareto", "GET").allowed).toBe(false);
+
+    // SIPNAP export: allowed for Pharmacist & Owner, blocked for Finance & Cashier
+    expect(canAccessApi("PHARMACIST", "/reports/sipnap", "GET").allowed).toBe(true);
+    expect(canAccessApi("FINANCE", "/reports/sipnap", "GET").allowed).toBe(false);
+    expect(canAccessApi("CASHIER", "/reports/sipnap", "GET").allowed).toBe(false);
+  });
+
+  it("enforces tenant, organization, and staff management permissions (settings:tenant:edit, settings:users:manage)", () => {
+    // User management: blocked for Cashier, Pharmacist, and Finance
+    const cashUserGet = canAccessApi("CASHIER", "/users", "GET");
+    expect(cashUserGet.allowed).toBe(false);
+    expect(cashUserGet.requiredPermission).toBe("settings:users:manage");
+
+    const pharmUserPost = canAccessApi("PHARMACIST", "/users", "POST");
+    expect(pharmUserPost.allowed).toBe(false);
+    expect(pharmUserPost.requiredPermission).toBe("settings:users:manage");
+
+    const ownerUserPost = canAccessApi("OWNER", "/users", "POST");
+    expect(ownerUserPost.allowed).toBe(true);
+
+    // Tenant & Branch management: blocked for staff, allowed for Owner & Superadmin
+    const pharmTenantPut = canAccessApi("PHARMACIST", "/tenant", "PUT");
+    expect(pharmTenantPut.allowed).toBe(false);
+    expect(pharmTenantPut.requiredPermission).toBe("settings:tenant:edit");
+
+    const cashBranchPost = canAccessApi("CASHIER", "/branches", "POST");
+    expect(cashBranchPost.allowed).toBe(false);
+    expect(cashBranchPost.requiredPermission).toBe("settings:tenant:edit");
+
+    const ownerTenantPut = canAccessApi("OWNER", "/tenant", "PUT");
+    expect(ownerTenantPut.allowed).toBe(true);
+
+    const ownerBranchPost = canAccessApi("OWNER", "/branches", "POST");
+    expect(ownerBranchPost.allowed).toBe(true);
   });
 });
 

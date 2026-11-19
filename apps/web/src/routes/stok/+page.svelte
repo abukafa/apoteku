@@ -105,10 +105,21 @@
   // Active Tab: 4 comprehensive tabs
   let activeTab = $state<"katalog" | "kartu_stok" | "riwayat_opname" | "ed_defekta">("katalog");
 
+  // Wewenang Akses Fitur Stok Opname & Koreksi Manual (Sentralisasi @apoteku/core via authStore)
+  const canPerformOpname = $derived(authStore.can("inventory:opname"));
+  const canAdjust = $derived(authStore.can("inventory:adjust"));
+  const canManageStock = $derived(canPerformOpname || canAdjust);
+
+  $effect(() => {
+    if (!canPerformOpname && activeTab === "riwayat_opname") {
+      activeTab = "katalog";
+    }
+  });
+
   // Filter States
   let searchQuery = $state("");
   let selectedCategory = $state("ALL");
-  let selectedBranchId = $state(authStore.user?.branchId || "1");
+  let selectedBranchId = $state(!authStore.user?.branchId || authStore.user.branchId === "ALL" ? "1" : authStore.user.branchId);
   let selectedProductIdForCard = $state<string>("");
 
   async function fetchProducts(force = true) {
@@ -652,6 +663,10 @@
   let worksheetChangedRows = $derived(worksheetRows.filter((r) => r.diffQty !== 0));
 
   function openOpnameForProduct(productId?: string) {
+    if (!canManageStock) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki hak akses untuk melakukan koreksi stok atau opname.");
+      return;
+    }
     const targetProd = products.find((p) => p.id === productId) || products[0];
     if (targetProd) {
       opnameProductId = targetProd.id;
@@ -659,7 +674,7 @@
       opnameActualQty = targetProd.batches[0]?.stock ?? 0;
     }
     opnameMode = "single";
-    opnameReasonType = "STOCK_OPNAME";
+    opnameReasonType = canPerformOpname ? "STOCK_OPNAME" : "DISCREPANCY";
     opnameNotes = "";
 
     // Initialize worksheet counts with current system stock
@@ -693,6 +708,14 @@
   let isSavingOpname = $state(false);
 
   async function submitStockOpname() {
+    if (opnameMode === "worksheet" && !canPerformOpname) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang untuk rekonsiliasi lembar kerja stok opname.");
+      return;
+    }
+    if (opnameMode === "single" && !canManageStock) {
+      alertStore.danger("Akses Ditolak", "Anda tidak memiliki wewenang untuk menyimpan koreksi stok.");
+      return;
+    }
     const nowStr = formatNowTimestamp();
     const docNumber = generateAdjustmentNumber();
     const operatorName = authStore.user?.fullName || "apt. Hafidz Nurul";
@@ -1392,14 +1415,16 @@
     {#snippet actions()}
       <div class="grid grid-rows-2 justify-items-end gap-2">
         <div class="flex justify-end gap-2">
-          <button
-            type="button"
-            onclick={() => openOpnameForProduct()}
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100/80 text-emerald-800 text-xs font-bold transition-all shadow-xs"
-          >
-            <ClipboardCheck class="w-4 h-4 text-emerald-600" />
-            <span>Stok Opname</span>
-          </button>
+          {#if canManageStock}
+            <button
+              type="button"
+              onclick={() => openOpnameForProduct()}
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100/80 text-emerald-800 text-xs font-bold transition-all shadow-xs"
+            >
+              <ClipboardCheck class="w-4 h-4 text-emerald-600" />
+              <span>{canPerformOpname ? "Stok Opname" : "Koreksi Stok"}</span>
+            </button>
+          {/if}
 
           <button
             type="button"
@@ -1411,8 +1436,8 @@
           </button>
         </div>
         
-        <!-- Branch selector (for Superadmin/Owner) or locked badge (for Staff) -->
-        {#if authStore.user?.role === "SUPERADMIN" || authStore.user?.role === "OWNER"}
+        <!-- Branch selector (for Multi-branch User) or locked badge (for Single Branch Staff) -->
+        {#if authStore.canSelectBranch}
           <Select
             bind:value={selectedBranchId}
             icon={Store}
@@ -1500,8 +1525,8 @@
       subtext="Net: {formatRupiah(opnameSummary.netValueDiff)}"
       icon={Scale}
       variant={opnameSummary.netValueDiff < 0 ? "danger" : "warning"}
-      alertActionText="Audit Selisih"
-      onAlertClick={() => (activeTab = "riwayat_opname")}
+      alertActionText={canPerformOpname ? "Audit Selisih" : undefined}
+      onAlertClick={canPerformOpname ? () => (activeTab = "riwayat_opname") : undefined}
     />
     <MetricCard
       title="Defekta & ED"
@@ -1564,22 +1589,24 @@
       {/if}
     </button>
 
-    <button
-      type="button"
-      onclick={() => (activeTab = "riwayat_opname")}
-      class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'riwayat_opname' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
-    >
-      <div class="flex items-center gap-2">
-        <ClipboardCheck class="w-4 h-4 text-emerald-600" />
-        <span>Riwayat Opname & Selisih Fisik</span>
-        <span class="px-2 py-0.5 rounded-full text-[10px] bg-amber-100 text-amber-800 font-bold">
-          {opnameSummary.discrepancyCount}
-        </span>
-      </div>
-      {#if activeTab === "riwayat_opname"}
-        <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
-      {/if}
-    </button>
+    {#if canPerformOpname}
+      <button
+        type="button"
+        onclick={() => (activeTab = "riwayat_opname")}
+        class="pb-3 px-3 transition-colors relative whitespace-nowrap {activeTab === 'riwayat_opname' ? 'text-brand-blue-700' : 'text-slate-500 hover:text-slate-800'}"
+      >
+        <div class="flex items-center gap-2">
+          <ClipboardCheck class="w-4 h-4 text-emerald-600" />
+          <span>Riwayat Opname & Selisih Fisik</span>
+          <span class="px-2 py-0.5 rounded-full text-[10px] bg-amber-100 text-amber-800 font-bold">
+            {opnameSummary.discrepancyCount}
+          </span>
+        </div>
+        {#if activeTab === "riwayat_opname"}
+          <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-blue-700 rounded-full"></div>
+        {/if}
+      </button>
+    {/if}
   </div>
 
   <!-- ===================================================================== -->
@@ -1707,14 +1734,16 @@
             </td>
             <td class="py-3.5 px-4 text-center">
               <div class="inline-flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onclick={() => openOpnameForProduct(p.id)}
-                  title="Hitung fisik & sesuaikan stok obat ini"
-                  class="px-2.5 py-1 rounded-lg border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold transition-all"
-                >
-                  Opname
-                </button>
+                {#if canManageStock}
+                  <button
+                    type="button"
+                    onclick={() => openOpnameForProduct(p.id)}
+                    title="Hitung fisik & sesuaikan stok obat ini"
+                    class="px-2.5 py-1 rounded-lg border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold transition-all"
+                  >
+                    {canPerformOpname ? "Opname" : "Koreksi"}
+                  </button>
+                {/if}
                 <button
                   type="button"
                   onclick={() => openEditProductModal(p)}
@@ -1802,14 +1831,16 @@
               ]}
             />
 
-            <button
-              type="button"
-              onclick={() => openOpnameForProduct(selectedProductForCard?.id)}
-              class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <ClipboardCheck class="w-3.5 h-3.5" />
-              <span>Opname Obat Ini</span>
-            </button>
+            {#if canManageStock}
+              <button
+                type="button"
+                onclick={() => openOpnameForProduct(selectedProductForCard?.id)}
+                class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <ClipboardCheck class="w-3.5 h-3.5" />
+                <span>{canPerformOpname ? "Opname Obat Ini" : "Koreksi Obat Ini"}</span>
+              </button>
+            {/if}
           </div>
 
           <!-- Baris 2: Select Pilih Obat -->
@@ -1841,13 +1872,15 @@
             <AlertTriangle class="w-4 h-4 text-brand-red-600 flex-shrink-0" />
             <span><strong>Audit APA:</strong> Terdapat transaksi kasir offline yang melebihi saldo batch. Silakan lakukan opname fisik untuk menyeimbangkan.</span>
           </div>
-          <button
-            type="button"
-            onclick={() => openOpnameForProduct(selectedProductForCard?.id)}
-            class="px-2.5 py-1 rounded-lg bg-brand-red-600 hover:bg-brand-red-700 text-white font-bold text-[11px] transition-colors"
-          >
-            Sesuaikan Fisik
-          </button>
+          {#if canManageStock}
+            <button
+              type="button"
+              onclick={() => openOpnameForProduct(selectedProductForCard?.id)}
+              class="px-2.5 py-1 rounded-lg bg-brand-red-600 hover:bg-brand-red-700 text-white font-bold text-[11px] transition-colors"
+            >
+              Sesuaikan Fisik
+            </button>
+          {/if}
         </div>
       {/if}
 
@@ -2312,7 +2345,7 @@
 <!-- ======================================================================= -->
 <!-- MODAL 1: STOK OPNAME FISIK (SINGLE ITEM & LEMBAR KERJA MASSAL)          -->
 <!-- ======================================================================= -->
-{#if isOpnameModalOpen}
+{#if isOpnameModalOpen && canManageStock}
   <div
     use:portal
     data-modal-overlay
@@ -2348,24 +2381,26 @@
       </div>
 
       <!-- Mode Switcher: Koreksi Cepat 1 Obat vs Lembar Kerja Massal -->
-      <div class="grid grid-cols-2 gap-2 px-1 bg-slate-100 rounded-xl text-xs font-bold">
-        <button
-          type="button"
-          onclick={() => (opnameMode = "single")}
-          class="py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-2 {opnameMode === 'single' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'}"
-        >
-          <ClipboardCheck class="w-4 h-4 text-emerald-600" />
-          <span>Koreksi Per Obat</span>
-        </button>
-        <button
-          type="button"
-          onclick={() => (opnameMode = "worksheet")}
-          class="py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-2 {opnameMode === 'worksheet' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'}"
-        >
-          <FileSpreadsheet class="w-4 h-4 text-brand-blue" />
-          <span>Lembar Kerja Massal</span>
-        </button>
-      </div>
+      {#if canPerformOpname}
+        <div class="grid grid-cols-2 gap-2 px-1 bg-slate-100 rounded-xl text-xs font-bold">
+          <button
+            type="button"
+            onclick={() => (opnameMode = "single")}
+            class="py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-2 {opnameMode === 'single' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'}"
+          >
+            <ClipboardCheck class="w-4 h-4 text-emerald-600" />
+            <span>Koreksi Per Obat</span>
+          </button>
+          <button
+            type="button"
+            onclick={() => (opnameMode = "worksheet")}
+            class="py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-2 {opnameMode === 'worksheet' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'}"
+          >
+            <FileSpreadsheet class="w-4 h-4 text-brand-blue" />
+            <span>Lembar Kerja Massal</span>
+          </button>
+        </div>
+      {/if}
 
       <!-- BODY: MODE 1 (SINGLE ITEM) -->
       {#if opnameMode === "single"}

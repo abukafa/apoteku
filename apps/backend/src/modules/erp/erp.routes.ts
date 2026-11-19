@@ -1,4 +1,4 @@
-import { Elysia } from "elysia";
+import { Elysia, t } from "elysia";
 import { db, schema } from "@apoteku/db";
 import { desc, count, sql, eq, and } from "drizzle-orm";
 import { generateOrderNumber, inferPurchaseOrderType, calculateDebtSettlement } from "@apoteku/core";
@@ -124,6 +124,13 @@ function normalizeProductUnitsInput(
 }
 
 export const erpRoutes = new Elysia({ prefix: "/api" })
+  .derive(({ headers }) => {
+    const tenantId = (headers["x-tenant-id"] as string) || undefined;
+    const branchId = (headers["x-branch-id"] as string) || undefined;
+    const userId = (headers["x-user-id"] as string) || undefined;
+    const userRole = (headers["x-user-role"] as string) || undefined;
+    return { tenantId, branchId, userId, userRole };
+  })
   // 1. STATISTIK SISTEM & DASHBOARD
   .get("/stats", async () => {
     try {
@@ -1333,9 +1340,18 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
   })
 
   // 4. RIWAYAT PENJUALAN KASIR
-  .get("/sales", async ({ query }) => {
+  .get("/sales", async ({ query, branchId, userRole }) => {
     try {
+      const isMultiBranchUser = userRole === "OWNER" || userRole === "SUPERADMIN" || !branchId || branchId === "ALL";
+      const rawBranch = query.branch_id || (query as any).branchId;
+      const targetBranch = isMultiBranchUser ? (rawBranch || "ALL") : branchId;
       const limit = Number(query.limit || 200);
+
+      const conditions = [];
+      if (targetBranch && targetBranch !== "ALL") {
+        conditions.push(eq(schema.salesTransactions.branchId, targetBranch));
+      }
+
       const salesData = await db
         .select({
           id: schema.salesTransactions.id,
@@ -1360,7 +1376,11 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           embalaseAmount: schema.salesTransactions.embalaseAmount,
           grandTotal: schema.salesTransactions.grandTotal,
           paidAmount: schema.salesTransactions.paidAmount,
-          changeAmount: schema.salesTransactions.changeAmount
+          changeAmount: schema.salesTransactions.changeAmount,
+          status: schema.salesTransactions.status,
+          voidReason: schema.salesTransactions.voidReason,
+          voidedAt: schema.salesTransactions.voidedAt,
+          voidedBy: schema.salesTransactions.voidedBy
         })
         .from(schema.salesTransactions)
         .leftJoin(
@@ -1379,6 +1399,7 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           schema.cashierShifts,
           eq(schema.salesTransactions.cashierShiftId, schema.cashierShifts.id)
         )
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
         .orderBy(desc(schema.salesTransactions.createdAt))
         .limit(limit);
 
@@ -1438,7 +1459,9 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
           const paid = Number(s.paidAmount);
           const total = Number(s.grandTotal);
           let paymentStatus = "PAID";
-          if (paid < total) {
+          if (s.status === "VOID") {
+            paymentStatus = "VOID";
+          } else if (paid < total) {
             paymentStatus = paid > 0 ? "PARTIAL" : "UNPAID";
           }
 
@@ -1449,6 +1472,9 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
             branchPhone: s.branchPhone || "",
             invoiceNo: s.invoiceNo,
             invoiceNumber: s.invoiceNo,
+            status: s.status || "COMPLETED",
+            voidReason: s.voidReason || null,
+            voidedAt: s.voidedAt ? s.voidedAt.toISOString() : null,
             createdAt: s.createdAt.toLocaleString("id-ID", {
               dateStyle: "medium",
               timeStyle: "short"
@@ -1487,6 +1513,132 @@ export const erpRoutes = new Elysia({ prefix: "/api" })
       return { success: false, error: err.message, data: [] };
     }
   })
+
+  // 4B. VOID / BATALKAN TRANSAKSI PENJUALAN KASIR (REVERSI STOK BATCH & MUTASI VOID)
+  .post(
+    "/sales/:id/void",
+    async ({ params, body, userId, set }) => {
+      try {
+        const transactionId = params.id;
+        const reason = (body?.reason || "Pembatalan transaksi kasir").trim();
+
+        // 1. Ambil data transaksi penjualan
+        const [trx] = await db
+          .select()
+          .from(schema.salesTransactions)
+          .where(eq(schema.salesTransactions.id, transactionId))
+          .limit(1);
+
+        if (!trx) {
+          set.status = 404;
+          return { success: false, error: "Transaksi penjualan tidak ditemukan" };
+        }
+
+        if (trx.status === "VOID") {
+          set.status = 400;
+          return { success: false, error: "Transaksi ini sudah dibatalkan (VOID) sebelumnya" };
+        }
+
+        // 2. Ambil seluruh item transaksi untuk reversi stok
+        const items = await db
+          .select()
+          .from(schema.salesTransactionItems)
+          .where(eq(schema.salesTransactionItems.transactionId, transactionId));
+
+        // 3. Reversi stok pada masing-masing batch & lokasi
+        const now = new Date();
+        for (const item of items) {
+          const qtyToRestore = Number(item.qtyBase || 0);
+          if (qtyToRestore <= 0) continue;
+
+          if (item.locationId && trx.branchId) {
+            // Restore branchBatchStocks jika ada batchId
+            if (item.batchId) {
+              await db
+                .update(schema.branchBatchStocks)
+                .set({
+                  qtyBase: sql`${schema.branchBatchStocks.qtyBase} + ${qtyToRestore}`,
+                  updatedAt: now
+                })
+                .where(
+                  and(
+                    eq(schema.branchBatchStocks.branchId, trx.branchId),
+                    eq(schema.branchBatchStocks.productId, item.productId),
+                    eq(schema.branchBatchStocks.batchId, item.batchId),
+                    eq(schema.branchBatchStocks.locationId, item.locationId)
+                  )
+                );
+            }
+
+            // Restore branchStocks
+            await db
+              .update(schema.branchStocks)
+              .set({
+                totalQtyBase: sql`${schema.branchStocks.totalQtyBase} + ${qtyToRestore}`,
+                updatedAt: now
+              })
+              .where(
+                and(
+                  eq(schema.branchStocks.branchId, trx.branchId),
+                  eq(schema.branchStocks.productId, item.productId),
+                  eq(schema.branchStocks.locationId, item.locationId)
+                )
+              );
+          }
+
+          // Catat audit trail di stockLedger
+          try {
+            const auditUser = (userId && typeof userId === "string" && userId.length > 10)
+              ? userId
+              : (trx.cashierUserId || crypto.randomUUID());
+
+            await db.insert(schema.stockLedger).values({
+              tenantId: trx.tenantId,
+              branchId: trx.branchId,
+              productId: item.productId,
+              locationId: item.locationId || null,
+              batchId: item.batchId || null,
+              mutationType: "SALES_VOID",
+              quantityBase: String(qtyToRestore),
+              costPerUnit: String(item.unitPrice || 0),
+              referenceId: trx.id,
+              notes: `Void Penjualan Nota ${trx.invoiceNo}: ${reason}`,
+              createdBy: auditUser,
+              createdAt: now
+            });
+          } catch (_) {}
+        }
+
+        // 4. Update status transaksi menjadi VOID
+        await db
+          .update(schema.salesTransactions)
+          .set({
+            status: "VOID",
+            voidReason: reason,
+            voidedAt: now,
+            voidedBy: userId || null
+          })
+          .where(eq(schema.salesTransactions.id, transactionId));
+
+        return {
+          success: true,
+          message: `Transaksi nota ${trx.invoiceNo} berhasil dibatalkan (VOID). Saldo stok telah dipulihkan ke batch apotek.`
+        };
+      } catch (err: any) {
+        set.status = 500;
+        return { success: false, error: err.message || "Gagal membatalkan transaksi penjualan" };
+      }
+    },
+    {
+      body: t.Object({
+        reason: t.Optional(t.String())
+      }),
+      detail: {
+        tags: ["ERP & Sales"],
+        summary: "Void / Batalkan Transaksi Penjualan Kasir"
+      }
+    }
+  )
 
   // 5. FAKTUR PEMBELIAN PBF
   .get("/purchases", async ({ query }) => {

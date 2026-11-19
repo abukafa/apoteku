@@ -46,12 +46,25 @@
 
   interface MenuGroup {
     title: string;
-    type: "offline" | "online";
+    type: "offline" | "online" | "first";
     typeLabel: string;
     items: MenuItem[];
   }
 
   const menuGroups: MenuGroup[] = [
+    {
+      title: "",
+      type: "first",
+      typeLabel: "",
+      items: [
+        {
+          name: "Dashboard Utama",
+          href: "/",
+          permission: "dashboard:view",
+          icon: LayoutDashboard
+        },
+      ]
+    },
     {
       title: "OPERASIONAL",
       type: "offline",
@@ -121,12 +134,6 @@
       type: "online",
       typeLabel: "BACK-OFFICE",
       items: [
-        {
-          name: "Dashboard Utama",
-          href: "/",
-          permission: "dashboard:view",
-          icon: LayoutDashboard
-        },
         {
           name: "Pelanggan & Piutang",
           href: "/pelanggan",
@@ -227,6 +234,7 @@
         <div class="space-y-1">
           <!-- GROUP SECTION HEADER -->
           <div class="flex items-center justify-between px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-300/80">
+            {#if group.type !== "first"}
             <span class="flex items-center gap-1.5">
               {#if group.type === "offline"}
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>
@@ -238,6 +246,7 @@
             <span class="text-[9px] px-1.5 py-0.5 rounded font-medium tracking-normal {group.type === 'offline' ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/30' : 'bg-white/10 text-slate-300'}">
               {group.typeLabel}
             </span>
+            {/if}
           </div>
 
           <!-- MENU ITEMS IN GROUP -->

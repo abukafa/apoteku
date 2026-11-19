@@ -321,6 +321,8 @@ describe("cashier shift reconciliation calculations", () => {
     expect(resolveShiftName(4)).toBe("Lembur");
     expect(resolveShiftName(5)).toBe("Shift 5");
     expect(resolveShiftName(1, "[Shift Khusus Ramadhan]")).toBe("Shift Khusus Ramadhan");
+    expect(resolveShiftName(1, "[Shift 1 - Pagi (07:00 - 15:00 WIB)]")).toBe("Shift 1 - Pagi");
+    expect(resolveShiftName(2, "[Shift 2 - Siang (14:00 - 22:00 WIB)]")).toBe("Shift 2 - Siang");
   });
 
   it("identifies cash surplus in drawer", () => {
@@ -370,6 +372,8 @@ describe("cashier shift reconciliation calculations", () => {
     expect(resolveShiftName(4)).toBe("Lembur");
     expect(resolveShiftName(5)).toBe("Shift 5");
     expect(resolveShiftName(1, "[Shift Khusus Ramadhan]")).toBe("Shift Khusus Ramadhan");
+    expect(resolveShiftName(1, "[Shift 1 - Pagi (07:00 - 15:00 WIB)]")).toBe("Shift 1 - Pagi");
+    expect(resolveShiftName(2, "[Shift 2 - Siang (14:00 - 22:00 WIB)]")).toBe("Shift 2 - Siang");
   });
 });
 
